@@ -5,6 +5,13 @@ versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.1.1b2] — 2026-07-08
+
+### Docs
+
+- Correct the README licence line to **Apache-2.0** (matches `LICENSE` +
+  the `[project] license` field; the `1.1.1b1` README still said MIT).
+
 ## [1.1.1b1] — 2026-07-07
 
 ### Security
