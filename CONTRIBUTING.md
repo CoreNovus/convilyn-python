@@ -8,8 +8,8 @@ your work has a real, credited path in.
 
 `CoreNovus/convilyn-python` is a **public mirror** of source maintained in Convilyn's
 private monorepo, which is the single source of truth. That lets us change the
-backend contract and every language's SDK **together, in one reviewed change**, so
-the SDKs never drift apart. The mirror is a generated, read-mostly projection —
+backend contract and the SDK **together, in one reviewed change**, so the client
+and the server never drift apart. The mirror is a generated, read-mostly projection —
 but it is **not** a dead end for contributors:
 
 ```
@@ -25,8 +25,8 @@ monorepo PR with **your authorship preserved** (via `git format-patch`), it runs
 the full monorepo CI, and once merged the mirror is refreshed from it. Your mirror
 PR is then closed with a comment `Upstreamed in CoreNovus/convilyn#<N>`.
 
-Why this shape? It keeps cross-language contract lock-step (the platform's defence
-against wire drift) while still giving you a first-class contribution path. See
+Why this shape? It keeps the SDK and the backend wire contract in lock-step (the
+platform's defence against drift) while still giving you a first-class contribution path. See
 [ADR-0004](https://docs.convilyn.corenovus.com) for the full rationale.
 
 ## Before you start
@@ -34,7 +34,7 @@ against wire drift) while still giving you a first-class contribution path. See
 - **Small doc / example / typo fixes** — open a PR here directly.
 - **Behaviour / API changes** — please open an **issue first** so a maintainer can
   confirm the direction before you invest time (the change has to fit the
-  cross-language contract).
+  published API contract).
 - Look for [`good first issue`](../../labels/good%20first%20issue) if you're new.
 
 ## Developer setup

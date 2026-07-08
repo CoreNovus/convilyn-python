@@ -9,9 +9,8 @@ Key prefixes: ``ck_`` is the canonical **consumer** API key — minted in the
 API Console (Settings → API); see the backend ``USER_API_KEY_PREFIX``. The
 developer-portal tiers ``cvl_`` / ``cvi_`` belong to the **Author SDK**
 (publishing workflows / tools), not the consumer data-plane — pasting one here
-is a mistake the SDK rejects up front with a precise error (mirroring the
-TypeScript consumer SDK's ``auth.ts``), instead of letting the API answer with
-an opaque 401. Any *other* prefix is still accepted (forward-compat: a new
+is a mistake the SDK rejects up front with a precise error, instead of letting
+the API answer with an opaque 401. Any *other* prefix is still accepted (forward-compat: a new
 backend consumer-key tier never breaks an existing client).
 """
 

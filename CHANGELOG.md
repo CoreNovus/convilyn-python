@@ -5,6 +5,13 @@ versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.1.1b3] — 2026-07-08
+
+### Docs
+
+- Remove references to the not-yet-published TypeScript / Go SDKs — Python is
+  the only SDK live today; the multi-language framing returns when they ship.
+
 ## [1.1.1b2] — 2026-07-08
 
 ### Docs
@@ -63,13 +70,12 @@ consumer is affected.
 - **`goals.events()` failure now points at `wait()` polling.** The WS gateway
   does not accept `ck_` keys in v1, so a connect failure's `WebSocketError`
   message and the method docstring now spell out that WebSocket streaming is
-  polling-only for now (use `wait()`), mirroring the consumer-go guidance.
+  polling-only for now (use `wait()`).
 - **Author-SDK / developer-portal tokens (`cvl_` / `cvi_`) are now rejected**
   by `APIKey` / `Convilyn(api_key=...)` with a precise `AuthError`, instead of
   being treated as acceptable consumer keys (they never authenticated against
   the data plane — the backend answered with an opaque 401). The `ck_` prefix
-  and any unknown prefix are still accepted (forward-compat). Brings the Python
-  consumer SDK in line with the TypeScript one's `auth.ts` guard.
+  and any unknown prefix are still accepted (forward-compat).
 
 ### Removed
 

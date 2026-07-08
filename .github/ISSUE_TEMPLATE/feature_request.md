@@ -17,6 +17,6 @@ labels: ['enhancement', 'needs-triage']
 
 <!-- Anything you tried or ruled out. -->
 
-> Note: API / behaviour changes are upstreamed into Convilyn's cross-language
-> contract, so a maintainer will confirm the direction before implementation.
+> Note: API / behaviour changes are upstreamed into Convilyn's monorepo (the
+> SDK's source of truth), so a maintainer will confirm the direction before implementation.
 > Please open this issue **before** a PR for behaviour changes (see CONTRIBUTING.md).
