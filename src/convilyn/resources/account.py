@@ -80,9 +80,7 @@ class AsyncAccount:
         body: dict[str, Any] = {"toolNames": list(tools or [])}
         if max_iterations is not None:
             body["maxIterations"] = max_iterations
-        response = await self._http.request(
-            "POST", "/api/v1/workflows/cost-preview", json=body
-        )
+        response = await self._http.request("POST", "/api/v1/workflows/cost-preview", json=body)
         return CostEstimate.model_validate(response.json())
 
     async def get_plan(self) -> Plan:
@@ -124,9 +122,7 @@ class AsyncAccount:
             convilyn.APIError: server errors (incl. 401 when the caller
                 is anonymous — this endpoint is authenticated-only).
         """
-        response = await self._http.request(
-            "GET", "/api/v1/payment/usage/history"
-        )
+        response = await self._http.request("GET", "/api/v1/payment/usage/history")
         rows = response.json()
         entries = [UsageHistoryEntry.model_validate(row) for row in rows]
         if since is None:
@@ -144,9 +140,7 @@ class Account:
     :class:`convilyn.AsyncConvilyn` for high-throughput sync callers.
     """
 
-    def __init__(
-        self, async_account: AsyncAccount, run: CoroRunner | None = None
-    ) -> None:
+    def __init__(self, async_account: AsyncAccount, run: CoroRunner | None = None) -> None:
         self._async = async_account
         self._run: CoroRunner = run if run is not None else asyncio.run
 
@@ -156,7 +150,5 @@ class Account:
     def get_plan(self) -> Plan:
         return self._run(self._async.get_plan())
 
-    def usage_history(
-        self, *, since: datetime | None = None
-    ) -> list[UsageHistoryEntry]:
+    def usage_history(self, *, since: datetime | None = None) -> list[UsageHistoryEntry]:
         return self._run(self._async.usage_history(since=since))

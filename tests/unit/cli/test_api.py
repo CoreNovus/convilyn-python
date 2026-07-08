@@ -43,9 +43,7 @@ def patched_client(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class TestApiLogic:
-    def test_get_pretty_prints_json_body(
-        self, runner: CliRunner, patched_client: None
-    ) -> None:
+    def test_get_pretty_prints_json_body(self, runner: CliRunner, patched_client: None) -> None:
         with respx.mock(assert_all_called=True) as mock:
             mock.get(f"{API_BASE}/api/v1/jobs/abc").mock(
                 return_value=httpx.Response(200, json={"jobId": "abc", "status": "ok"})
@@ -75,9 +73,7 @@ class TestApiLogic:
         # The captured body must be valid JSON re-serialised from --data.
         assert json.loads(captured[0]) == {"key": "value"}
 
-    def test_query_params_serialised(
-        self, runner: CliRunner, patched_client: None
-    ) -> None:
+    def test_query_params_serialised(self, runner: CliRunner, patched_client: None) -> None:
         captured_urls: list[str] = []
 
         def _capture(request: httpx.Request) -> httpx.Response:
@@ -119,18 +115,12 @@ class TestApiBoundary:
         assert result.exit_code != EXIT_OK
         assert "mutually exclusive" in result.output
 
-    def test_invalid_data_json_rejected(
-        self, runner: CliRunner, patched_client: None
-    ) -> None:
-        result = runner.invoke(
-            api_command, ["POST", "/api/v1/x", "--data", "not-json"]
-        )
+    def test_invalid_data_json_rejected(self, runner: CliRunner, patched_client: None) -> None:
+        result = runner.invoke(api_command, ["POST", "/api/v1/x", "--data", "not-json"])
         assert result.exit_code != EXIT_OK
         assert "not valid JSON" in result.output
 
-    def test_invalid_query_format_rejected(
-        self, runner: CliRunner, patched_client: None
-    ) -> None:
+    def test_invalid_query_format_rejected(self, runner: CliRunner, patched_client: None) -> None:
         result = runner.invoke(
             api_command,
             ["GET", "/api/v1/x", "--query", "no_equals_sign"],
@@ -138,9 +128,7 @@ class TestApiBoundary:
         assert result.exit_code != EXIT_OK
         assert "NAME=VALUE" in result.output
 
-    def test_invalid_header_format_rejected(
-        self, runner: CliRunner, patched_client: None
-    ) -> None:
+    def test_invalid_header_format_rejected(self, runner: CliRunner, patched_client: None) -> None:
         result = runner.invoke(
             api_command,
             ["GET", "/api/v1/x", "--header", "no_colon_separator"],
@@ -148,9 +136,7 @@ class TestApiBoundary:
         assert result.exit_code != EXIT_OK
         assert "Name: Value" in result.output
 
-    def test_input_dash_reads_stdin(
-        self, runner: CliRunner, patched_client: None
-    ) -> None:
+    def test_input_dash_reads_stdin(self, runner: CliRunner, patched_client: None) -> None:
         captured: list[bytes] = []
 
         def _capture(request: httpx.Request) -> httpx.Response:
@@ -177,9 +163,7 @@ class TestApiErrors:
     ) -> None:
         with respx.mock(assert_all_called=True) as mock:
             mock.get(f"{API_BASE}/api/v1/missing").mock(
-                return_value=httpx.Response(
-                    404, json={"code": "NOT_FOUND", "message": "not found"}
-                )
+                return_value=httpx.Response(404, json={"code": "NOT_FOUND", "message": "not found"})
             )
             result = runner.invoke(api_command, ["GET", "/api/v1/missing"])
         assert result.exit_code == EXIT_API_ERROR
@@ -203,16 +187,12 @@ class TestApiErrors:
 
 
 class TestApiObjectState:
-    def test_json_flag_emits_single_line(
-        self, runner: CliRunner, patched_client: None
-    ) -> None:
+    def test_json_flag_emits_single_line(self, runner: CliRunner, patched_client: None) -> None:
         with respx.mock(assert_all_called=True) as mock:
             mock.get(f"{API_BASE}/api/v1/jobs/abc").mock(
                 return_value=httpx.Response(200, json={"a": 1, "b": 2})
             )
-            result = runner.invoke(
-                api_command, ["GET", "/api/v1/jobs/abc", "--json"]
-            )
+            result = runner.invoke(api_command, ["GET", "/api/v1/jobs/abc", "--json"])
         assert result.exit_code == EXIT_OK
         # Single line of JSON in --json mode.
         assert len(result.output.strip().splitlines()) == 1
@@ -228,9 +208,7 @@ class TestApiObjectState:
                     200, json={"ok": True}, headers={"X-Custom-Header": "yes"}
                 )
             )
-            result = runner.invoke(
-                api_command, ["GET", "/api/v1/jobs/abc", "--include"]
-            )
+            result = runner.invoke(api_command, ["GET", "/api/v1/jobs/abc", "--include"])
         assert result.exit_code == EXIT_OK
         assert "200" in result.output  # status line
         assert "x-custom-header" in result.output.lower()  # header

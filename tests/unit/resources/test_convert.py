@@ -97,9 +97,7 @@ class TestConvertLogic:
 
             async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
                 with patch("convilyn.resources.convert.asyncio.sleep", return_value=None):
-                    job = await client.convert.create_and_wait(
-                        file=file_obj, target_format="pdf"
-                    )
+                    job = await client.convert.create_and_wait(file=file_obj, target_format="pdf")
 
         assert isinstance(job, ConvertJob)
         assert job.status == "completed"
@@ -213,16 +211,12 @@ class TestConvertErrors:
             async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
                 with patch("convilyn.resources.convert.asyncio.sleep", return_value=None):
                     with pytest.raises(JobFailedError) as info:
-                        await client.convert.create_and_wait(
-                            file=file_obj, target_format="pdf"
-                        )
+                        await client.convert.create_and_wait(file=file_obj, target_format="pdf")
         assert info.value.code == "CONVERSION_FAILED"
         assert info.value.job_id == "job_test"
 
     @pytest.mark.asyncio
-    async def test_failed_job_with_zero_byte_result_raises_job_failed_error(
-        self, file_obj
-    ) -> None:
+    async def test_failed_job_with_zero_byte_result_raises_job_failed_error(self, file_obj) -> None:
         # A failed conversion can carry a 0-byte placeholder result file. The
         # SDK must still parse the job and surface JobFailedError, not choke on
         # ResultFile.size validation (a `gt=0` bound raised ValidationError,
@@ -253,18 +247,14 @@ class TestConvertErrors:
             async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
                 with patch("convilyn.resources.convert.asyncio.sleep", return_value=None):
                     with pytest.raises(JobFailedError) as info:
-                        await client.convert.create_and_wait(
-                            file=file_obj, target_format="pdf"
-                        )
+                        await client.convert.create_and_wait(file=file_obj, target_format="pdf")
         assert info.value.code == "CONVERSION_FAILED"
 
     @pytest.mark.asyncio
     async def test_retrieve_404_raises_api_error(self) -> None:
         async with respx.mock(assert_all_called=True) as mock:
             mock.get(f"{API_BASE}/api/v1/jobs/job_missing").mock(
-                return_value=httpx.Response(
-                    404, json={"code": "JOB_NOT_FOUND", "message": "..."}
-                )
+                return_value=httpx.Response(404, json={"code": "JOB_NOT_FOUND", "message": "..."})
             )
             async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
                 with pytest.raises(APIError) as info:
@@ -282,9 +272,7 @@ class TestConvertErrors:
                 with patch("convilyn.resources.convert.asyncio.sleep", return_value=None):
                     with pytest.raises(JobTimeoutError) as info:
                         # Tiny timeout so the test is fast.
-                        await client.convert.wait(
-                            "job_slow", timeout=0.01, poll_interval=0.5
-                        )
+                        await client.convert.wait("job_slow", timeout=0.01, poll_interval=0.5)
         assert info.value.job_id == "job_slow"
 
 
@@ -311,9 +299,7 @@ class TestConvertObjectState:
 
             async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
                 with patch("convilyn.resources.convert.asyncio.sleep", return_value=None):
-                    job = await client.convert.create_and_wait(
-                        file=file_obj, target_format="pdf"
-                    )
+                    job = await client.convert.create_and_wait(file=file_obj, target_format="pdf")
         assert job.status == "completed"
         assert get_route.call_count == 3
 
@@ -329,9 +315,7 @@ class TestConvertObjectState:
             client = Convilyn(api_key="ck_test")  # pragma: allowlist secret
             try:
                 with patch("convilyn.resources.convert.asyncio.sleep", return_value=None):
-                    job = client.convert.create_and_wait(
-                        file=file_obj, target_format="pdf"
-                    )
+                    job = client.convert.create_and_wait(file=file_obj, target_format="pdf")
             finally:
                 client.close()
 

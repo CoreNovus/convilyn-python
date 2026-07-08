@@ -7,10 +7,9 @@ discussions, or pull requests.**
 
 Report privately, one of:
 
-- **Email** `security@corenovus.com` — encrypt with our PGP key if the finding is
-  sensitive (key fingerprint published at `https://docs.convilyn.corenovus.com/security`).
-- **GitHub private advisory** — the [Report a vulnerability](../../security/advisories/new)
+- **GitHub private advisory** (preferred) — the [Report a vulnerability](../../security/advisories/new)
   button on this repo (Security → Advisories).
+- **Email** `security@corenovus.com`.
 
 Please include: affected version(s), a description, reproduction steps or a PoC,
 and the impact you observed. We support coordinated disclosure and will credit you

@@ -261,9 +261,7 @@ class TestConfirmCancelRetryLogic:
         mock_factory.goals.confirm.return_value = completed_job
         result = runner.invoke(goals_command, ["confirm", "job_test"])
         assert result.exit_code == EXIT_OK
-        mock_factory.goals.confirm.assert_called_once_with(
-            "job_test", expected_version=None
-        )
+        mock_factory.goals.confirm.assert_called_once_with("job_test", expected_version=None)
 
     def test_cancel_calls_sdk(
         self,
@@ -373,7 +371,7 @@ class TestParseHelpers:
         assert _parse_slot_value('{"k": 1}') == {"k": 1}
 
     def test_parse_slot_pairs_multiple(self) -> None:
-        result = _parse_slot_pairs(("a=1", "b=hello", 'c=[1,2]'))
+        result = _parse_slot_pairs(("a=1", "b=hello", "c=[1,2]"))
         assert result == {"a": 1, "b": "hello", "c": [1, 2]}
 
 
@@ -408,9 +406,7 @@ class TestErrorMapping:
         runner: CliRunner,
         mock_factory: MagicMock,
     ) -> None:
-        mock_factory.goals.retrieve.side_effect = APIError(
-            500, "INTERNAL", "server down"
-        )
+        mock_factory.goals.retrieve.side_effect = APIError(500, "INTERNAL", "server down")
         result = runner.invoke(goals_command, ["status", "job_test"])
         assert result.exit_code == EXIT_API_ERROR
 
@@ -864,9 +860,7 @@ class TestStreamEventsAsyncCleanup:
         monkeypatch.setenv("CONVILYN_DEBUG", "1")
 
         async def _one_completed(*args: Any, **kwargs: Any):
-            yield GoalEvent.model_validate(
-                json.loads(make_envelope("completed", seq=1))
-            )
+            yield GoalEvent.model_validate(json.loads(make_envelope("completed", seq=1)))
 
         async_client = MagicMock()
         async_client.goals.events = _one_completed
@@ -950,9 +944,7 @@ class TestSummariseEvent:
         ],
         ids=["name_wins", "tool", "role", "message", "status"],
     )
-    def test_first_truthy_candidate_returned(
-        self, data: dict[str, Any], expected: str
-    ) -> None:
+    def test_first_truthy_candidate_returned(self, data: dict[str, Any], expected: str) -> None:
         event = GoalEvent.model_validate(
             json.loads(make_envelope("tool_started", seq=1, data=data))
         )
@@ -967,8 +959,6 @@ class TestSummariseEvent:
         assert _summarise_event(event) == " 42%"
 
     def test_empty_data_returns_empty_string(self) -> None:
-        event = GoalEvent.model_validate(
-            json.loads(make_envelope("tool_started", seq=1, data={}))
-        )
+        event = GoalEvent.model_validate(json.loads(make_envelope("tool_started", seq=1, data={})))
 
         assert _summarise_event(event) == ""

@@ -177,11 +177,7 @@ SYNC_RESOURCE_METHODS = {
 
 def _public_methods(cls: type) -> set[str]:
     """Public (non-underscore) callable members defined on ``cls``."""
-    return {
-        name
-        for name, _member in inspect.getmembers(cls, callable)
-        if not name.startswith("_")
-    }
+    return {name for name, _member in inspect.getmembers(cls, callable) if not name.startswith("_")}
 
 
 # ── __all__ is frozen ────────────────────────────────────────────────

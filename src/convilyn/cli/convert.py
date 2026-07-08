@@ -165,8 +165,7 @@ def _emit_dry_run(
     content_type = mimetypes.guess_type(input_file.name)[0] or "application/octet-stream"
     renderer.event(
         "upload",
-        message=f"[dry-run] Would upload: {input_file.name} "
-        f"({file_size} B, {content_type})",
+        message=f"[dry-run] Would upload: {input_file.name} ({file_size} B, {content_type})",
     )
     renderer.event(
         "create",

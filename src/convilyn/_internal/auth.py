@@ -83,7 +83,7 @@ class APIKey:
         if is_author_key(key):
             raise AuthError(
                 f"{_mask_key(key)} looks like a Convilyn Author SDK / developer-portal "
-                f'token (cvl_/cvi_), not a consumer API key. The consumer SDK '
+                f"token (cvl_/cvi_), not a consumer API key. The consumer SDK "
                 f'authenticates with a "{CONSUMER_KEY_PREFIX}" key — mint one under '
                 f"Settings → API. (Author tokens publish workflows / tools; they do "
                 f"not call the data-plane API.)"
@@ -124,8 +124,7 @@ def resolve_auth(
     key = api_key or source.get(ENV_API_KEY)
     if not key:
         raise AuthError(
-            "No API key supplied. Pass api_key=... or set the "
-            f"{ENV_API_KEY} environment variable."
+            f"No API key supplied. Pass api_key=... or set the {ENV_API_KEY} environment variable."
         )
     return APIKey(key)
 

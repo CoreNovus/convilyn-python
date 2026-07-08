@@ -139,9 +139,7 @@ class TestForkLogic:
         import json
 
         route = respx.post(f"{API_BASE}/api/v1/workflows/fork").mock(
-            return_value=httpx.Response(
-                201, json=_workflow_wire(name="Copy of Doc Analyzer")
-            )
+            return_value=httpx.Response(201, json=_workflow_wire(name="Copy of Doc Analyzer"))
         )
         forked = await client.workflows.fork(
             source_spec_id="doc_analyzer", name="Copy of Doc Analyzer"
@@ -230,9 +228,7 @@ class TestBoundary:
 class TestErrors:
     @pytest.mark.asyncio
     @respx.mock
-    async def test_fork_pro_tier_required_surfaces_api_error(
-        self, client: AsyncConvilyn
-    ) -> None:
+    async def test_fork_pro_tier_required_surfaces_api_error(self, client: AsyncConvilyn) -> None:
         respx.post(f"{API_BASE}/api/v1/workflows/fork").mock(
             return_value=httpx.Response(
                 402,
@@ -250,15 +246,11 @@ class TestErrors:
 
     @pytest.mark.asyncio
     @respx.mock
-    async def test_get_not_found_surfaces_api_error_404(
-        self, client: AsyncConvilyn
-    ) -> None:
+    async def test_get_not_found_surfaces_api_error_404(self, client: AsyncConvilyn) -> None:
         respx.get(f"{API_BASE}/api/v1/workflows/uw_missing").mock(
             return_value=httpx.Response(
                 404,
-                json={
-                    "error": {"code": "WORKFLOW_NOT_FOUND", "message": "Workflow not found"}
-                },
+                json={"error": {"code": "WORKFLOW_NOT_FOUND", "message": "Workflow not found"}},
             )
         )
         with pytest.raises(APIError) as exc_info:
@@ -267,9 +259,7 @@ class TestErrors:
 
     @pytest.mark.asyncio
     @respx.mock
-    async def test_like_on_private_workflow_surfaces_409(
-        self, client: AsyncConvilyn
-    ) -> None:
+    async def test_like_on_private_workflow_surfaces_409(self, client: AsyncConvilyn) -> None:
         respx.post(f"{API_BASE}/api/v1/workflows/uw_priv/like").mock(
             return_value=httpx.Response(
                 409,
@@ -287,9 +277,7 @@ class TestErrors:
 
     @pytest.mark.asyncio
     @respx.mock
-    async def test_publish_version_mismatch_surfaces_409(
-        self, client: AsyncConvilyn
-    ) -> None:
+    async def test_publish_version_mismatch_surfaces_409(self, client: AsyncConvilyn) -> None:
         respx.patch(f"{API_BASE}/api/v1/workflows/uw_abc123").mock(
             return_value=httpx.Response(
                 409,

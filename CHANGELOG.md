@@ -5,6 +5,21 @@ versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.1.1b4] — 2026-07-09
+
+### Fixed
+
+- Public-mirror CI is now green: the SDK source is `ruff format`-clean (formatting
+  was previously unenforced on `sdk/`), the secret-scan uses `detect-secrets-hook`
+  (the old step's `git diff --exit-code` always failed on detect-secrets' volatile
+  `generated_at` timestamp), and the broken typecheck step (`pyright`/`mypy`, neither
+  shipped) was removed.
+
+### Changed
+
+- Pin `ruff==0.15.6` in the `dev` extra and enforce `ruff format` on the SDK tree so
+  local formatting never drifts from the mirror CI.
+
 ## [1.1.1b3] — 2026-07-08
 
 ### Docs

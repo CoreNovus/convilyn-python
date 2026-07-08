@@ -37,9 +37,7 @@ def _read_version_constant() -> str:
     constant to be valid Python AND match the changelog regardless
     of whether deps install cleanly.
     """
-    version_file = (
-        Path(__file__).parent.parent.parent / "src" / "convilyn" / "_version.py"
-    )
+    version_file = Path(__file__).parent.parent.parent / "src" / "convilyn" / "_version.py"
     match = re.search(
         r'^__version__\s*=\s*["\'](?P<v>[^"\']+)["\']',
         version_file.read_text(encoding="utf-8"),

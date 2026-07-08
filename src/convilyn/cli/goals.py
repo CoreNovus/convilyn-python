@@ -276,9 +276,7 @@ def confirm_command(
     """Confirm a job whose slots are filled."""
     renderer = make_renderer(json_output=json_output)
     _run_sync_action(
-        action=lambda client: client.goals.confirm(
-            job_spec_id, expected_version=expected_version
-        ),
+        action=lambda client: client.goals.confirm(job_spec_id, expected_version=expected_version),
         renderer=renderer,
         command_name="confirm",
     )
@@ -539,9 +537,7 @@ async def _stream_events(
             await client.async_client.aclose()
         except Exception as cleanup_exc:
             if os.environ.get("CONVILYN_DEBUG"):
-                click.echo(
-                    f"cleanup failed: {cleanup_exc!r}", err=True, file=err
-                )
+                click.echo(f"cleanup failed: {cleanup_exc!r}", err=True, file=err)
 
 
 def _emit_event(

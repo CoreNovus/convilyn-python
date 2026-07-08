@@ -1,0 +1,31 @@
+# Dependency updates for the public mirror. Dependabot PRs land here like any
+# community PR — a maintainer reviews and upstreams them via the bridge (they do
+# NOT merge directly; the monorepo is the source of truth). Grouped + capped to
+# keep the queue reviewable.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    groups:
+      dev-tooling:
+        patterns:
+          - "ruff"
+          - "pytest*"
+          - "detect-secrets"
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+    commit-message:
+      prefix: "chore(ci)"

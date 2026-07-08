@@ -75,9 +75,7 @@ class AsyncWorkflows:
             params["tag"] = tag
         if cursor is not None:
             params["cursor"] = cursor
-        response = await self._http.request(
-            "GET", "/api/v1/workflows/community", params=params
-        )
+        response = await self._http.request("GET", "/api/v1/workflows/community", params=params)
         return WorkflowSearchPage.model_validate(response.json())
 
     async def get(self, workflow_id: str) -> Workflow:
@@ -89,9 +87,7 @@ class AsyncWorkflows:
         :class:`APIError` with status 404 — the backend collapses both
         to prevent ID-existence probing.
         """
-        response = await self._http.request(
-            "GET", f"/api/v1/workflows/{workflow_id}"
-        )
+        response = await self._http.request("GET", f"/api/v1/workflows/{workflow_id}")
         return Workflow.model_validate(response.json())
 
     async def fork(
@@ -121,9 +117,7 @@ class AsyncWorkflows:
         body: dict[str, Any] = {"sourceSpecId": source_spec_id}
         if name is not None:
             body["name"] = name
-        response = await self._http.request(
-            "POST", "/api/v1/workflows/fork", json=body
-        )
+        response = await self._http.request("POST", "/api/v1/workflows/fork", json=body)
         return Workflow.model_validate(response.json())
 
     async def publish(
@@ -143,9 +137,7 @@ class AsyncWorkflows:
         :meth:`patch`; only the public → private transition is rejected
         by the backend (would silently break forkers' links).
         """
-        return await self.patch(
-            workflow_id, item_version=item_version, visibility="public"
-        )
+        return await self.patch(workflow_id, item_version=item_version, visibility="public")
 
     async def patch(
         self,
@@ -172,9 +164,7 @@ class AsyncWorkflows:
             body["visibility"] = visibility
         if tags is not None:
             body["tags"] = list(tags)
-        response = await self._http.request(
-            "PATCH", f"/api/v1/workflows/{workflow_id}", json=body
-        )
+        response = await self._http.request("PATCH", f"/api/v1/workflows/{workflow_id}", json=body)
         return Workflow.model_validate(response.json())
 
     async def like(self, workflow_id: str) -> LikeResponse:
@@ -189,9 +179,7 @@ class AsyncWorkflows:
                 workflow is not public (private workflows are not
                 likeable).
         """
-        response = await self._http.request(
-            "POST", f"/api/v1/workflows/{workflow_id}/like"
-        )
+        response = await self._http.request("POST", f"/api/v1/workflows/{workflow_id}/like")
         return LikeResponse.model_validate(response.json())
 
 
@@ -205,9 +193,7 @@ class Workflows:
     :class:`AsyncConvilyn` for high-throughput callers.
     """
 
-    def __init__(
-        self, async_workflows: AsyncWorkflows, run: CoroRunner | None = None
-    ) -> None:
+    def __init__(self, async_workflows: AsyncWorkflows, run: CoroRunner | None = None) -> None:
         self._async = async_workflows
         self._run: CoroRunner = run if run is not None else asyncio.run
 

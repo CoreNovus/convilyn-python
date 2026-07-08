@@ -91,14 +91,11 @@ def resolve_auto_throttle(value: AutoThrottleArg) -> AutoThrottleConfig | None:
     if isinstance(value, dict):
         return AutoThrottleConfig(**value)
     raise TypeError(
-        "auto_throttle must be bool, dict, or AutoThrottleConfig — "
-        f"got {type(value).__name__}"
+        f"auto_throttle must be bool, dict, or AutoThrottleConfig — got {type(value).__name__}"
     )
 
 
-def compute_quota_sleep(
-    error: QuotaExceededError, config: AutoThrottleConfig
-) -> float | None:
+def compute_quota_sleep(error: QuotaExceededError, config: AutoThrottleConfig) -> float | None:
     """Return seconds to sleep before retrying, or ``None`` to give up.
 
     Resolution order (first non-empty wins):

@@ -9,7 +9,7 @@
 # The internal-vocabulary (blackbox) gate + contract/conformance run in the
 # UPSTREAM monorepo when a community PR is upstreamed — deliberately NOT here:
 # shipping the internal-term blocklist into a public repo would itself leak
-# internal architecture vocabulary. So this CI covers lint / type / test /
+# internal architecture vocabulary. So this CI covers lint / format / test /
 # secret-scan; every PR is vocabulary-checked at the upstream step, and the
 # mirror is only ever refreshed from the (already-clean) monorepo.
 name: ci
@@ -40,8 +40,6 @@ jobs:
         run: python -m ruff check .
       - name: Format check (ruff)
         run: python -m ruff format --check .
-      - name: Typecheck
-        run: python -m pyright . || python -m mypy . # whichever the package uses
       - name: Tests
         run: python -m pytest
 
@@ -55,7 +53,8 @@ jobs:
       - name: detect-secrets (against the shipped baseline)
         run: |
           python -m pip install detect-secrets==1.5.0
-          # .secrets.baseline is scaffolded per repo; fail if any NEW secret appears.
-          detect-secrets scan --baseline .secrets.baseline
-          git diff --exit-code .secrets.baseline || {
-            echo "::error::New secrets detected — review and update .secrets.baseline deliberately."; exit 1; }
+          # detect-secrets-hook exits non-zero ONLY on NEW, un-baselined secrets.
+          # (A plain `scan --baseline` + `git diff --exit-code` would ALWAYS fail:
+          # detect-secrets rewrites the baseline's `generated_at` timestamp every
+          # run, so the diff is never empty even with zero findings.)
+          git ls-files -z | xargs -0 detect-secrets-hook --baseline .secrets.baseline

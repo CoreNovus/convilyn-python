@@ -1,8 +1,7 @@
 # Contributing to convilyn-python
 
-Thanks for wanting to contribute — **community contributions are genuinely
-welcome and land in the shipped package.** This page explains exactly how, so
-your work has a real, credited path in.
+**Community contributions are welcome and land in the shipped package** — with your
+authorship preserved. Here's how.
 
 ## How this repository works (read this first)
 
@@ -19,15 +18,14 @@ you fork convilyn-python  ──PR──▶  convilyn-python   ──upstreamed�
       mirror refreshed  ◀── merged ──  contract + conformance + smoke + blackbox
 ```
 
-**Your PR is not merged in the mirror and then reconciled — it becomes a monorepo
-PR first.** A maintainer (or the upstream bot) converts your accepted PR into a
-monorepo PR with **your authorship preserved** (via `git format-patch`), it runs
-the full monorepo CI, and once merged the mirror is refreshed from it. Your mirror
-PR is then closed with a comment `Upstreamed in CoreNovus/convilyn#<N>`.
+**Your PR becomes a monorepo PR first — it is not merged here directly.** A
+maintainer converts your accepted PR into a monorepo PR with **your authorship
+preserved** (via `git format-patch`); it runs the full monorepo CI, and once merged
+the mirror is refreshed from it. Your mirror PR is then closed
+`Upstreamed in CoreNovus/convilyn#<N>`.
 
-Why this shape? It keeps the SDK and the backend wire contract in lock-step (the
-platform's defence against drift) while still giving you a first-class contribution path. See
-[ADR-0004](https://docs.convilyn.corenovus.com) for the full rationale.
+This keeps the SDK and the backend wire contract in lock-step (the platform's defence
+against drift) while giving you a first-class contribution path.
 
 ## Before you start
 
@@ -45,11 +43,10 @@ cd convilyn-python
 pip install -e ".[dev]" && pytest
 ```
 
-Run the checks the CI runs before you push:
+Before pushing, run the same checks CI runs (see `.github/workflows/ci.yml`):
 
 ```bash
-# whatever the repo's CI (.github/workflows/ci.yml) runs — lint, typecheck,
-# tests, secret scan. Green locally == green in CI.
+ruff check . && ruff format --check . && pytest
 ```
 
 ## Sign your commits (DCO)

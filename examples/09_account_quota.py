@@ -32,9 +32,7 @@ def main() -> int:
         )
 
         usage_pct = (
-            100
-            * estimate.estimated_micro_u
-            / max(estimate.quota_check.threshold_micro_u, 1)
+            100 * estimate.estimated_micro_u / max(estimate.quota_check.threshold_micro_u, 1)
         )
         print(
             f"estimated cost: {estimate.estimated_micro_u} micro-U "
@@ -69,7 +67,5 @@ if __name__ == "__main__":
         print(f"plan upgrade required: {exc.message} ({exc.upgrade_url})")
         raise SystemExit(1) from exc
     except QuotaExceededError as exc:
-        print(
-            f"quota exceeded: {exc.estimated_micro_u}/{exc.threshold_micro_u} micro-U"
-        )
+        print(f"quota exceeded: {exc.estimated_micro_u}/{exc.threshold_micro_u} micro-U")
         raise SystemExit(2) from exc

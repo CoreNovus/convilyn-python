@@ -58,9 +58,7 @@ def doctor_command(json_output: bool, ping: bool) -> None:
         # Pick the exit code based on the kind of failures. Auth /
         # config gaps are usage errors; an unreachable backend is an
         # API error.
-        api_failures = any(
-            c.status == "FAIL" and c.name == "Backend health" for c in checks
-        )
+        api_failures = any(c.status == "FAIL" and c.name == "Backend health" for c in checks)
         raise SystemExit(EXIT_API_ERROR if api_failures else EXIT_USAGE)
 
 
@@ -218,9 +216,7 @@ def _emit_checks(renderer: OutputRenderer, checks: list[Check]) -> None:
 
     payload = {
         "command": "doctor",
-        "checks": [
-            {"name": c.name, "status": c.status, "detail": c.detail} for c in checks
-        ],
+        "checks": [{"name": c.name, "status": c.status, "detail": c.detail} for c in checks],
         "summary": _doctor_summary(checks),
     }
     renderer.final(payload)

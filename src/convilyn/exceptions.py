@@ -182,9 +182,7 @@ class GoalJobFailedError(ConvilynError):
         self.job_spec_id = job_spec_id
         self.code = code or "GOAL_JOB_FAILED"
         self.message = message or "Job failed without a structured error message"
-        super().__init__(
-            f"GoalJob {job_spec_id} failed [{self.code}]: {self.message}"
-        )
+        super().__init__(f"GoalJob {job_spec_id} failed [{self.code}]: {self.message}")
 
 
 class GoalJobTimeoutError(ConvilynError):
@@ -196,9 +194,7 @@ class GoalJobTimeoutError(ConvilynError):
     :py:meth:`convilyn.resources.goals.AsyncGoals.retrieve`.
     """
 
-    def __init__(
-        self, *, job_spec_id: str, elapsed: float, timeout: float
-    ) -> None:
+    def __init__(self, *, job_spec_id: str, elapsed: float, timeout: float) -> None:
         self.job_spec_id = job_spec_id
         self.elapsed = elapsed
         self.timeout = timeout

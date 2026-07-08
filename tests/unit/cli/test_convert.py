@@ -123,9 +123,7 @@ class TestConvertLogic:
         sample_file: Path,
         mock_client: MagicMock,
     ) -> None:
-        result = runner.invoke(
-            convert_command, [str(sample_file), "--to", "pdf", "--json"]
-        )
+        result = runner.invoke(convert_command, [str(sample_file), "--to", "pdf", "--json"])
         assert result.exit_code == EXIT_OK
         last_line = result.output.strip().splitlines()[-1]
         payload = json.loads(last_line)
@@ -153,18 +151,14 @@ class TestConvertLogic:
 
 
 class TestConvertBoundary:
-    def test_missing_to_flag_exits_usage(
-        self, runner: CliRunner, sample_file: Path
-    ) -> None:
+    def test_missing_to_flag_exits_usage(self, runner: CliRunner, sample_file: Path) -> None:
         result = runner.invoke(convert_command, [str(sample_file)])
         # Click rejects with exit code 2 for usage errors (its convention).
         assert result.exit_code != EXIT_OK
         assert "--to" in result.output
 
     def test_missing_input_file_exits_usage(self, runner: CliRunner) -> None:
-        result = runner.invoke(
-            convert_command, ["/nonexistent.docx", "--to", "pdf"]
-        )
+        result = runner.invoke(convert_command, ["/nonexistent.docx", "--to", "pdf"])
         assert result.exit_code != EXIT_OK
 
     def test_dry_run_skips_api_calls(
@@ -174,9 +168,7 @@ class TestConvertBoundary:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         # The factory should NEVER be called in dry-run mode.
-        sentinel = MagicMock(
-            side_effect=AssertionError("client factory must not be called")
-        )
+        sentinel = MagicMock(side_effect=AssertionError("client factory must not be called"))
         monkeypatch.setattr(convert_module, "_build_client", sentinel)
         result = runner.invoke(
             convert_command,
@@ -212,9 +204,7 @@ class TestConvertErrors:
         )
         monkeypatch.setattr(convert_module, "_build_client", lambda: client)
 
-        result = runner.invoke(
-            convert_command, [str(sample_file), "--to", "pdf"]
-        )
+        result = runner.invoke(convert_command, [str(sample_file), "--to", "pdf"])
         assert result.exit_code == EXIT_JOB_FAILED
 
     def test_auth_error_at_construct_time(
@@ -229,9 +219,7 @@ class TestConvertErrors:
             raise AuthError("API key not set")
 
         monkeypatch.setattr(convert_module, "_build_client", _raise)
-        result = runner.invoke(
-            convert_command, [str(sample_file), "--to", "pdf"]
-        )
+        result = runner.invoke(convert_command, [str(sample_file), "--to", "pdf"])
         # ClickException defaults to exit 1 (usage error tier).
         assert result.exit_code == EXIT_USAGE
 
@@ -247,9 +235,7 @@ class TestConvertErrors:
         client.files.upload.side_effect = APIError(500, "X", "server down")
         monkeypatch.setattr(convert_module, "_build_client", lambda: client)
 
-        result = runner.invoke(
-            convert_command, [str(sample_file), "--to", "pdf"]
-        )
+        result = runner.invoke(convert_command, [str(sample_file), "--to", "pdf"])
         assert result.exit_code == EXIT_API_ERROR
 
 

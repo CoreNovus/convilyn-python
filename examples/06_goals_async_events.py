@@ -42,9 +42,7 @@ async def main() -> int:
 
     async with AsyncConvilyn() as client:
         # 1. Start the job (no `wait` — we listen on the WS instead).
-        job = await client.goals.start(
-            workflow_id="doc_analyzer", files=[file_id]
-        )
+        job = await client.goals.start(workflow_id="doc_analyzer", files=[file_id])
         print(f"started: {job.job_spec_id}")
 
         # 2. Stream events. Subscribe-then-start ordering is preserved

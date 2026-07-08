@@ -101,7 +101,8 @@ class TestRetryBoundary:
                 return_value=httpx.Response(503, json={"code": "X", "message": "x"})
             )
             async with AsyncConvilyn(
-                api_key="ck_test", max_retries=0  # pragma: allowlist secret
+                api_key="ck_test",
+                max_retries=0,  # pragma: allowlist secret
             ) as client:
                 with pytest.raises(APIError):
                     await client._http.request("POST", "/api/v1/test", json={})
@@ -114,7 +115,8 @@ class TestRetryBoundary:
                 return_value=httpx.Response(503, json={"code": "X", "message": "x"})
             )
             async with AsyncConvilyn(
-                api_key="ck_test", max_retries=2  # pragma: allowlist secret
+                api_key="ck_test",
+                max_retries=2,  # pragma: allowlist secret
             ) as client:
                 with patch("convilyn._internal.http.asyncio.sleep", return_value=None):
                     with pytest.raises(RetryExhaustedError) as info:
@@ -169,9 +171,7 @@ class TestRetryErrors:
         # Conservative default — a network failure on POST may have reached
         # the server, so the SDK does not retry by default.
         policy = ExponentialBackoffRetry()
-        assert (
-            policy.should_retry(None, httpx.ConnectError("boom"), attempt=0) is False
-        )
+        assert policy.should_retry(None, httpx.ConnectError("boom"), attempt=0) is False
 
     def test_jitter_stays_within_range(self) -> None:
         policy = ExponentialBackoffRetry(base_delay=1.0, max_delay=10.0, jitter=0.25)

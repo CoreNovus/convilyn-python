@@ -94,16 +94,15 @@ class TestDoctorObjectState:
         self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv(
-            "CONVILYN_API_KEY", "ck_very_secret_token_value_12345"  # pragma: allowlist secret
+            "CONVILYN_API_KEY",
+            "ck_very_secret_token_value_12345",  # pragma: allowlist secret
         )
         result = runner.invoke(doctor_command, [])
         assert "very_secret_token_value" not in result.output
         assert "ck_" in result.output  # tier prefix retained
         assert "2345" not in result.output  # trailing chars NOT leaked
 
-    def test_no_ping_marks_health_as_skipped(
-        self, runner: CliRunner, env_with_key: None
-    ) -> None:
+    def test_no_ping_marks_health_as_skipped(self, runner: CliRunner, env_with_key: None) -> None:
         result = runner.invoke(doctor_command, ["--json"])
         last_line = result.output.strip().splitlines()[-1]
         payload = json.loads(last_line)
@@ -122,9 +121,7 @@ class TestDoctorObjectState:
                 return_value=httpx.Response(200, json={"status": "ok"})
             )
             # The tier check calls /cost-preview under the hood.
-            mock.post(
-                "https://api.test.convilyn.com/api/v1/workflows/cost-preview"
-            ).mock(
+            mock.post("https://api.test.convilyn.com/api/v1/workflows/cost-preview").mock(
                 return_value=httpx.Response(
                     200,
                     json={
@@ -163,9 +160,9 @@ class TestDoctorObjectState:
             mock.get("https://api.test.convilyn.com/api/v1/health").mock(
                 return_value=httpx.Response(200, json={"status": "ok"})
             )
-            mock.post(
-                "https://api.test.convilyn.com/api/v1/workflows/cost-preview"
-            ).mock(side_effect=httpx.ConnectError("transient"))
+            mock.post("https://api.test.convilyn.com/api/v1/workflows/cost-preview").mock(
+                side_effect=httpx.ConnectError("transient")
+            )
             result = runner.invoke(doctor_command, ["--ping", "--json"])
         # Doctor stays OK — required gates passed; tier is advisory.
         assert result.exit_code == EXIT_OK

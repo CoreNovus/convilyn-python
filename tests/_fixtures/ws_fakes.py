@@ -56,10 +56,7 @@ class FakeWSTransport:
 
     async def recv(self) -> str:
         self._recv_count += 1
-        if (
-            self.raise_interrupt_after is not None
-            and self._recv_count > self.raise_interrupt_after
-        ):
+        if self.raise_interrupt_after is not None and self._recv_count > self.raise_interrupt_after:
             raise KeyboardInterrupt
         if self._queue.empty():
             raise ConnectionError("simulated mid-stream close")

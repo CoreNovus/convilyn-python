@@ -35,23 +35,17 @@ def _run_cli(*args: str) -> subprocess.CompletedProcess[str]:
 
 class TestCliSubprocessSmoke:
     def test_convert_dry_run_exits_zero(self, sample_file: Path) -> None:
-        result = _run_cli(
-            "convert", str(sample_file), "--to", "pdf", "--json", "--dry-run"
-        )
+        result = _run_cli("convert", str(sample_file), "--to", "pdf", "--json", "--dry-run")
 
         assert result.returncode == 0
 
     def test_convert_dry_run_teardown_is_clean(self, sample_file: Path) -> None:
-        result = _run_cli(
-            "convert", str(sample_file), "--to", "pdf", "--json", "--dry-run"
-        )
+        result = _run_cli("convert", str(sample_file), "--to", "pdf", "--json", "--dry-run")
 
         assert "Event loop is closed" not in result.stderr
 
     def test_convert_dry_run_emits_single_json_object(self, sample_file: Path) -> None:
-        result = _run_cli(
-            "convert", str(sample_file), "--to", "pdf", "--json", "--dry-run"
-        )
+        result = _run_cli("convert", str(sample_file), "--to", "pdf", "--json", "--dry-run")
 
         assert json.loads(result.stdout)["dry_run"] is True
 

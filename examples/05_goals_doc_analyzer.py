@@ -36,9 +36,7 @@ def main() -> int:
             print(f"agent asks: {slot.question}")
             # Stub response: pick the first option, or echo the question.
             answer = slot.options[0] if slot.options else "no preference"
-            job = client.goals.fill_slot(
-                job.job_spec_id, slot_id=slot.slot_id, value=answer
-            )
+            job = client.goals.fill_slot(job.job_spec_id, slot_id=slot.slot_id, value=answer)
             # After every slot answer, server transitions back to executing.
             job = client.goals.confirm(job.job_spec_id)
             job = client.goals.wait(job.job_spec_id)

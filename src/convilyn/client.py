@@ -101,9 +101,7 @@ class AsyncConvilyn:
         return f"AsyncConvilyn(base_url={self.base_url!r}, auth={self._auth!r})"
 
 
-def _resolve_retry_policy(
-    max_retries: int | None, retry_policy: RetryPolicy | None
-) -> RetryPolicy:
+def _resolve_retry_policy(max_retries: int | None, retry_policy: RetryPolicy | None) -> RetryPolicy:
     """Combine the two retry knobs into a single :class:`RetryPolicy` instance.
 
     Precedence: explicit ``retry_policy`` wins. Otherwise ``max_retries``

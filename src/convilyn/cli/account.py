@@ -90,9 +90,7 @@ def quota_command(
     renderer = make_renderer(json_output=json_output)
 
     def action(client: Convilyn) -> dict[str, Any]:
-        estimate = client.account.get_quota(
-            tools=list(tools), max_iterations=max_iterations
-        )
+        estimate = client.account.get_quota(tools=list(tools), max_iterations=max_iterations)
         quota = estimate.quota_check
         return {
             "command": "account.quota",

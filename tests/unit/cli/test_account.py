@@ -32,9 +32,7 @@ def runner() -> CliRunner:
     return CliRunner()
 
 
-def _make_estimate(
-    *, tier: str = "free", state: str = "ok", micro_u: int = 100
-) -> CostEstimate:
+def _make_estimate(*, tier: str = "free", state: str = "ok", micro_u: int = 100) -> CostEstimate:
     return CostEstimate(
         estimatedMicroU=micro_u,
         estimatedUsd=0.01,
@@ -62,9 +60,7 @@ def mock_factory(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
 
 
 class TestPlanLogic:
-    def test_plan_emits_tier(
-        self, runner: CliRunner, mock_factory: MagicMock
-    ) -> None:
+    def test_plan_emits_tier(self, runner: CliRunner, mock_factory: MagicMock) -> None:
         mock_factory.account.get_plan.return_value = Plan(tier="pro")
         result = runner.invoke(account_command, ["plan", "--json"])
         assert result.exit_code == EXIT_OK
@@ -104,18 +100,14 @@ class TestBoundary:
         mock_factory.account.get_quota.return_value = _make_estimate()
         result = runner.invoke(account_command, ["quota"])
         assert result.exit_code == EXIT_OK
-        mock_factory.account.get_quota.assert_called_once_with(
-            tools=[], max_iterations=None
-        )
+        mock_factory.account.get_quota.assert_called_once_with(tools=[], max_iterations=None)
 
 
 # ── 3. Error — billing exceptions map to EXIT_USAGE; transport → EXIT_API_ERROR ──
 
 
 class TestErrors:
-    def test_plan_required_exits_usage(
-        self, runner: CliRunner, mock_factory: MagicMock
-    ) -> None:
+    def test_plan_required_exits_usage(self, runner: CliRunner, mock_factory: MagicMock) -> None:
         mock_factory.account.get_quota.side_effect = PlanRequiredError(
             402, "TIER_REQUIRED", "Upgrade to Pro", upgrade_url="/pricing"
         )
@@ -123,9 +115,7 @@ class TestErrors:
         assert result.exit_code == EXIT_USAGE
         assert "Plan required" in result.output
 
-    def test_quota_exceeded_exits_usage(
-        self, runner: CliRunner, mock_factory: MagicMock
-    ) -> None:
+    def test_quota_exceeded_exits_usage(self, runner: CliRunner, mock_factory: MagicMock) -> None:
         mock_factory.account.get_quota.side_effect = QuotaExceededError(
             402,
             "QUOTA_EXCEEDED",
@@ -140,9 +130,7 @@ class TestErrors:
     def test_generic_api_error_exits_api_error(
         self, runner: CliRunner, mock_factory: MagicMock
     ) -> None:
-        mock_factory.account.get_quota.side_effect = APIError(
-            500, "INTERNAL", "Server error"
-        )
+        mock_factory.account.get_quota.side_effect = APIError(500, "INTERNAL", "Server error")
         result = runner.invoke(account_command, ["quota"])
         assert result.exit_code == EXIT_API_ERROR
 

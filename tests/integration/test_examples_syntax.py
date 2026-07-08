@@ -96,14 +96,8 @@ class TestQuickstartImportsAreValid:
                 names.add(raw.strip())
         return names
 
-    def test_every_documented_import_exists(
-        self, quickstart_imports: set[str]
-    ) -> None:
-        missing = {
-            name
-            for name in quickstart_imports
-            if not hasattr(convilyn, name)
-        }
+    def test_every_documented_import_exists(self, quickstart_imports: set[str]) -> None:
+        missing = {name for name in quickstart_imports if not hasattr(convilyn, name)}
         assert not missing, (
             f"QUICKSTART references symbols that no longer exist on `convilyn`: "
             f"{sorted(missing)}. Either restore the symbol or update the doc."

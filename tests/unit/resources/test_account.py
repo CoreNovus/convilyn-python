@@ -76,9 +76,7 @@ class TestAccountLogic:
                 200, json=_cost_preview_wire(tier="pro", estimated_micro_u=50_000)
             )
         )
-        estimate = await client.account.get_quota(
-            tools=["pdf-mcp:extract_text"], max_iterations=10
-        )
+        estimate = await client.account.get_quota(tools=["pdf-mcp:extract_text"], max_iterations=10)
         assert isinstance(estimate, CostEstimate)
         assert estimate.estimated_micro_u == 50_000
         assert estimate.quota_check.tier == "pro"
@@ -91,9 +89,7 @@ class TestAccountLogic:
 
     @pytest.mark.asyncio
     @respx.mock
-    async def test_get_plan_derives_tier_from_cost_preview(
-        self, client: AsyncConvilyn
-    ) -> None:
+    async def test_get_plan_derives_tier_from_cost_preview(self, client: AsyncConvilyn) -> None:
         respx.post(f"{API_BASE}/api/v1/workflows/cost-preview").mock(
             return_value=httpx.Response(200, json=_cost_preview_wire(tier="pro"))
         )
@@ -108,9 +104,7 @@ class TestAccountLogic:
 class TestAccountBoundary:
     @pytest.mark.asyncio
     @respx.mock
-    async def test_get_quota_no_tools_sends_empty_list(
-        self, client: AsyncConvilyn
-    ) -> None:
+    async def test_get_quota_no_tools_sends_empty_list(self, client: AsyncConvilyn) -> None:
         import json
 
         route = respx.post(f"{API_BASE}/api/v1/workflows/cost-preview").mock(
@@ -193,9 +187,7 @@ class TestExceptionDispatch:
 
     @pytest.mark.asyncio
     @respx.mock
-    async def test_402_quota_exceeded_raises_quota_exceeded(
-        self, client: AsyncConvilyn
-    ) -> None:
+    async def test_402_quota_exceeded_raises_quota_exceeded(self, client: AsyncConvilyn) -> None:
         respx.post(f"{API_BASE}/api/v1/workflows/cost-preview").mock(
             return_value=httpx.Response(
                 402,
@@ -219,9 +211,7 @@ class TestExceptionDispatch:
 
     @pytest.mark.asyncio
     @respx.mock
-    async def test_402_unknown_code_falls_back_to_api_error(
-        self, client: AsyncConvilyn
-    ) -> None:
+    async def test_402_unknown_code_falls_back_to_api_error(self, client: AsyncConvilyn) -> None:
         """Forward-compat: a new 402 code the SDK doesn't know about
         falls through to the base :class:`APIError`. Catches future
         backend additions without forcing an SDK release."""
@@ -370,9 +360,7 @@ class TestUsageHistoryLogic:
 
     @pytest.mark.asyncio
     @respx.mock
-    async def test_empty_history_yields_empty_list(
-        self, client: AsyncConvilyn
-    ) -> None:
+    async def test_empty_history_yields_empty_list(self, client: AsyncConvilyn) -> None:
         respx.get(f"{API_BASE}/api/v1/payment/usage/history").mock(
             return_value=httpx.Response(200, json=[])
         )
@@ -382,9 +370,7 @@ class TestUsageHistoryLogic:
 class TestUsageHistoryBoundary:
     @pytest.mark.asyncio
     @respx.mock
-    async def test_since_filter_keeps_only_recent_periods(
-        self, client: AsyncConvilyn
-    ) -> None:
+    async def test_since_filter_keeps_only_recent_periods(self, client: AsyncConvilyn) -> None:
         respx.get(f"{API_BASE}/api/v1/payment/usage/history").mock(
             return_value=httpx.Response(
                 200,
@@ -402,13 +388,9 @@ class TestUsageHistoryBoundary:
 
     @pytest.mark.asyncio
     @respx.mock
-    async def test_unlimited_paid_metric_carries_none_limit(
-        self, client: AsyncConvilyn
-    ) -> None:
+    async def test_unlimited_paid_metric_carries_none_limit(self, client: AsyncConvilyn) -> None:
         respx.get(f"{API_BASE}/api/v1/payment/usage/history").mock(
-            return_value=httpx.Response(
-                200, json=[_usage_row(limit=None)]
-            )
+            return_value=httpx.Response(200, json=[_usage_row(limit=None)])
         )
         entries = await client.account.usage_history()
         assert entries[0].limit is None

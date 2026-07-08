@@ -4,11 +4,9 @@
 
 Official Convilyn client SDK — file conversion, agentic workflows, community library.
 
-> **This repository is a public mirror.** The source of truth is Convilyn's
-> monorepo; releases are published here (and to PyPI) and the mirror is refreshed
-> from upstream. Community contributions are welcome and land in the shipped
-> package — see **[CONTRIBUTING.md](CONTRIBUTING.md)** for how (fork → PR here →
-> upstreamed to the monorepo with your authorship preserved → released).
+> **Public mirror** of Convilyn's monorepo (the source of truth). Contributions are
+> welcome and land in the shipped package — see
+> **[CONTRIBUTING.md](CONTRIBUTING.md)** (fork → PR → upstreamed, authorship preserved).
 
 ## Install
 
@@ -20,6 +18,7 @@ pip install convilyn
 
 See **[docs/QUICKSTART.md](docs/QUICKSTART.md)** and the full docs at
 <https://docs.convilyn.corenovus.com>.
+
 
 ## Contributing
 

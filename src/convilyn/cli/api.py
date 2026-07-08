@@ -137,9 +137,7 @@ def api_command(
 # ── Helpers (each testable in isolation; SRP) ────────────────────────
 
 
-def _resolve_body(
-    *, data_inline: str | None, input_file: str | None
-) -> bytes | None:
+def _resolve_body(*, data_inline: str | None, input_file: str | None) -> bytes | None:
     """Resolve the request body from either --data or --input.
 
     Returns ``None`` when neither is supplied. Validates the input is
@@ -173,9 +171,7 @@ def _parse_headers(items: tuple[str, ...]) -> dict[str, str]:
     result: dict[str, str] = {}
     for item in items:
         if ":" not in item:
-            raise click.UsageError(
-                f'Bad --header value {item!r}; expected "Name: Value"'
-            )
+            raise click.UsageError(f'Bad --header value {item!r}; expected "Name: Value"')
         name, _, value = item.partition(":")
         result[name.strip()] = value.strip()
     return result
@@ -192,9 +188,7 @@ def _parse_query(items: tuple[str, ...]) -> dict[str, str] | None:
     result: dict[str, str] = {}
     for item in items:
         if "=" not in item:
-            raise click.UsageError(
-                f"Bad --query value {item!r}; expected NAME=VALUE"
-            )
+            raise click.UsageError(f"Bad --query value {item!r}; expected NAME=VALUE")
         name, _, value = item.partition("=")
         result[name] = value
     return result
