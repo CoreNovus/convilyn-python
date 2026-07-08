@@ -1,0 +1,10 @@
+Convilyn SDK sample input.
+
+This is a tiny plain-text file used by the runnable examples in this
+directory. The Convilyn `document_conversion` processor accepts TXT
+as a source format and can produce PDF, DOCX, HTML, or Markdown as
+the target — pick whichever format you want to exercise.
+
+The examples convert this file to PDF by default; substitute any
+other text content or any document you have on disk to try a real
+workload.

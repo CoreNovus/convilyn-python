@@ -1,0 +1,17 @@
+# Code owners for CoreNovus/convilyn-python (public mirror)
+#
+# Required reviewers. Combine with a branch-protection ruleset on the default
+# branch: require review from code owners, require the CI checks, and DISALLOW
+# direct pushes — the mirror's default branch is refreshed only by the release
+# job (an accepted change is upstreamed to the monorepo first; see CONTRIBUTING).
+#
+# Replace @CoreNovus/sdk-maintainers with the real team/handles at scaffold time.
+
+# Everything, by default
+*                           @CoreNovus/sdk-maintainers
+
+# Governance + security surfaces need a maintainer + security review
+/SECURITY.md                @CoreNovus/sdk-maintainers @CoreNovus/security
+/CODE_OF_CONDUCT.md         @CoreNovus/sdk-maintainers
+/.github/                   @CoreNovus/sdk-maintainers
+/CODEOWNERS                 @CoreNovus/sdk-maintainers

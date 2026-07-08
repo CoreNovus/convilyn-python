@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 📚 Documentation
+    url: 'https://docs.convilyn.corenovus.com'
+    about: Install, quickstart, and API reference — check here first.
+  - name: 🔒 Report a security vulnerability
+    url: '../../security/advisories/new'
+    about: Do NOT open a public issue for vulnerabilities — use a private advisory.
+  - name: 💬 Questions & discussion
+    url: '../../discussions'
+    about: Ask how-to questions and discuss ideas with the community.

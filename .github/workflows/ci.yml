@@ -1,0 +1,61 @@
+# Public-mirror CI (fork-safe). Runs on every push + community PR.
+#
+# SECURITY POSTURE (do not weaken):
+#   * permissions: contents: read ONLY — no write scope.
+#   * NO secrets are referenced — so a fork PR can never exfiltrate one.
+#   * trigger is `pull_request` (NOT `pull_request_target`) — the classic
+#     fork-secret footgun is intentionally avoided.
+#
+# The internal-vocabulary (blackbox) gate + contract/conformance run in the
+# UPSTREAM monorepo when a community PR is upstreamed — deliberately NOT here:
+# shipping the internal-term blocklist into a public repo would itself leak
+# internal architecture vocabulary. So this CI covers lint / type / test /
+# secret-scan; every PR is vocabulary-checked at the upstream step, and the
+# mirror is only ever refreshed from the (already-clean) monorepo.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install (editable + dev extras)
+        run: python -m pip install -e ".[dev]"
+      - name: Lint (ruff)
+        run: python -m ruff check .
+      - name: Format check (ruff)
+        run: python -m ruff format --check .
+      - name: Typecheck
+        run: python -m pyright . || python -m mypy . # whichever the package uses
+      - name: Tests
+        run: python -m pytest
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: detect-secrets (against the shipped baseline)
+        run: |
+          python -m pip install detect-secrets==1.5.0
+          # .secrets.baseline is scaffolded per repo; fail if any NEW secret appears.
+          detect-secrets scan --baseline .secrets.baseline
+          git diff --exit-code .secrets.baseline || {
+            echo "::error::New secrets detected — review and update .secrets.baseline deliberately."; exit 1; }

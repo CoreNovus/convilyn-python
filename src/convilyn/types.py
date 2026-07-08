@@ -1,0 +1,481 @@
+"""Public response models exposed by the Convilyn SDK.
+
+These are the canonical Python representations of API responses. Field
+names follow Python conventions (``filename``, ``size``, ``content_type``)
+even when the wire protocol uses camelCase — the Pydantic ``alias``
+config bridges the two so callers never have to think about it.
+
+We intentionally do NOT re-export the API's ``FileResponse`` directly
+because the API wire field names (``fileName``, ``mimeType``) are an
+implementation detail of the HTTP transport; the SDK's job is to give
+Python developers idiomatic types.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+JobStatus = Literal["queued", "processing", "completed", "failed"]
+
+
+class File(BaseModel):
+    """A file known to the Convilyn platform.
+
+    Returned by :py:meth:`convilyn.resources.files.AsyncFiles.upload` and,
+    in future commits, by ``client.files.get(...)`` / ``client.files.list()``.
+
+    The :py:attr:`file_id` is the only handle other resources need —
+    ``client.convert.start(file_id=file.file_id, ...)`` accepts it
+    directly. SDK callers should not treat any other field as a stable
+    identifier.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, frozen=True)
+
+    file_id: str = Field(alias="fileId")
+    filename: str = Field(alias="fileName")
+    size: int = Field(alias="fileSize", gt=0)
+    content_type: str = Field(alias="mimeType")
+    created_at: datetime = Field(alias="createdAt")
+    job_id: str | None = Field(default=None, alias="jobId")
+    is_input: bool = Field(default=True, alias="isInput")
+
+
+class ResultFile(BaseModel):
+    """A produced artifact attached to a completed job.
+
+    The ``url`` is a presigned storage URL valid for one hour (issued by the
+    service at job completion); callers should download promptly rather
+    than persist the URL.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, frozen=True)
+
+    filename: str
+    # ``ge=0`` (not ``gt=0``): a failed job can carry a 0-byte placeholder
+    # result file, and the SDK must still parse the job so JobFailedError can
+    # surface — a stricter bound made pydantic raise ValidationError instead.
+    size: int = Field(ge=0)
+    mimetype: str  # wire is already lowercase; no alias needed
+    url: str
+
+
+class JobError(BaseModel):
+    """Failure detail attached to a ``failed`` job."""
+
+    model_config = ConfigDict(populate_by_name=True, frozen=True)
+
+    code: str
+    message: str
+
+
+class ConvertJob(BaseModel):
+    """A file conversion job — the lifecycle handle returned by
+    :py:meth:`convilyn.resources.convert.AsyncConvert.create`.
+
+    OpenAI / Stripe convention: this model carries *data* only. All
+    actions (poll / wait / download) live on the resource class so the
+    same model can be safely serialised, logged, and round-tripped.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, frozen=True)
+
+    job_id: str = Field(alias="jobId")
+    status: JobStatus
+    processor_type: str = Field(alias="processorType")
+    progress: int = Field(ge=0, le=100)
+    progress_message: str | None = Field(default=None, alias="progressMessage")
+    result_files: list[ResultFile] | None = Field(default=None, alias="resultFiles")
+    error: JobError | None = None
+    retry_count: int = Field(default=0, alias="retryCount")
+    created_at: datetime = Field(alias="createdAt")
+    updated_at: datetime = Field(alias="updatedAt")
+    started_at: datetime | None = Field(default=None, alias="startedAt")
+    completed_at: datetime | None = Field(default=None, alias="completedAt")
+    estimated_duration: int | None = Field(default=None, alias="estimatedDuration")
+
+    @property
+    def is_terminal(self) -> bool:
+        """True when ``status`` is ``completed`` or ``failed``."""
+        return self.status in ("completed", "failed")
+
+
+# ── AI workflow (agentic workflow) types ──────────────────────────────
+
+
+GoalJobStatus = Literal[
+    # Non-terminal — job is still progressing through resolution / setup.
+    "draft",
+    "created",
+    "analyzing",
+    "slots_pending",  # waiting on user input via HITL — see PendingSlot / pending_interrupts
+    "ready",
+    "ready_with_preview",
+    "confirmed",
+    "queued",
+    "executing",
+    # Terminal — wait() stops polling here.
+    "completed",  # all tasks succeeded
+    "partial",  # some tasks succeeded, some failed (terminal but not "failed")
+    "failed",  # job failed; details in `error`
+    "cancelled",  # user-initiated cancel
+]
+
+
+# AI workflow terminal status set — once a job reports one of these, the
+# SDK's ``wait()`` loop stops polling. Kept as a module-level tuple so
+# tests can import the canonical set instead of hard-coding the strings.
+GOAL_JOB_TERMINAL_STATUSES: tuple[GoalJobStatus, ...] = (
+    "completed",
+    "partial",
+    "failed",
+    "cancelled",
+)
+
+
+class PendingSlot(BaseModel):
+    """A piece of information the agent is asking the user to supply.
+
+    Surfaced inside :py:attr:`GoalJob.pending_slots` whenever the job's
+    status is ``slots_pending``. R2 commit 1 exposes this as data only;
+    a future commit adds ``client.goals.fill_slot(...)`` to answer back.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, frozen=True)
+
+    slot_id: str = Field(alias="slotId")
+    slot_type: str = Field(alias="slotType")
+    question: str
+    options: list[str | dict[str, str]] | None = None
+    required: bool = True
+    is_disambiguation: bool = Field(default=False, alias="isDisambiguation")
+    suggested_value: object | None = Field(default=None, alias="suggestedValue")
+    suggested_confidence: float | None = Field(default=None, alias="suggestedConfidence")
+
+
+class GoalJob(BaseModel):
+    """An AI workflow (agentic) job — handle returned by
+    :py:meth:`convilyn.resources.goals.AsyncGoals.start`.
+
+    Mirrors :class:`ConvertJob` in the OpenAI / Stripe "data on model,
+    behaviour on resource" convention. ``status`` covers the AI workflow
+    full lifecycle (13 literals); ``pending_slots`` and
+    ``pending_interrupts`` surface HITL requests so callers can decide
+    whether to keep polling or to answer back.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, frozen=True)
+
+    job_spec_id: str = Field(alias="jobSpecId")
+    status: GoalJobStatus
+    progress: int = Field(default=0, ge=0, le=100)
+    item_version: int | None = Field(default=None, alias="itemVersion")
+    attempt_id: str | None = Field(default=None, alias="attemptId")
+    goal_text: str | None = Field(default=None, alias="goalText")
+    file_ids: list[str] = Field(default_factory=list, alias="fileIds")
+    pending_slots: list[PendingSlot] = Field(default_factory=list, alias="pendingSlots")
+    filled_slots: dict[str, object] = Field(default_factory=dict, alias="filledSlots")
+    # ``pending_interrupts`` carries a polymorphic union (slot_fill /
+    # batch_review / human_escalation / approval_review). For R2 commit 1
+    # we expose it as opaque dicts; a future commit can model each
+    # variant once the use cases stabilise.
+    pending_interrupts: list[dict[str, object]] = Field(
+        default_factory=list, alias="pendingInterrupts"
+    )
+    agent_message: str | None = Field(default=None, alias="agentMessage")
+    error_message: str | None = Field(default=None, alias="errorMessage")
+    error_code: str | None = Field(default=None, alias="errorCode")
+    created_at: datetime = Field(alias="createdAt")
+    updated_at: datetime = Field(alias="updatedAt")
+    started_at: datetime | None = Field(default=None, alias="startedAt")
+    completed_at: datetime | None = Field(default=None, alias="completedAt")
+
+    @field_validator("file_ids", "pending_slots", "pending_interrupts", mode="before")
+    @classmethod
+    def _null_list_to_empty(cls, value: object) -> object:
+        """Coerce a wire ``null`` to an empty list. The API sends ``null``
+        for empty collections (e.g. ``pendingInterrupts: null``), which would
+        otherwise fail validation against the non-optional ``list`` type."""
+        return [] if value is None else value
+
+    @field_validator("filled_slots", mode="before")
+    @classmethod
+    def _null_dict_to_empty(cls, value: object) -> object:
+        """Coerce a wire ``null`` to an empty dict (same rationale as above)."""
+        return {} if value is None else value
+
+    @property
+    def is_terminal(self) -> bool:
+        """True when the job has reached a stable end state.
+
+        Includes ``partial`` (some tasks failed but the workflow as a
+        whole reached the finish line) — callers that want strict
+        "everything succeeded" should additionally check
+        ``status == "completed"``.
+        """
+        return self.status in GOAL_JOB_TERMINAL_STATUSES
+
+    @property
+    def needs_input(self) -> bool:
+        """True when the agent is blocked waiting on the user.
+
+        Treat as a non-terminal stopping condition for polling — the
+        SDK's ``wait()`` returns here so the caller can answer the
+        slots (via the upcoming ``fill_slot`` API) instead of spinning.
+        """
+        return self.status == "slots_pending"
+
+
+# ── AI workflow WebSocket event stream types ──────────────────────────
+
+
+GoalEventType = Literal[
+    # Tool lifecycle
+    "tool_started",
+    "tool_finished",
+    # Agent-step lifecycle
+    "agent_step_started",
+    "agent_step_finished",
+    # Orchestration transitions between agent steps
+    "orchestration_transition",
+    # Run control / heartbeats
+    "status",
+    "progress",
+    "completed",
+    "failed",
+    # Human-in-the-loop
+    "slot_needed",
+    # Reserved by the API but not currently emitted; included so an
+    # SDK release does not need to be re-cut the moment the server
+    # starts emitting one.
+    "keepalive",
+    # Agent text streaming
+    "agent_text",
+    "agent_text_done",
+    # ``cancelled`` is a terminal type the SDK self-closes on but the
+    # server may emit only as ``failed`` with code=cancelled today; we
+    # keep it in the terminal set below so callers and tests can rely on
+    # a single source of truth.
+]
+
+
+# Event ``type`` values that cause :meth:`AsyncGoals.events` to close the
+# WebSocket and stop iterating. ``cancelled`` is included for
+# forward-compat with a future API version that emits it directly; today it
+# arrives as a ``failed`` event with ``data.code == "CANCELLED"``.
+GOAL_EVENT_TERMINAL_TYPES: tuple[str, ...] = (
+    "completed",
+    "failed",
+    "cancelled",
+)
+
+
+# ── Community workflows (marketplace) ───────────────────────────────
+
+
+WorkflowVisibility = Literal["private", "public", "archived"]
+
+
+class WorkflowStats(BaseModel):
+    """Aggregate counters surfaced on every workflow row."""
+
+    model_config = ConfigDict(populate_by_name=True, frozen=True, extra="allow")
+
+    run_count: int = Field(default=0, alias="runCount", ge=0)
+    fork_count: int = Field(default=0, alias="forkCount", ge=0)
+    like_count: int = Field(default=0, alias="likeCount", ge=0)
+
+
+class Workflow(BaseModel):
+    """A community / private workflow row.
+
+    Returned by :py:meth:`AsyncWorkflows.get` / :py:meth:`AsyncWorkflows.fork` /
+    :py:meth:`AsyncWorkflows.publish`. Fields mirror the API's workflow
+    shape — anything the API may add later is tolerated via
+    ``extra="allow"`` so an older SDK release does not break when the
+    wire grows.
+
+    The :py:attr:`workflow_id` is the primary handle for follow-up calls;
+    :py:attr:`spec_id` is the compiled spec identifier (used by
+    :meth:`fork` as ``source_spec_id`` when forking from another user's
+    public workflow).
+    """
+
+    model_config = ConfigDict(populate_by_name=True, frozen=True, extra="allow")
+
+    workflow_id: str = Field(alias="workflowId")
+    owner_id: str | None = Field(default=None, alias="ownerId")
+    spec_id: str = Field(alias="specId")
+    source_spec_id: str | None = Field(default=None, alias="sourceSpecId")
+    source_type: str | None = Field(default=None, alias="sourceType")
+    name: str
+    description: str | None = None
+    visibility: WorkflowVisibility
+    tags: list[str] = Field(default_factory=list)
+    stats: WorkflowStats = Field(default_factory=WorkflowStats)
+    item_version: int = Field(default=0, alias="itemVersion", ge=0)
+
+
+class WorkflowSummary(BaseModel):
+    """Light-weight community-list row (no ``system_prompt`` / ``spec_json``).
+
+    Returned by :py:meth:`AsyncWorkflows.search`. The community endpoint
+    intentionally strips the heavy fields so the listing payload stays
+    small.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, frozen=True, extra="allow")
+
+    workflow_id: str = Field(alias="workflowId")
+    spec_id: str = Field(alias="specId")
+    owner_id: str | None = Field(default=None, alias="ownerId")
+    name: str
+    description: str | None = None
+    visibility: WorkflowVisibility
+    tags: list[str] = Field(default_factory=list)
+    stats: WorkflowStats = Field(default_factory=WorkflowStats)
+
+
+class WorkflowSearchPage(BaseModel):
+    """One page of community workflow summaries + cursor for pagination."""
+
+    model_config = ConfigDict(populate_by_name=True, frozen=True, extra="allow")
+
+    items: list[WorkflowSummary] = Field(default_factory=list)
+    cursor: str | None = None
+
+
+class LikeResponse(BaseModel):
+    """Result of :py:meth:`AsyncWorkflows.like` — toggle state + fresh count."""
+
+    model_config = ConfigDict(populate_by_name=True, frozen=True, extra="allow")
+
+    liked: bool
+    like_count: int = Field(alias="likeCount", ge=0)
+
+
+# ── Billing / quota types ───────────────────────────────────────────
+
+
+QuotaState = Literal["ok", "soft_limit", "quota_exceeded"]
+PlanTier = Literal["free", "pro"]
+
+
+class QuotaCheck(BaseModel):
+    """Caller-tier vs cost-estimate verdict.
+
+    Mirrors the API's quota-check response.
+    Returned inside :class:`CostEstimate.quota_check`. ``state="ok"``
+    means the estimate fits within tier thresholds; ``"soft_limit"``
+    means a pro caller is over the soft cap (proceed with caution);
+    ``"quota_exceeded"`` is a hard stop on free tier — the equivalent
+    API call would raise :class:`convilyn.QuotaExceededError`.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, frozen=True, extra="allow")
+
+    state: QuotaState
+    tier: PlanTier
+    estimated_micro_u: int = Field(alias="estimatedMicroU", ge=0)
+    threshold_micro_u: int = Field(alias="thresholdMicroU", ge=0)
+    upgrade_url: str | None = Field(default=None, alias="upgradeUrl")
+
+
+class ToolCostEstimate(BaseModel):
+    """Per-tool cost breakdown row inside :class:`CostEstimate`."""
+
+    model_config = ConfigDict(populate_by_name=True, frozen=True, extra="allow")
+
+    tool_name: str = Field(alias="toolName")
+    per_invocation_micro_u: int = Field(alias="perInvocationMicroU", ge=0)
+
+
+class CostEstimate(BaseModel):
+    """Result of :meth:`convilyn.resources.account.AsyncAccount.get_quota`.
+
+    Wraps the ``POST /api/v1/workflows/cost-preview`` response. Provides
+    a cost-range projection (min / total / max) plus the quota verdict
+    in one round-trip so callers can render confirm-modal CTAs without
+    a second call.
+
+    ``estimated_micro_u`` is the legacy single-number summary kept for
+    back-compat; new callers should prefer the explicit
+    ``estimated_min_micro_u`` / ``estimated_total_micro_u`` /
+    ``estimated_max_micro_u`` triple.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, frozen=True, extra="allow")
+
+    estimated_micro_u: int = Field(alias="estimatedMicroU", ge=0)
+    estimated_usd: float = Field(alias="estimatedUsd", ge=0)
+    estimated_total_micro_u: int = Field(alias="estimatedTotalMicroU", ge=0)
+    estimated_min_micro_u: int = Field(alias="estimatedMinMicroU", ge=0)
+    estimated_max_micro_u: int = Field(alias="estimatedMaxMicroU", ge=0)
+    tools: list[ToolCostEstimate] = Field(default_factory=list)
+    quota_check: QuotaCheck = Field(alias="quotaCheck")
+
+
+class Plan(BaseModel):
+    """Caller's current billing tier.
+
+    Today derived from ``/cost-preview`` (the only endpoint that returns
+    the tier alongside a public response). When the API ships a
+    dedicated ``/billing/plan`` endpoint (R5 follow-up), this model will
+    grow ``renews_at`` / ``status`` fields; existing callers won't break
+    because :class:`Plan` is ``extra="allow"``.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, frozen=True, extra="allow")
+
+    tier: PlanTier
+
+
+class UsageHistoryEntry(BaseModel):
+    """One past usage period for a specific metric.
+
+    Mirrors the row shape returned by
+    ``GET /api/v1/payment/usage/history`` — one entry per
+    ``(metric, period)`` cell. Free-tier callers get monthly periods;
+    paid callers get periods aligned to their subscription cycle.
+
+    ``limit`` may be ``None`` for unlimited metrics on paid tiers.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, frozen=True, extra="allow")
+
+    metric: str
+    period_start: datetime
+    period_end: datetime
+    used: int = Field(ge=0)
+    limit: int | None = None
+
+
+# ── AI workflow event stream (existing) ───────────────────────────────
+
+
+class GoalEvent(BaseModel):
+    """One server-sent event in an AI workflow execution stream.
+
+    Yielded by :meth:`convilyn.resources.goals.AsyncGoals.events`. The
+    wire envelope is defined by the event-stream contract;
+    new envelope fields are tolerated (``extra="allow"``) so an older
+    SDK release does not break when the server starts emitting
+    additional metadata.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, frozen=True, extra="allow")
+
+    type: GoalEventType
+    schema_version: int = Field(alias="schemaVersion")
+    job_spec_id: str = Field(alias="jobSpecId")
+    emitted_at: datetime = Field(alias="emittedAt")
+    seq: int = 0
+    data: dict[str, Any] = Field(default_factory=dict)
+
+    @property
+    def is_terminal(self) -> bool:
+        """True when this event signals the end of the stream."""
+        return self.type in GOAL_EVENT_TERMINAL_TYPES

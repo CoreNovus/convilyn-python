@@ -1,0 +1,31 @@
+# DCO — verify every commit in a PR carries a `Signed-off-by` trailer.
+# Fork-safe: read-only, no secrets. See CONTRIBUTING.md ("Sign your commits").
+name: dco
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  dco-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check Signed-off-by on every commit
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.event.pull_request.head.sha }}"
+          missing=0
+          for c in $(git rev-list "$base".."$head"); do
+            author="$(git show -s --format='%an <%ae>' "$c")"
+            if ! git show -s --format='%b' "$c" | grep -qiE "^Signed-off-by: .+ <.+@.+>"; then
+              echo "::error::commit $c ($author) is missing a Signed-off-by (DCO). Run: git commit -s (or git rebase --signoff)."
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ] && echo "All commits signed off ✔"
+          exit $missing

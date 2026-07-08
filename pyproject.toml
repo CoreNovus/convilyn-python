@@ -1,0 +1,135 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "convilyn"
+dynamic = ["version"]
+description = "Official Convilyn client SDK — file conversion, agentic workflows, community library"
+readme = "docs/README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+authors = [
+    { name = "Convilyn", email = "sdk@convilyn.corenovus.com" },
+]
+keywords = [
+    "convilyn",
+    "ai",
+    "agent",
+    "workflow",
+    "file-conversion",
+    "mcp",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Internet :: WWW/HTTP",
+    "Typing :: Typed",
+]
+dependencies = [
+    "httpx>=0.25.0,<1.0.0",
+    "pydantic>=2.0.0,<3.0.0",
+    "click>=8.0.0,<9.0.0",
+    "websockets>=13.0,<17.0",
+    "typing-extensions>=4.7.0; python_version < '3.11'",
+]
+
+[project.optional-dependencies]
+author = [
+    # Reserved for v1.1: mirror imports of convilyn-author into convilyn.author.
+    # Until then, install `convilyn-author` directly for author-side functionality.
+]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",
+    "respx>=0.22.0",
+    "ruff>=0.4.0",
+]
+
+[project.urls]
+Homepage = "https://convilyn.corenovus.com"
+Documentation = "https://docs.convilyn.corenovus.com"
+Issues = "https://github.com/CoreNovus/convilyn-python/issues"
+Repository = "https://github.com/CoreNovus/convilyn-python"
+"Source Code" = "https://github.com/CoreNovus/convilyn-python"
+Changelog = "https://github.com/CoreNovus/convilyn-python/blob/main/CHANGELOG.md"
+
+[project.scripts]
+convilyn = "convilyn.cli.main:cli"
+
+[tool.hatch.version]
+path = "src/convilyn/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/convilyn"]
+
+[tool.hatch.build.targets.sdist]
+# Ship CHANGELOG + tests + examples + docs in the sdist so
+# source-install workflows (e.g. `pip install --no-binary :all:`) get
+# the full repo surface. The wheel intentionally stays lean — README
+# is bundled in METADATA (rendered on PyPI); LICENSE is picked up via
+# `license-files = ["LICENSE"]` per PEP 639; CHANGELOG ships in the sdist
+# + wheel (see `include` below) — no public GitHub URL exists during the
+# beta. AGENT.md and any docs/internal/* paths are explicitly excluded —
+# they are agent-operating instructions, not user-facing documentation,
+# and must not ship to PyPI.
+include = [
+    "src/convilyn",
+    "tests",
+    "examples",
+    "docs",
+    "CHANGELOG.md",
+    "LICENSE",
+    "pyproject.toml",
+]
+exclude = [
+    "AGENT.md",
+    "docs/internal/*",
+]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+# Coverage is measured AND enforced on every pytest invocation so
+# regressions get caught locally before CI. Threshold is line ≥ 80%
+# (`--cov-fail-under=80`) per `.claude/skills/unit-testing/SKILL.md`.
+# Branch coverage is enabled (`--cov-branch`) to surface uncovered
+# conditionals that line coverage hides; the threshold is line-only
+# because branch behaviour varies per Python minor version.
+addopts = "--cov=src/convilyn --cov-branch --cov-fail-under=80 --cov-report=term-missing --cov-report=xml"
+
+[tool.coverage.run]
+source = ["src/convilyn"]
+branch = true
+# Omit zero-logic modules so they don't dilute the percentage: the
+# generated `_version.py` only declares __version__; the package
+# `__init__.py` is re-exports only. Both are exercised by every
+# import-based test indirectly.
+omit = [
+    "src/convilyn/_version.py",
+    "src/convilyn/__init__.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+# Hard floor: any drop below 80% line coverage fails pytest. Current
+# measurement sits at ~93%, leaving 13 points of
+# headroom — future contributors can land coverage-neutral PRs
+# without triggering the gate, but a sweeping regression will fire it.
+fail_under = 80
