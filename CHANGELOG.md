@@ -5,6 +5,20 @@ versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.1.1b5] — 2026-07-10
+
+### Fixed
+
+- **`import convilyn` no longer crashes on Python 3.10.** `client.py` /
+  `sync_client.py` used `typing.Self` (Python 3.11+, PEP 673) despite the
+  package declaring `Requires-Python: >=3.10`; both now fall back to
+  `typing_extensions.Self` on 3.10 (already an unconditional dependency for
+  `python_version < '3.11'`, just not wired up until now). A second,
+  previously-masked 3.10 incompatibility in `_internal/throttle.py`
+  (`from datetime import UTC`, also 3.11+ — hidden behind the `typing.Self`
+  crash until that one was fixed) is corrected the same way, using
+  `datetime.timezone.utc`, which has always been available.
+
 ## [1.1.1b4] — 2026-07-09
 
 ### Fixed

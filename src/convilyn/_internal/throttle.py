@@ -32,7 +32,7 @@ from __future__ import annotations
 import logging
 import warnings
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any, Final
 
 from convilyn.exceptions import QuotaExceededError
@@ -141,8 +141,8 @@ def _sleep_from_reset_at(details: dict[str, Any]) -> float | None:
     except ValueError:
         return None
     if reset_dt.tzinfo is None:
-        reset_dt = reset_dt.replace(tzinfo=UTC)
-    return (reset_dt - datetime.now(UTC)).total_seconds()
+        reset_dt = reset_dt.replace(tzinfo=timezone.utc)
+    return (reset_dt - datetime.now(timezone.utc)).total_seconds()
 
 
 def emit_soft_limit_warning(*, source: str, details: str | None = None) -> None:

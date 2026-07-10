@@ -11,9 +11,14 @@ interpreter teardown on Windows.
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable
 from types import TracebackType
-from typing import Self
+
+if sys.version_info >= (3, 11):
+    from typing import Self
+else:
+    from typing_extensions import Self
 
 from convilyn._internal.auth import AuthStrategy
 from convilyn._internal.http import DEFAULT_TIMEOUT

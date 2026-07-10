@@ -10,7 +10,7 @@ math or normalisation can be diagnosed without spinning up httpx.
 from __future__ import annotations
 
 import warnings
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -80,7 +80,7 @@ class TestQuotaSleepBoundary:
         assert compute_quota_sleep(err, AutoThrottleConfig()) == 12.0
 
     def test_reset_at_future_yields_positive_delta(self) -> None:
-        future = datetime.now(UTC) + timedelta(seconds=10)
+        future = datetime.now(timezone.utc) + timedelta(seconds=10)
         err = _quota_error({"reset_at": future.isoformat()})
         cfg = AutoThrottleConfig(max_sleep=60.0)
         sleep_s = compute_quota_sleep(err, cfg)
@@ -89,7 +89,7 @@ class TestQuotaSleepBoundary:
         assert 8.0 <= sleep_s <= 11.0
 
     def test_reset_at_past_returns_zero_not_negative(self) -> None:
-        past = datetime.now(UTC) - timedelta(seconds=30)
+        past = datetime.now(timezone.utc) - timedelta(seconds=30)
         err = _quota_error({"reset_at": past.isoformat()})
         assert compute_quota_sleep(err, AutoThrottleConfig()) == 0.0
 
