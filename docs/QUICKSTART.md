@@ -368,6 +368,21 @@ with `timeout=…`. After timeout the job is still alive on the
 backend — call `client.convert.retrieve(job.job_id)` to fetch its
 current state.
 
+**What about long AI workflows (goals)?** An agentic workflow's
+analyze/execute phases can legitimately run for many minutes, so a flat
+`timeout` forces a bad trade-off. Use `idle_timeout` instead: raise the
+total budget to your hard deadline and bound the time you tolerate
+*without progress*:
+
+```python
+job = client.goals.wait(job_id, timeout=1800, idle_timeout=120)
+```
+
+A job that keeps advancing holds the loop open; a stalled one raises
+`GoalJobTimeoutError` with `reason="idle"` after 2 idle minutes. Either
+way the job stays alive server-side — `client.goals.retrieve(job_id)`
+resumes observation.
+
 **How do I get HTTP traces for debugging?**
 Set `CONVILYN_DEBUG=1` to surface full repr / stacktraces from CLI
 errors. The SDK uses `httpx` underneath; standard `httpx` debug

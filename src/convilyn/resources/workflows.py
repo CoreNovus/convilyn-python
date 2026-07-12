@@ -23,7 +23,7 @@ from typing import Any, Literal
 
 from convilyn._internal.http import HTTPClient
 from convilyn._internal.loop_runner import CoroRunner
-from convilyn.types import LikeResponse, Workflow, WorkflowSearchPage
+from convilyn.types import CatalogWorkflow, LikeResponse, Workflow, WorkflowSearchPage
 
 WorkflowSortMode = Literal["recent", "popular"]
 
@@ -42,6 +42,19 @@ class AsyncWorkflows:
         self._http = http
 
     # ── Public API ───────────────────────────────────────────────
+
+    async def catalog(self) -> list[CatalogWorkflow]:
+        """List the platform's built-in AI-workflow catalog.
+
+        Distinct from :py:meth:`search`, which browses the user-published
+        ``/community`` marketplace — the catalog is the curated set of
+        built-in workflows runnable directly via
+        ``client.goals.start(workflow_id=...)``. Anonymous callers are
+        allowed; deprecated entries are filtered out server-side.
+        """
+        response = await self._http.request("GET", "/api/v1/workflows/catalog")
+        payload = response.json()
+        return [CatalogWorkflow.model_validate(item) for item in payload.get("workflows") or []]
 
     async def search(
         self,
@@ -196,6 +209,9 @@ class Workflows:
     def __init__(self, async_workflows: AsyncWorkflows, run: CoroRunner | None = None) -> None:
         self._async = async_workflows
         self._run: CoroRunner = run if run is not None else asyncio.run
+
+    def catalog(self) -> list[CatalogWorkflow]:
+        return self._run(self._async.catalog())
 
     def search(self, **kwargs: Any) -> WorkflowSearchPage:
         return self._run(self._async.search(**kwargs))

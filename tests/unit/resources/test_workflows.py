@@ -332,3 +332,87 @@ class TestObjectState:
         )
         await client.workflows.search()
         assert route.calls[0].request.url.params["sort"] == "recent"
+
+
+# ── Built-in workflow catalog ────────────────────────────────────────
+
+
+def _catalog_item_wire(workflow_id: str = "goal_lane.expense_batch_summary") -> dict[str, Any]:
+    return {
+        "workflowId": workflow_id,
+        "name": "Expense Batch → Vendor-Grouped Summary",
+        "description": "Receipts and invoices into one spreadsheet.",
+        "icon": "receipt",
+        "supportedInputTypes": ["image", "document"],
+        "supportedInputFormats": ["jpg", "png", "pdf"],
+        "category": "goal_lane",
+        "requiredSlotCount": 0,
+        "subcategory": None,
+        "skuGroup": None,
+        "status": "active",
+        "supportedLocales": ["en", "ja", "ko", "zh"],
+        "maxInputSizeBytes": 52428800,
+        "minFileCount": None,
+        "tier": "business",
+        "freeTierAllowed": None,
+    }
+
+
+class TestCatalog:
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_catalog_returns_typed_items(self, client: AsyncConvilyn) -> None:
+        respx.get(f"{API_BASE}/api/v1/workflows/catalog").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "workflows": [
+                        _catalog_item_wire(),
+                        _catalog_item_wire("goal_lane.reading_to_highlights"),
+                    ],
+                    "total": 2,
+                },
+            )
+        )
+        items = await client.workflows.catalog()
+
+        assert len(items) == 2
+        assert items[0].workflow_id == "goal_lane.expense_batch_summary"
+        assert items[0].tier == "business"
+        assert items[0].free_tier_allowed is None
+        assert items[1].workflow_id == "goal_lane.reading_to_highlights"
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_catalog_empty_returns_empty_list(self, client: AsyncConvilyn) -> None:
+        respx.get(f"{API_BASE}/api/v1/workflows/catalog").mock(
+            return_value=httpx.Response(200, json={"workflows": [], "total": 0})
+        )
+        assert await client.workflows.catalog() == []
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_catalog_error_surfaces_as_api_error(self, client: AsyncConvilyn) -> None:
+        respx.get(f"{API_BASE}/api/v1/workflows/catalog").mock(
+            return_value=httpx.Response(500, json={"code": "INTERNAL", "message": "boom"})
+        )
+        with pytest.raises(APIError) as info:
+            await client.workflows.catalog()
+        assert info.value.status_code == 500
+
+    def test_catalog_item_tolerates_future_fields(self) -> None:
+        from convilyn import CatalogWorkflow
+
+        data = _catalog_item_wire()
+        data["futureField"] = True
+        item = CatalogWorkflow.model_validate(data)
+        assert item.workflow_id == "goal_lane.expense_batch_summary"
+
+    def test_sync_wrapper_present(self) -> None:
+        from convilyn import Convilyn
+
+        sync_client = Convilyn(api_key="ck_test")  # pragma: allowlist secret
+        try:
+            assert callable(sync_client.workflows.catalog)
+        finally:
+            sync_client.close()

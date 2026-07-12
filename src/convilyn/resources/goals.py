@@ -19,13 +19,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import time
 from collections.abc import AsyncIterator, Callable
+from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import ValidationError
 
+from convilyn._internal.download import download_url_to_path
 from convilyn._internal.http import HTTPClient
 from convilyn._internal.loop_runner import CoroRunner
 from convilyn._internal.ws import (
@@ -35,7 +38,7 @@ from convilyn._internal.ws import (
     resolve_ws_url,
 )
 from convilyn.exceptions import GoalJobFailedError, GoalJobTimeoutError, WebSocketError
-from convilyn.types import GoalEvent, GoalJob
+from convilyn.types import Artifact, ArtifactDownload, GoalEvent, GoalJob
 
 # ── Tunables ────────────────────────────────────────────────────────
 
@@ -121,6 +124,7 @@ class AsyncGoals:
         *,
         timeout: float = DEFAULT_POLL_TIMEOUT,
         poll_interval: float = DEFAULT_POLL_INTERVAL,
+        idle_timeout: float | None = None,
     ) -> GoalJob:
         """Poll until the job reaches a terminal state or stops for HITL.
 
@@ -132,15 +136,29 @@ class AsyncGoals:
         * HITL pending (``slots_pending``) — the agent is asking for user
           input; answer them with ``fill_slot()`` / ``fill_slots()`` then ``confirm()``.
 
+        Long-running workflows: an agentic run's analyze/execute phases can
+        legitimately take many minutes, so a flat ``timeout`` forces a
+        choice between giving up on healthy jobs and waiting forever on
+        wedged ones. ``idle_timeout`` resolves that: raise the total
+        ``timeout`` generously (or to your hard deadline) and set
+        ``idle_timeout`` to the longest you will tolerate WITHOUT any
+        status or progress change — a job that is advancing keeps the
+        loop alive, a stalled one surfaces quickly::
+
+            job = await client.goals.wait(job_id, timeout=1800, idle_timeout=120)
+
         Raises:
             GoalJobFailedError: terminal status is ``failed``.
-            GoalJobTimeoutError: ``timeout`` elapsed before either
-                stopping condition was met.
+            GoalJobTimeoutError: ``timeout`` elapsed (``reason="total"``),
+                or ``idle_timeout`` passed with no observable change
+                (``reason="idle"`` — the job may still be healthy on a
+                long phase; ``retrieve()`` before assuming failure).
         """
         return await self._wait_loop(
             job_spec_id=job_spec_id,
             timeout=timeout,
             initial_interval=poll_interval,
+            idle_timeout=idle_timeout,
         )
 
     async def run(
@@ -153,6 +171,7 @@ class AsyncGoals:
         llm_config_id: str | None = None,
         timeout: float = DEFAULT_POLL_TIMEOUT,
         poll_interval: float = DEFAULT_POLL_INTERVAL,
+        idle_timeout: float | None = None,
     ) -> GoalJob:
         """Shortcut — ``start()`` then ``wait()``."""
         job = await self.start(
@@ -162,7 +181,12 @@ class AsyncGoals:
             slots=slots,
             llm_config_id=llm_config_id,
         )
-        return await self.wait(job.job_spec_id, timeout=timeout, poll_interval=poll_interval)
+        return await self.wait(
+            job.job_spec_id,
+            timeout=timeout,
+            poll_interval=poll_interval,
+            idle_timeout=idle_timeout,
+        )
 
     # ── Private steps (extensible) ───────────────────────────────
 
@@ -200,6 +224,7 @@ class AsyncGoals:
         job_spec_id: str,
         timeout: float,
         initial_interval: float,
+        idle_timeout: float | None = None,
     ) -> GoalJob:
         """Polling loop with stale-progress backoff.
 
@@ -213,6 +238,8 @@ class AsyncGoals:
         interval = initial_interval
         stale_count = 0
         last_progress = -1
+        last_status: str | None = None
+        last_change = start
         while True:
             job = await self._poll_once(job_spec_id)
             if job.is_terminal:
@@ -222,6 +249,10 @@ class AsyncGoals:
                 # API to answer the slots and resume.
                 return job
 
+            if job.status != last_status:
+                last_status = job.status
+                last_change = time.monotonic()
+
             if job.progress == last_progress:
                 stale_count += 1
                 if stale_count >= STALE_PROGRESS_BACKOFF_AFTER:
@@ -229,11 +260,20 @@ class AsyncGoals:
                     stale_count = 0
             else:
                 last_progress = job.progress
+                last_change = time.monotonic()
                 stale_count = 0
 
-            elapsed = time.monotonic() - start
+            now = time.monotonic()
+            elapsed = now - start
             if elapsed + interval > timeout:
                 raise GoalJobTimeoutError(job_spec_id=job_spec_id, elapsed=elapsed, timeout=timeout)
+            if idle_timeout is not None and (now - last_change) + interval > idle_timeout:
+                raise GoalJobTimeoutError(
+                    job_spec_id=job_spec_id,
+                    elapsed=elapsed,
+                    timeout=idle_timeout,
+                    reason="idle",
+                )
             await asyncio.sleep(interval)
 
     @staticmethod
@@ -287,9 +327,12 @@ class AsyncGoals:
         backend's ``answers: list[{slotId, value}]`` wire shape inside
         the SDK so the public API stays Pythonic.
 
-        Pass ``expected_version`` to enable optimistic locking; the
-        backend returns 409 (surfaced as :class:`APIError`) when the
-        stored ``itemVersion`` has moved on.
+        ``expected_version`` is optional. Omitted (the default), the
+        server conditions the write on the version it just read —
+        concurrent writers still conflict, but you don't need to track
+        versions. Pass ``job.item_version`` from a fresh ``retrieve()``
+        for strict read-your-write optimistic locking; a mismatch
+        surfaces as :class:`APIError` with status 409.
         """
         if not answers:
             raise ValueError("answers must contain at least one slot answer")
@@ -306,6 +349,11 @@ class AsyncGoals:
     async def confirm(self, job_spec_id: str, *, expected_version: int | None = None) -> GoalJob:
         """Confirm a job whose slots are filled, queueing it for execution.
 
+        ``expected_version`` is optional — the server re-reads the
+        current version at submit time regardless (its own usage
+        accounting bumps the version between your read and the submit),
+        so most callers should simply omit it.
+
         The backend returns a ``JobSubmissionResponse`` from this call
         (a 202-style submission ack with the SQS message id); the SDK
         translates that back into a ``GoalJob`` via a follow-up
@@ -315,10 +363,13 @@ class AsyncGoals:
         body: dict[str, Any] = {}
         if expected_version is not None:
             body["expectedVersion"] = expected_version
+        # Always send a JSON object (``{}`` when empty): older backend
+        # builds declare the confirm body as a required parameter and
+        # reject a body-less POST with 422 before the handler runs.
         await self._http.request(
             "POST",
             f"/api/v1/jobs/goal/{job_spec_id}/confirm",
-            json=body or None,
+            json=body,
         )
         return await self._poll_once(job_spec_id)
 
@@ -351,6 +402,52 @@ class AsyncGoals:
             body["reason"] = reason
         await self._http.request("POST", f"/api/v1/jobs/goal/{job_spec_id}/retry", json=body)
         return await self._poll_once(job_spec_id)
+
+    # ── Output artifacts ─────────────────────────────────────────
+
+    async def artifacts(self, job_spec_id: str) -> list[Artifact]:
+        """List a completed job's output artifacts with fresh download URLs.
+
+        Available once the job is terminal-successful (``completed`` or
+        ``partial``); any other status surfaces the backend's 400 as
+        :class:`~convilyn.APIError`. Each artifact's ``download_url`` is
+        presigned and valid for one hour — re-call this method for fresh
+        URLs rather than persisting one.
+        """
+        response = await self._http.request(
+            "GET", f"/api/v1/jobs/goal/{job_spec_id}/artifacts"
+        )
+        payload = response.json()
+        return [Artifact.model_validate(item) for item in payload.get("artifacts") or []]
+
+    async def download_artifact_url(self, job_spec_id: str, artifact_id: str) -> ArtifactDownload:
+        """Mint a fresh presigned download URL for one artifact.
+
+        Prefer this over reusing a stale :py:attr:`Artifact.download_url`
+        when more than an hour may have passed since ``artifacts()``.
+        """
+        response = await self._http.request(
+            "GET",
+            f"/api/v1/jobs/goal/{job_spec_id}/artifacts/{artifact_id}/download",
+        )
+        return ArtifactDownload.model_validate(response.json())
+
+    async def download_artifact_to(
+        self,
+        job_spec_id: str,
+        artifact_id: str,
+        *,
+        to: str | os.PathLike[str],
+    ) -> Path:
+        """Download one artifact to ``to`` and return the path.
+
+        Mints a fresh presigned URL first, then streams the body to disk
+        (shares :func:`convilyn._internal.download.download_url_to_path`
+        with ``convert.download_to`` — same size-capped streaming and
+        symlink refusal).
+        """
+        info = await self.download_artifact_url(job_spec_id, artifact_id)
+        return await download_url_to_path(self._http, info.download_url, to)
 
     async def events(
         self,
@@ -511,3 +608,18 @@ class Goals:
 
     def retry(self, job_spec_id: str, **kwargs: Any) -> GoalJob:
         return self._run(self._async.retry(job_spec_id, **kwargs))
+
+    def artifacts(self, job_spec_id: str) -> list[Artifact]:
+        return self._run(self._async.artifacts(job_spec_id))
+
+    def download_artifact_url(self, job_spec_id: str, artifact_id: str) -> ArtifactDownload:
+        return self._run(self._async.download_artifact_url(job_spec_id, artifact_id))
+
+    def download_artifact_to(
+        self,
+        job_spec_id: str,
+        artifact_id: str,
+        *,
+        to: str | os.PathLike[str],
+    ) -> Path:
+        return self._run(self._async.download_artifact_to(job_spec_id, artifact_id, to=to))

@@ -46,9 +46,12 @@ _SDK_ROOT = Path(__file__).resolve().parents[2]
 # with a CHANGELOG.md entry and a SemVer bump (see docs/STABILITY.md).
 FROZEN_ALL = {
     "APIError",
+    "Artifact",
+    "ArtifactDownload",
     "AsyncConvilyn",
     "AuthError",
     "AutoThrottleConfig",
+    "CatalogWorkflow",
     "ConvertJob",
     "Convilyn",
     "ConvilynError",
@@ -121,7 +124,7 @@ EXPECTED_ERRORS = {
 }
 
 ASYNC_RESOURCE_METHODS = {
-    AsyncFiles: {"upload"},
+    AsyncFiles: {"upload", "delete"},
     AsyncConvert: {
         "create",
         "retrieve",
@@ -141,8 +144,11 @@ ASYNC_RESOURCE_METHODS = {
         "cancel",
         "retry",
         "events",
+        "artifacts",
+        "download_artifact_url",
+        "download_artifact_to",
     },
-    AsyncWorkflows: {"search", "get", "fork", "publish", "patch", "like"},
+    AsyncWorkflows: {"catalog", "search", "get", "fork", "publish", "patch", "like"},
     AsyncAccount: {"get_quota", "get_plan", "usage_history"},
 }
 
@@ -150,7 +156,7 @@ ASYNC_RESOURCE_METHODS = {
 # streaming is async-only by design (a sync iterator would need a thread +
 # queue bridge). This asymmetry is itself part of the frozen contract.
 SYNC_RESOURCE_METHODS = {
-    Files: {"upload"},
+    Files: {"upload", "delete"},
     Convert: {
         "create",
         "retrieve",
@@ -169,8 +175,11 @@ SYNC_RESOURCE_METHODS = {
         "confirm",
         "cancel",
         "retry",
+        "artifacts",
+        "download_artifact_url",
+        "download_artifact_to",
     },
-    Workflows: {"search", "get", "fork", "publish", "patch", "like"},
+    Workflows: {"catalog", "search", "get", "fork", "publish", "patch", "like"},
     Account: {"get_quota", "get_plan", "usage_history"},
 }
 

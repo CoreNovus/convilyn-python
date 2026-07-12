@@ -5,6 +5,80 @@ versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.2.0b5] — 2026-07-11
+
+### Added
+
+- **Status-aware waiting: `goals.wait(..., idle_timeout=)` / `goals.run(..., idle_timeout=)`.**
+  Long agentic runs (7–9 min analyze/execute phases are normal) made the flat
+  300 s `timeout` a bad trade-off — give up on healthy jobs or wait forever on
+  wedged ones. `idle_timeout` bounds the time tolerated **without any status
+  or progress change**; a job that keeps advancing holds the loop open. On an
+  idle trip, `GoalJobTimeoutError.reason == "idle"` (total-budget trips carry
+  `"total"`); the message says the job may still be healthy on a long phase.
+  Fully backward compatible — omitted, behaviour is unchanged.
+
+## [1.2.0b4] — 2026-07-11
+
+### Added
+
+- **`client.files.delete(file_id)`** (async + sync) — deletes an uploaded
+  file's cloud copy (storage object + metadata record) the moment you are
+  done with it, instead of waiting for the platform's ~1-hour automatic
+  cleanup. Only the uploader can delete (404 otherwise); a file attached to
+  a still-running job returns 409 `FILE_IN_USE`. Aimed at privacy-sensitive
+  callers (e.g. edge devices processing family documents) who want
+  deterministic control over cloud retention.
+
+## [1.2.0b3] — 2026-07-11
+
+### Fixed
+
+- **`goals.confirm()` without `expected_version` no longer fails.** The SDK
+  used to send a body-less POST when no version was supplied; backends that
+  declare the confirm body as a required parameter rejected it with a
+  validation error before the handler ran. The SDK now always sends a JSON
+  object (`{}` when empty). Server-side, the confirm body is also optional
+  now, and `expectedVersion` omission on `fill_slots` is documented: the
+  server conditions the write on the version it just read, so you only need
+  to pass `job.item_version` when you want strict read-your-write locking.
+
+### Docs
+
+- `fill_slots()` / `confirm()` docstrings now spell out the optimistic-locking
+  semantics (when to pass `expected_version`, what a 409 means).
+
+## [1.2.0b2] — 2026-07-11
+
+### Added
+
+- **`client.workflows.catalog()`** (async + sync) — lists the platform's
+  built-in goal-lane workflow catalog (`GET /workflows/catalog`), returning
+  the new `CatalogWorkflow` type (workflow id, name, supported inputs,
+  locales, `tier` / `free_tier_allowed` gate hints). Previously
+  `workflows.search()` only reached the user-published community listing,
+  so the built-in catalog was invisible to SDK callers.
+
+## [1.2.0b1] — 2026-07-11
+
+### Added
+
+- **AI-workflow output artifacts are now reachable from the SDK.** Three new
+  methods on `client.goals` (async + sync):
+  - `goals.artifacts(job_spec_id)` → `list[Artifact]` — every output artifact
+    of a completed/partial job, each with a presigned `download_url` valid
+    for 1 hour;
+  - `goals.download_artifact_url(job_spec_id, artifact_id)` →
+    `ArtifactDownload` — mint a fresh presigned URL for one artifact;
+  - `goals.download_artifact_to(job_spec_id, artifact_id, to=...)` — stream
+    one artifact to disk (same size-capped streaming + symlink refusal as
+    `convert.download_to`).
+  Previously the only way to retrieve an AI-workflow's output was to call
+  `GET /jobs/goal/{id}/artifacts` by hand outside the SDK.
+- New public types `Artifact` and `ArtifactDownload` (exported at top level),
+  wired into the conformance harness against the contract's new
+  `OutputArtifact` / `DownloadInfo` schemas.
+
 ## [1.1.1b5] — 2026-07-10
 
 ### Fixed

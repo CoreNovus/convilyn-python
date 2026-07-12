@@ -433,3 +433,53 @@ class TestUploadSizeCap:
         async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
             with pytest.raises(ValueError, match="upload cap"):
                 await client.files.upload(big)
+
+
+# ── delete() — client-controlled retention (A1) ──────────────────────
+
+
+class TestDelete:
+    @pytest.mark.asyncio
+    async def test_delete_calls_endpoint_and_returns_none(self) -> None:
+        async with respx.mock(assert_all_called=True) as mock:
+            route = mock.delete(f"{API_BASE}/api/v1/files/file_xyz").mock(
+                return_value=httpx.Response(204)
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                result = await client.files.delete("file_xyz")
+
+        assert result is None
+        assert route.called
+
+    @pytest.mark.asyncio
+    async def test_delete_unowned_surfaces_404(self) -> None:
+        async with respx.mock(assert_all_called=True) as mock:
+            mock.delete(f"{API_BASE}/api/v1/files/file_other").mock(
+                return_value=httpx.Response(
+                    404, json={"code": "NOT_FOUND", "message": "File not found"}
+                )
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                with pytest.raises(APIError) as info:
+                    await client.files.delete("file_other")
+        assert info.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_delete_in_use_surfaces_409(self) -> None:
+        async with respx.mock(assert_all_called=True) as mock:
+            mock.delete(f"{API_BASE}/api/v1/files/file_busy").mock(
+                return_value=httpx.Response(
+                    409, json={"code": "FILE_IN_USE", "message": "job still running"}
+                )
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                with pytest.raises(APIError) as info:
+                    await client.files.delete("file_busy")
+        assert info.value.status_code == 409
+
+    def test_sync_wrapper_present(self) -> None:
+        sync_client = Convilyn(api_key="ck_test")  # pragma: allowlist secret
+        try:
+            assert callable(sync_client.files.delete)
+        finally:
+            sync_client.close()

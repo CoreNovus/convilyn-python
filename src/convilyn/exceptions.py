@@ -194,14 +194,33 @@ class GoalJobTimeoutError(ConvilynError):
     :py:meth:`convilyn.resources.goals.AsyncGoals.retrieve`.
     """
 
-    def __init__(self, *, job_spec_id: str, elapsed: float, timeout: float) -> None:
+    def __init__(
+        self,
+        *,
+        job_spec_id: str,
+        elapsed: float,
+        timeout: float,
+        reason: str = "total",
+    ) -> None:
         self.job_spec_id = job_spec_id
         self.elapsed = elapsed
         self.timeout = timeout
-        super().__init__(
-            f"GoalJob {job_spec_id} did not reach a terminal status within "
-            f"{timeout}s (elapsed {elapsed:.1f}s)"
-        )
+        #: ``"total"`` — the overall ``timeout`` budget lapsed; ``"idle"`` —
+        #: ``idle_timeout`` lapsed with no status/progress change (the job may
+        #: still be healthy on a long phase; check ``retrieve()`` before
+        #: assuming failure).
+        self.reason = reason
+        if reason == "idle":
+            message = (
+                f"GoalJob {job_spec_id} showed no status/progress change for "
+                f"{timeout}s (elapsed {elapsed:.1f}s total)"
+            )
+        else:
+            message = (
+                f"GoalJob {job_spec_id} did not reach a terminal status within "
+                f"{timeout}s (elapsed {elapsed:.1f}s)"
+            )
+        super().__init__(message)
 
 
 class WebSocketError(ConvilynError):

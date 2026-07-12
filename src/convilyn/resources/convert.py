@@ -24,6 +24,7 @@ import time
 from pathlib import Path
 from typing import Any, cast
 
+from convilyn._internal.download import download_url_to_path
 from convilyn._internal.http import HTTPClient
 from convilyn._internal.loop_runner import CoroRunner
 from convilyn.exceptions import JobFailedError, JobTimeoutError
@@ -176,20 +177,7 @@ class AsyncConvert:
         Convilyn auth headers on the storage URL.
         """
         url = await self.download_url(job)
-        target = Path(os.fspath(to))
-        # Refuse to write *through* an existing symlink: a pre-placed link
-        # could redirect the bytes to an unintended location (e.g. a dotfile
-        # or a path outside the intended directory). Writing to a regular
-        # path or a brand-new file is unaffected.
-        if target.is_symlink():
-            raise ValueError(
-                f"Refusing to write to {target!r}: target is a symlink. "
-                "Remove it or choose a non-symlink destination."
-            )
-        # Stream to disk with a size cap rather than buffering the whole body
-        # in memory — a very large (or hostile) response cannot exhaust RAM.
-        await self._http.external_get_to_file(url, target)
-        return target
+        return await download_url_to_path(self._http, url, to)
 
     # ── Private steps (extensible by subclassing) ───────────────
 

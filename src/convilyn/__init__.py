@@ -52,6 +52,9 @@ from convilyn.exceptions import (
 )
 from convilyn.sync_client import Convilyn
 from convilyn.types import (
+    Artifact,
+    ArtifactDownload,
+    CatalogWorkflow,
     ConvertJob,
     CostEstimate,
     File,
@@ -75,9 +78,12 @@ from convilyn.types import (
 
 __all__ = [
     "APIError",
+    "Artifact",
+    "ArtifactDownload",
     "AsyncConvilyn",
     "AuthError",
     "AutoThrottleConfig",
+    "CatalogWorkflow",
     "ConvertJob",
     "Convilyn",
     "ConvilynError",

@@ -229,6 +229,46 @@ class GoalJob(BaseModel):
         return self.status == "slots_pending"
 
 
+class Artifact(BaseModel):
+    """One output artifact produced by an AI workflow job.
+
+    Returned by :py:meth:`convilyn.resources.goals.AsyncGoals.artifacts`.
+    The :py:attr:`download_url` is a presigned storage URL valid for one
+    hour from issuance — re-call ``artifacts()`` (or
+    ``download_artifact_url()``) for a fresh one instead of persisting it.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, frozen=True)
+
+    artifact_id: str = Field(alias="artifactId")
+    file_name: str = Field(alias="fileName")
+    mime_type: str = Field(alias="mimeType")
+    size_bytes: int = Field(alias="sizeBytes", ge=0)
+    download_url: str | None = Field(default=None, alias="downloadUrl")
+    artifact_type: str | None = Field(default=None, alias="artifactType")
+    platform: str | None = None
+    metadata: dict[str, Any] | None = None
+    is_primary: bool = Field(default=False, alias="isPrimary")
+    description: str = ""
+
+
+class ArtifactDownload(BaseModel):
+    """A freshly minted presigned download URL for a single artifact.
+
+    Returned by
+    :py:meth:`convilyn.resources.goals.AsyncGoals.download_artifact_url`.
+    ``expires_at`` marks the end of the URL's 1-hour validity window.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, frozen=True)
+
+    download_url: str = Field(alias="downloadUrl")
+    file_name: str = Field(alias="fileName")
+    size_bytes: int = Field(alias="sizeBytes", ge=0)
+    mime_type: str = Field(alias="mimeType")
+    expires_at: datetime = Field(alias="expiresAt")
+
+
 # ── AI workflow WebSocket event stream types ──────────────────────────
 
 
@@ -337,6 +377,43 @@ class WorkflowSummary(BaseModel):
     visibility: WorkflowVisibility
     tags: list[str] = Field(default_factory=list)
     stats: WorkflowStats = Field(default_factory=WorkflowStats)
+
+
+class CatalogWorkflow(BaseModel):
+    """One built-in AI workflow from the platform catalog.
+
+    Returned by :py:meth:`convilyn.resources.workflows.AsyncWorkflows.catalog`.
+    Pass :py:attr:`workflow_id` as ``workflow_id`` to
+    :py:meth:`convilyn.resources.goals.AsyncGoals.start` to run it directly
+    (bypassing goal-text destination resolution).
+
+    ``tier`` names the subscription tier the workflow is designed for
+    (``None`` = free); ``free_tier_allowed`` is a tri-state gate hint —
+    only an explicit ``False`` means a Free-tier run is blocked.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, frozen=True, extra="allow")
+
+    workflow_id: str = Field(alias="workflowId")
+    name: str
+    description: str
+    icon: str | None = None
+    supported_input_types: list[str] = Field(
+        default_factory=list, alias="supportedInputTypes"
+    )
+    supported_input_formats: list[str] | None = Field(
+        default=None, alias="supportedInputFormats"
+    )
+    category: str = "goal_lane"
+    required_slot_count: int = Field(default=0, alias="requiredSlotCount", ge=0)
+    subcategory: str | None = None
+    sku_group: str | None = Field(default=None, alias="skuGroup")
+    status: str = "active"
+    supported_locales: list[str] | None = Field(default=None, alias="supportedLocales")
+    max_input_size_bytes: int | None = Field(default=None, alias="maxInputSizeBytes")
+    min_file_count: int | None = Field(default=None, alias="minFileCount")
+    tier: str | None = None
+    free_tier_allowed: bool | None = Field(default=None, alias="freeTierAllowed")
 
 
 class WorkflowSearchPage(BaseModel):

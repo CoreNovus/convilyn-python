@@ -462,6 +462,34 @@ class TestConfirmCancelRetry:
         assert confirm_route.called
         assert get_route.called
         assert job.status == "queued"
+        # Regression (B1): confirm without expected_version must send an
+        # EMPTY JSON OBJECT, not a body-less POST — backends that declare
+        # the body as a required param 422 on a missing body.
+        assert confirm_route.calls.last.request.read() == b"{}"
+
+    @pytest.mark.asyncio
+    async def test_confirm_sends_expected_version_when_supplied(self) -> None:
+        async with respx.mock(assert_all_called=True) as mock:
+            confirm_route = mock.post(f"{API_BASE}/api/v1/jobs/goal/job_test/confirm").mock(
+                return_value=httpx.Response(
+                    202,
+                    json={
+                        "jobSpecId": "job_test",
+                        "status": "queued",
+                        "messageId": "msg_abc",
+                        "submittedAt": "2026-05-20T12:00:00Z",
+                    },
+                )
+            )
+            mock.get(f"{API_BASE}/api/v1/jobs/goal/job_test").mock(
+                return_value=httpx.Response(200, json=_job_response("queued"))
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                await client.goals.confirm("job_test", expected_version=4)
+
+        import json as _json
+
+        assert _json.loads(confirm_route.calls.last.request.read()) == {"expectedVersion": 4}
 
     @pytest.mark.asyncio
     async def test_cancel_returns_refreshed_goal_job(self) -> None:
@@ -556,6 +584,244 @@ class TestGoalJobWireNullCoercion:
         assert job.file_ids == []
         assert job.pending_slots == []
         assert job.filled_slots == {}
+
+
+# ── idle_timeout — status-aware waiting (B5) ─────────────────────────
+
+
+class _FakeClock:
+    """Deterministic monotonic clock advanced by the patched sleep."""
+
+    def __init__(self) -> None:
+        self.t = 0.0
+
+    def monotonic(self) -> float:
+        return self.t
+
+    async def sleep(self, seconds: float) -> None:
+        self.t += seconds
+
+
+class TestIdleTimeout:
+    @pytest.mark.asyncio
+    async def test_idle_timeout_raises_with_idle_reason(self) -> None:
+        """A job with no status/progress change for idle_timeout raises
+        reason='idle' long before the total timeout budget lapses."""
+        clock = _FakeClock()
+        async with respx.mock() as mock:
+            mock.get(f"{API_BASE}/api/v1/jobs/goal/job_stuck").mock(
+                return_value=httpx.Response(200, json=_job_response("executing", progress=40))
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                with (
+                    patch("convilyn.resources.goals.time.monotonic", clock.monotonic),
+                    patch("convilyn.resources.goals.asyncio.sleep", clock.sleep),
+                ):
+                    with pytest.raises(GoalJobTimeoutError) as info:
+                        await client.goals.wait(
+                            "job_stuck",
+                            timeout=1000.0,
+                            poll_interval=1.0,
+                            idle_timeout=2.0,
+                        )
+
+        assert info.value.reason == "idle"
+        assert info.value.timeout == 2.0
+        assert "no status/progress change" in str(info.value)
+
+    @pytest.mark.asyncio
+    async def test_progress_changes_keep_idle_loop_alive(self) -> None:
+        """A job that keeps advancing never trips idle_timeout even when
+        each phase individually exceeds it in wall-clock terms."""
+        clock = _FakeClock()
+        responses = [
+            httpx.Response(200, json=_job_response("executing", progress=p))
+            for p in (10, 20, 30, 40)
+        ] + [httpx.Response(200, json=_completed_job())]
+        async with respx.mock() as mock:
+            mock.get(f"{API_BASE}/api/v1/jobs/goal/job_moving").mock(side_effect=responses)
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                with (
+                    patch("convilyn.resources.goals.time.monotonic", clock.monotonic),
+                    patch("convilyn.resources.goals.asyncio.sleep", clock.sleep),
+                ):
+                    job = await client.goals.wait(
+                        "job_moving",
+                        timeout=1000.0,
+                        poll_interval=1.0,
+                        idle_timeout=2.0,
+                    )
+
+        assert job.status == "completed"
+
+    @pytest.mark.asyncio
+    async def test_total_timeout_unchanged_reason_is_total(self) -> None:
+        """Backward compat: without idle_timeout the flat budget still
+        raises, and the exception's reason defaults to 'total'."""
+        clock = _FakeClock()
+        async with respx.mock() as mock:
+            mock.get(f"{API_BASE}/api/v1/jobs/goal/job_slow").mock(
+                return_value=httpx.Response(200, json=_job_response("executing"))
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                with (
+                    patch("convilyn.resources.goals.time.monotonic", clock.monotonic),
+                    patch("convilyn.resources.goals.asyncio.sleep", clock.sleep),
+                ):
+                    with pytest.raises(GoalJobTimeoutError) as info:
+                        await client.goals.wait("job_slow", timeout=3.0, poll_interval=1.0)
+
+        assert info.value.reason == "total"
+
+    def test_sync_wrapper_forwards_idle_timeout(self) -> None:
+        with respx.mock() as mock:
+            mock.get(f"{API_BASE}/api/v1/jobs/goal/job_done").mock(
+                return_value=httpx.Response(200, json=_completed_job())
+            )
+            client = Convilyn(api_key="ck_test")  # pragma: allowlist secret
+            try:
+                job = client.goals.wait("job_done", idle_timeout=60.0)
+            finally:
+                client.close()
+        assert job.is_terminal
+
+
+# ── Output artifacts (list / presign / download-to-disk) ────────────
+
+
+def _artifact_payload(**overrides: Any) -> dict:
+    base = {
+        "artifactId": "art_1",
+        "fileName": "summary.xlsx",
+        "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "sizeBytes": 2048,
+        "downloadUrl": "https://storage.example.com/bucket/summary.xlsx?sig=abc",
+        "artifactType": "spreadsheet",
+        "platform": None,
+        "metadata": None,
+        "isPrimary": True,
+        "description": "Vendor-grouped expense summary",
+    }
+    base.update(overrides)
+    return base
+
+
+class TestArtifacts:
+    @pytest.mark.asyncio
+    async def test_artifacts_returns_typed_list(self) -> None:
+        async with respx.mock(assert_all_called=True) as mock:
+            mock.get(f"{API_BASE}/api/v1/jobs/goal/job_test/artifacts").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "artifacts": [
+                            _artifact_payload(),
+                            _artifact_payload(artifactId="art_2", isPrimary=False),
+                        ],
+                        "total": 2,
+                    },
+                )
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                artifacts = await client.goals.artifacts("job_test")
+
+        assert len(artifacts) == 2
+        assert artifacts[0].artifact_id == "art_1"
+        assert artifacts[0].is_primary
+        assert artifacts[0].download_url and artifacts[0].download_url.startswith("https://")
+
+    @pytest.mark.asyncio
+    async def test_artifacts_not_downloadable_surfaces_api_error(self) -> None:
+        async with respx.mock(assert_all_called=True) as mock:
+            mock.get(f"{API_BASE}/api/v1/jobs/goal/job_test/artifacts").mock(
+                return_value=httpx.Response(
+                    400,
+                    json={"code": "BAD_REQUEST", "message": "Job is not in a downloadable state"},
+                )
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                with pytest.raises(APIError) as info:
+                    await client.goals.artifacts("job_test")
+        assert info.value.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_download_artifact_url_returns_presign_info(self) -> None:
+        async with respx.mock(assert_all_called=True) as mock:
+            mock.get(f"{API_BASE}/api/v1/jobs/goal/job_test/artifacts/art_1/download").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "downloadUrl": "https://storage.example.com/bucket/summary.xlsx?sig=xyz",
+                        "fileName": "summary.xlsx",
+                        "sizeBytes": 2048,
+                        "mimeType": "application/octet-stream",
+                        "expiresAt": "2026-07-11T13:00:00Z",
+                    },
+                )
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                info = await client.goals.download_artifact_url("job_test", "art_1")
+
+        assert info.file_name == "summary.xlsx"
+        assert info.download_url.endswith("sig=xyz")
+
+    @pytest.mark.asyncio
+    async def test_download_artifact_to_streams_to_disk(self, tmp_path) -> None:
+        storage_url = "https://storage.example.com/bucket/summary.xlsx?sig=xyz"
+        async with respx.mock(assert_all_called=True) as mock:
+            mock.get(f"{API_BASE}/api/v1/jobs/goal/job_test/artifacts/art_1/download").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "downloadUrl": storage_url,
+                        "fileName": "summary.xlsx",
+                        "sizeBytes": 9,
+                        "mimeType": "application/octet-stream",
+                        "expiresAt": "2026-07-11T13:00:00Z",
+                    },
+                )
+            )
+            mock.get(storage_url).mock(
+                return_value=httpx.Response(200, content=b"PK\x03\x04zip")
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                target = tmp_path / "out.xlsx"
+                returned = await client.goals.download_artifact_to("job_test", "art_1", to=target)
+
+        assert returned == target
+        assert target.read_bytes().startswith(b"PK")
+
+    @pytest.mark.asyncio
+    async def test_download_artifact_to_refuses_symlink_target(self, tmp_path) -> None:
+        link = tmp_path / "out.xlsx"
+        try:
+            link.symlink_to(tmp_path / "elsewhere.xlsx")
+        except OSError as exc:  # Windows without symlink privilege / Developer Mode
+            pytest.skip(f"symlink creation not permitted on this platform: {exc}")
+        async with respx.mock() as mock:
+            mock.get(f"{API_BASE}/api/v1/jobs/goal/job_test/artifacts/art_1/download").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "downloadUrl": "https://storage.example.com/x?sig=1",
+                        "fileName": "out.xlsx",
+                        "sizeBytes": 1,
+                        "mimeType": "application/octet-stream",
+                        "expiresAt": "2026-07-11T13:00:00Z",
+                    },
+                )
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                with pytest.raises(ValueError, match="symlink"):
+                    await client.goals.download_artifact_to("job_test", "art_1", to=link)
+
+    def test_sync_wrappers_present(self) -> None:
+        client = Convilyn(api_key="ck_test")  # pragma: allowlist secret
+        try:
+            for method_name in ("artifacts", "download_artifact_url", "download_artifact_to"):
+                assert callable(getattr(client.goals, method_name))
+        finally:
+            client.close()
 
 
 # ── WS token redaction (never leak the bearer in an error string) ───

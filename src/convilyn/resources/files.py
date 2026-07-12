@@ -120,6 +120,19 @@ class AsyncFiles:
             content_type=resolved_content_type,
         )
 
+    async def delete(self, file_id: str) -> None:
+        """Delete an uploaded file's cloud copy (storage object + record).
+
+        Only the uploader can delete; a missing or unowned ``file_id``
+        surfaces as :class:`~convilyn.APIError` 404 and a file attached
+        to a still-running job as 409 (``FILE_IN_USE``). The platform
+        deletes input files automatically ~1 hour after upload anyway —
+        call this when you want the cloud copy gone deterministically
+        the moment your workflow is done (e.g. privacy-sensitive
+        documents on an edge device).
+        """
+        await self._http.request("DELETE", f"/api/v1/files/{file_id}")
+
     # ── Step orchestration (open for extension) ──────────────────
 
     async def _upload_with_body(
@@ -285,3 +298,6 @@ class Files:
                 content_type=content_type,
             )
         )
+
+    def delete(self, file_id: str) -> None:
+        return self._run(self._async.delete(file_id))
