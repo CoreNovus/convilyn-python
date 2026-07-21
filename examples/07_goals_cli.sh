@@ -6,7 +6,7 @@
 #   export CONVILYN_WS_URL=wss://ws.convilyn.com
 #   bash examples/07_goals_cli.sh <file_id>
 #
-# Requires the convilyn binary on PATH (`pip install convilyn`) and `jq`
+# Requires the convilyn binary on PATH (`uv tool install convilyn` or `pip install convilyn`) and `jq`
 # for the JSON-piping step.
 
 set -euo pipefail

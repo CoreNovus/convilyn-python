@@ -68,7 +68,15 @@ def goals_command() -> None:
     "--workflow-id",
     "workflow_id",
     default=None,
-    help="Workflow spec id (e.g. doc_analyzer). Mutually exclusive with --goal-text.",
+    help="Built-in workflow spec id (e.g. doc_analyzer). "
+    "Mutually exclusive with --user-workflow-id and --goal-text.",
+)
+@click.option(
+    "--user-workflow-id",
+    "user_workflow_id",
+    default=None,
+    help="Your Builder-authored workflow id (uw_...). "
+    "Mutually exclusive with --workflow-id and --goal-text.",
 )
 @click.option(
     "--goal-text",
@@ -104,6 +112,7 @@ def goals_command() -> None:
 )
 def start_command(
     workflow_id: str | None,
+    user_workflow_id: str | None,
     goal_text: str | None,
     files: str | None,
     slots: tuple[str, ...],
@@ -119,6 +128,7 @@ def start_command(
         _emit_start_dry_run(
             renderer=renderer,
             workflow_id=workflow_id,
+            user_workflow_id=user_workflow_id,
             goal_text=goal_text,
             file_ids=file_ids,
             slots=slot_values,
@@ -128,6 +138,7 @@ def start_command(
     _run_sync_action(
         action=lambda client: client.goals.start(
             workflow_id=workflow_id,
+            user_workflow_id=user_workflow_id,
             goal_text=goal_text,
             files=file_ids,
             slots=slot_values or None,
@@ -402,6 +413,7 @@ def _emit_start_dry_run(
     *,
     renderer: OutputRenderer,
     workflow_id: str | None,
+    user_workflow_id: str | None,
     goal_text: str | None,
     file_ids: list[str] | None,
     slots: dict[str, Any],
@@ -410,6 +422,8 @@ def _emit_start_dry_run(
     payload: dict[str, Any] = {"fileIds": file_ids or []}
     if workflow_id is not None:
         payload["workflowId"] = workflow_id
+    if user_workflow_id is not None:
+        payload["userWorkflowId"] = user_workflow_id
     if goal_text is not None:
         payload["goalText"] = goal_text
     if slots:

@@ -9,11 +9,13 @@ Exposes three read-only verbs:
 * :meth:`AsyncAccount.usage_history`  — past usage periods for billing
                                          retrospectives + MTD breakdowns.
 
-``get_plan`` / ``get_quota`` call the same backend endpoint today
-(``POST /api/v1/workflows/cost-preview``); when a dedicated
-``/billing/plan`` endpoint lands, :meth:`get_plan` will switch
-transparently. ``usage_history`` calls
-``GET /api/v1/payment/usage/history`` directly.
+``get_plan`` / ``get_quota`` both call ``POST /api/v1/workflows/cost-preview``.
+That is the canonical tier source for the SDK data plane: it is the endpoint
+that accepts the consumer ``ck_`` key (via ``get_current_user_or_api_key``) and
+returns the caller's tier in ``quotaCheck.tier``. (The web app reads
+``GET /api/v1/payment/subscription`` for the current plan, but that route is
+JWT/session-only and rejects ``ck_`` keys, so the SDK cannot use it.)
+``usage_history`` calls ``GET /api/v1/payment/usage/history`` directly.
 
 Pure-data return — actions (upgrade, top-up) belong on the website,
 not in the SDK.
@@ -86,12 +88,12 @@ class AsyncAccount:
     async def get_plan(self) -> Plan:
         """Return the caller's current billing tier.
 
-        Today this is a thin convenience over :meth:`get_quota` (it's
-        the only existing endpoint that returns the tier alongside a
-        public-readable response). When a dedicated ``/billing/plan``
-        endpoint ships, this method will switch transparently — the
-        :class:`Plan` model is ``extra="allow"``, so new fields surface
-        without breaking callers.
+        Thin convenience over :meth:`get_quota`: ``cost-preview`` is the
+        SDK's canonical tier source (the ``ck_``-accepting endpoint that
+        returns ``quotaCheck.tier``). The tier may be ``"free"``,
+        ``"pro"``, or ``"business"`` — all valid :data:`convilyn.types.PlanTier`
+        values. The :class:`Plan` model is ``extra="allow"``, so any future
+        fields surface without breaking callers.
         """
         estimate = await self.get_quota(tools=[], max_iterations=1)
         return Plan(tier=estimate.quota_check.tier)

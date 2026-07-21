@@ -10,20 +10,26 @@ convention and keeps each surface mockable in isolation.
 """
 
 from convilyn.resources.account import Account, AsyncAccount
+from convilyn.resources.builder import AsyncBuilder, Builder
 from convilyn.resources.convert import AsyncConvert, Convert
 from convilyn.resources.files import AsyncFiles, Files
 from convilyn.resources.goals import AsyncGoals, Goals
+from convilyn.resources.user_workflows import AsyncUserWorkflows, UserWorkflows
 from convilyn.resources.workflows import AsyncWorkflows, Workflows
 
 __all__ = [
     "Account",
     "AsyncAccount",
+    "AsyncBuilder",
     "AsyncConvert",
     "AsyncFiles",
     "AsyncGoals",
+    "AsyncUserWorkflows",
     "AsyncWorkflows",
+    "Builder",
     "Convert",
     "Files",
     "Goals",
+    "UserWorkflows",
     "Workflows",
 ]

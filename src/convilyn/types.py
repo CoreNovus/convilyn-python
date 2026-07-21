@@ -44,6 +44,50 @@ class File(BaseModel):
     is_input: bool = Field(default=True, alias="isInput")
 
 
+class StoredFile(BaseModel):
+    """One durable stored file (e.g. an emailed-in attachment).
+
+    Returned inside :class:`FileList` by
+    :py:meth:`convilyn.resources.files.AsyncFiles.list`. Durable files
+    survive the ~1-hour cleanup that removes ordinary uploads and count
+    toward your storage quota. Attribute names mirror :class:`File` for
+    consistency; the list wire is snake_case, bridged by ``alias``.
+
+    Ephemeral uploads do NOT appear here — this lists durable storage only.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, frozen=True)
+
+    file_id: str
+    filename: str = Field(alias="file_name")
+    size: int = Field(alias="file_size", ge=0)
+    content_type: str = Field(alias="mime_type")
+    file_extension: str
+    created_at: datetime
+
+
+class StorageUsage(BaseModel):
+    """Durable-storage usage against your tier's free quota (bytes)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    used_bytes: int = Field(ge=0)
+    free_bytes: int = Field(ge=0)
+    over_quota: bool
+
+
+class FileList(BaseModel):
+    """Your durable stored files plus a storage-usage summary.
+
+    Returned by :py:meth:`convilyn.resources.files.AsyncFiles.list`.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    files: list[StoredFile]
+    usage: StorageUsage
+
+
 class ResultFile(BaseModel):
     """A produced artifact attached to a completed job.
 
@@ -398,12 +442,8 @@ class CatalogWorkflow(BaseModel):
     name: str
     description: str
     icon: str | None = None
-    supported_input_types: list[str] = Field(
-        default_factory=list, alias="supportedInputTypes"
-    )
-    supported_input_formats: list[str] | None = Field(
-        default=None, alias="supportedInputFormats"
-    )
+    supported_input_types: list[str] = Field(default_factory=list, alias="supportedInputTypes")
+    supported_input_formats: list[str] | None = Field(default=None, alias="supportedInputFormats")
     category: str = "goal_lane"
     required_slot_count: int = Field(default=0, alias="requiredSlotCount", ge=0)
     subcategory: str | None = None
@@ -434,11 +474,118 @@ class LikeResponse(BaseModel):
     like_count: int = Field(alias="likeCount", ge=0)
 
 
+# ── User-workflow management types ──────────────────────────────────
+# The wire shapes of the curated `/user_workflows/*` management subset
+# (contract: sdk_public_openapi.yaml UserWorkflowSummary / Detail / Run).
+# Distinct from the community-gallery `Workflow` / `WorkflowSummary`
+# above: these are the OWNER-facing rows for workflows you author.
+
+
+class UserWorkflowSummary(BaseModel):
+    """One row of :py:meth:`AsyncUserWorkflows.list` — a workflow you own.
+
+    Light-weight (no ``system_prompt`` / ``spec_json``); fetch the full
+    detail with :py:meth:`AsyncUserWorkflows.get`.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, frozen=True, extra="allow")
+
+    workflow_id: str = Field(alias="workflowId")
+    spec_id: str = Field(alias="specId")
+    name: str
+    description_preview: str | None = Field(default=None, alias="descriptionPreview")
+    visibility: WorkflowVisibility
+    tags: list[str] = Field(default_factory=list)
+    stats: WorkflowStats = Field(default_factory=WorkflowStats)
+    source_type: str | None = Field(default=None, alias="sourceType")
+    source_spec_id: str | None = Field(default=None, alias="sourceSpecId")
+    updated_at: str = Field(alias="updatedAt")
+    owner_id: str | None = Field(default=None, alias="ownerId")
+    owner_display_name: str | None = Field(default=None, alias="ownerDisplayName")
+
+
+class UserWorkflowsPage(BaseModel):
+    """One page of owned-workflow summaries + cursor for pagination."""
+
+    model_config = ConfigDict(populate_by_name=True, frozen=True, extra="allow")
+
+    items: list[UserWorkflowSummary] = Field(default_factory=list)
+    cursor: str | None = None
+
+
+class UserWorkflowDetail(BaseModel):
+    """Full owner-facing detail of a workflow you own.
+
+    Returned by :py:meth:`AsyncUserWorkflows.get`. Carries the heavy
+    authoring fields (``system_prompt``, ``spec_json``) the summary row
+    omits; builder-UI-only wire fields (tool palette, canvas layout,
+    example pairs) are tolerated via ``extra="allow"`` but deliberately
+    not bound — they belong to the web Builder surface.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, frozen=True, extra="allow")
+
+    workflow_id: str = Field(alias="workflowId")
+    owner_id: str = Field(alias="ownerId")
+    owner_display_name: str | None = Field(default=None, alias="ownerDisplayName")
+    spec_id: str = Field(alias="specId")
+    source_spec_id: str | None = Field(default=None, alias="sourceSpecId")
+    source_type: str | None = Field(default=None, alias="sourceType")
+    source_version: str | None = Field(default=None, alias="sourceVersion")
+    name: str
+    description: str | None = None
+    system_prompt: str | None = Field(default=None, alias="systemPrompt")
+    spec_json: dict[str, Any] | None = Field(default=None, alias="specJson")
+    visibility: WorkflowVisibility
+    tags: list[str] = Field(default_factory=list)
+    founding_intent: str | None = Field(default=None, alias="foundingIntent")
+    stats: WorkflowStats = Field(default_factory=WorkflowStats)
+    created_at: str = Field(alias="createdAt")
+    updated_at: str = Field(alias="updatedAt")
+    item_version: int = Field(default=0, alias="itemVersion", ge=0)
+
+
+class UserWorkflowRun(BaseModel):
+    """One recent AI-workflow run of an owned workflow.
+
+    Returned by :py:meth:`AsyncUserWorkflows.runs`. ``job_spec_id`` is
+    the handle for :py:meth:`convilyn.resources.goals.AsyncGoals.retrieve`
+    / ``artifacts`` follow-ups.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, frozen=True, extra="allow")
+
+    job_spec_id: str = Field(alias="jobSpecId")
+    status: str
+    started_at: str | None = Field(default=None, alias="startedAt")
+    completed_at: str | None = Field(default=None, alias="completedAt")
+    progress: float | None = None
+    error_code: str | None = Field(default=None, alias="errorCode")
+
+
+class UserWorkflowExport(BaseModel):
+    """A portable workflow export document + its schema version.
+
+    Returned by :py:meth:`AsyncUserWorkflows.export`. ``document`` is the
+    backend-owned sanitised JSON document (treat as opaque — for backup /
+    re-import); ``schema_version`` mirrors the ``X-Export-Schema-Version``
+    response header.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, frozen=True)
+
+    document: dict[str, Any]
+    schema_version: str | None = None
+
+
 # ── Billing / quota types ───────────────────────────────────────────
 
 
 QuotaState = Literal["ok", "soft_limit", "quota_exceeded"]
-PlanTier = Literal["free", "pro"]
+# Mirrors the backend plan tiers (plan_catalog.py). MUST include every tier the
+# backend can return, or a business-tier caller's quota/plan response fails
+# validation. Keep in lockstep with the backend enabled_plan_tiers.
+PlanTier = Literal["free", "pro", "business"]
 
 
 class QuotaCheck(BaseModel):
@@ -498,11 +645,11 @@ class CostEstimate(BaseModel):
 class Plan(BaseModel):
     """Caller's current billing tier.
 
-    Today derived from ``/cost-preview`` (the only endpoint that returns
-    the tier alongside a public response). When the API ships a
-    dedicated ``/billing/plan`` endpoint (R5 follow-up), this model will
-    grow ``renews_at`` / ``status`` fields; existing callers won't break
-    because :class:`Plan` is ``extra="allow"``.
+    Derived from ``POST /api/v1/workflows/cost-preview`` — the ``ck_``-accepting
+    endpoint that returns the tier in ``quotaCheck.tier`` (see
+    :meth:`convilyn.resources.account.AsyncAccount.get_plan`). The tier is one of
+    ``free`` / ``pro`` / ``business``. :class:`Plan` is ``extra="allow"``, so any
+    future fields the backend adds surface without breaking existing callers.
     """
 
     model_config = ConfigDict(populate_by_name=True, frozen=True, extra="allow")
@@ -556,3 +703,135 @@ class GoalEvent(BaseModel):
     def is_terminal(self) -> bool:
         """True when this event signals the end of the stream."""
         return self.type in GOAL_EVENT_TERMINAL_TYPES
+
+
+# ── Builder (chat-driven authoring) ──────────────────────────────────
+# The chat/Builder wire is snake_case (the backend ChatResponse /
+# ProcessMessageResponse models carry no camelCase alias_generator, unlike
+# the goals/convert families), so these models need NO field aliases —
+# attribute names already match the wire.
+
+BuilderVerdictAction = Literal[
+    "request_input",
+    "stage_draft",
+    "register",
+    "infeasible",
+    "recommend_existing",
+    "missing_tool_call",
+    "unknown_tool",
+]
+"""Terminal action of a Builder turn (``BuilderTurn.verdict_action``)."""
+
+
+class BuilderAttachment(BaseModel):
+    """A file attached to a Builder message."""
+
+    model_config = ConfigDict(frozen=True)
+
+    file_id: str
+    file_name: str
+    file_size: int = Field(ge=0)
+    mime_type: str
+    url: str | None = None
+
+
+class BuilderSession(BaseModel):
+    """A chat session in Builder authoring mode.
+
+    Returned by :py:meth:`convilyn.resources.builder.AsyncBuilder.create_session`
+    / ``get_session``. Extra wire fields are ignored.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    chat_id: str
+    status: str
+    mode: str = "builder"
+    message_count: int = Field(ge=0)
+    agent_state: str
+    created_at: datetime
+    user_id: str | None = None
+    title: str | None = None
+    builder_mode: str | None = None
+    working_memory_summary: dict[str, Any] | None = None
+    last_message_at: datetime | None = None
+
+
+class BuilderMessage(BaseModel):
+    """One persisted Builder chat message (user echo or assistant reply)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    message_id: str
+    chat_id: str
+    role: str
+    content: str
+    message_type: str
+    created_at: datetime
+    metadata: dict[str, Any] | None = None
+    attachments: list[BuilderAttachment] = Field(default_factory=list)
+
+
+class BuilderPendingSlot(BaseModel):
+    """A clarification slot the Builder is waiting on.
+
+    Populated only when ``BuilderTurn.verdict_action == "request_input"``.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    slot_id: str
+    slot_type: str
+    question: str
+    options: list[Any] | None = None
+    required: bool = True
+    context: str | None = None
+
+
+class BuilderTurn(BaseModel):
+    """The result of one Builder turn (``send_message``).
+
+    ``verdict_action`` reports the terminal action; on ``"register"``,
+    :py:attr:`registered_workflow_id` carries the built ``uw_`` id — hand it to
+    :py:meth:`convilyn.resources.goals.AsyncGoals.run` (``workflow_id=...``) to
+    run the new workflow. On ``"request_input"``, :py:attr:`pending_slots`
+    carries the clarify form. Extra wire fields are ignored.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    messages: list[BuilderMessage]
+    agent_state: str
+    stop_reason: str
+    verdict_action: str | None = None
+    failure_type: str | None = None
+    pending_slots: list[BuilderPendingSlot] = Field(default_factory=list)
+    turn_count: int | None = None
+    builder_mode: str | None = None
+    registered_workflow_id: str | None = None
+    clarification_question: str | None = None
+    clarification_options: list[str] = Field(default_factory=list)
+    error: str | None = None
+
+
+class BuilderMessageList(BaseModel):
+    """A page of a Builder session's message transcript."""
+
+    model_config = ConfigDict(frozen=True)
+
+    messages: list[BuilderMessage]
+    total: int = Field(ge=0)
+    limit: int = Field(ge=0)
+    offset: int = Field(ge=0)
+
+
+class BuilderQuota(BaseModel):
+    """The caller's Builder-turn rate-limit snapshot for the current window."""
+
+    model_config = ConfigDict(frozen=True)
+
+    used: int = Field(ge=0)
+    limit: int = Field(ge=0)
+    remaining: int = Field(ge=0)
+    window_seconds: int = Field(ge=0)
+    retry_after_seconds: int = Field(default=0, ge=0)

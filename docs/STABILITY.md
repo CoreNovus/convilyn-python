@@ -78,7 +78,7 @@ CHANGELOG under `Deprecated`. Removal then happens only in a subsequent
 ## The documented escape hatch
 
 For endpoints the typed resources don't cover yet, the SDK exposes one
-intentional low-level seam — `client._async._http.raw_request(...)`
+intentional low-level escape hatch — `client._async._http.raw_request(...)`
 (and the `convilyn api` CLI command). Because it reaches through a
 `_`-prefixed attribute it is **explicitly outside** the semver guarantee:
 it is a pragmatic bridge, not a stable API. Prefer a typed resource

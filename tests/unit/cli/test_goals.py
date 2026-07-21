@@ -140,10 +140,48 @@ class TestStartLogic:
         assert result.exit_code == EXIT_OK
         mock_factory.goals.start.assert_called_once_with(
             workflow_id="doc_analyzer",
+            user_workflow_id=None,
             goal_text=None,
             files=["file_abc", "file_def"],
             slots=None,
         )
+
+    def test_start_with_user_workflow_id_calls_sdk(
+        self,
+        runner: CliRunner,
+        mock_factory: MagicMock,
+        started_job: GoalJob,
+    ) -> None:
+        """--user-workflow-id routes a uw_* run through the typed SDK path (#2546)."""
+        mock_factory.goals.start.return_value = started_job
+        result = runner.invoke(
+            goals_command,
+            ["start", "--user-workflow-id", "uw_abc123"],
+        )
+        assert result.exit_code == EXIT_OK
+        mock_factory.goals.start.assert_called_once_with(
+            workflow_id=None,
+            user_workflow_id="uw_abc123",
+            goal_text=None,
+            files=None,
+            slots=None,
+        )
+
+    def test_start_user_workflow_id_dry_run_emits_camel_payload(
+        self,
+        runner: CliRunner,
+        mock_factory: MagicMock,
+    ) -> None:
+        """Dry-run for a uw_* start shows the ``userWorkflowId`` wire key (#2546)."""
+        result = runner.invoke(
+            goals_command,
+            ["start", "--user-workflow-id", "uw_abc123", "--dry-run", "--json"],
+        )
+        assert result.exit_code == EXIT_OK
+        payload = json.loads(result.output.strip().splitlines()[-1])
+        assert payload["dry_run"] is True
+        assert payload["payload"]["userWorkflowId"] == "uw_abc123"
+        mock_factory.goals.start.assert_not_called()
 
     def test_start_json_emits_job_payload(
         self,

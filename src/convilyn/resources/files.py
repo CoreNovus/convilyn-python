@@ -25,7 +25,7 @@ from typing import Any, cast
 
 from convilyn._internal.http import HTTPClient
 from convilyn._internal.loop_runner import CoroRunner
-from convilyn.types import File
+from convilyn.types import File, FileList
 
 DEFAULT_CONTENT_TYPE = "application/octet-stream"
 
@@ -132,6 +132,17 @@ class AsyncFiles:
         documents on an edge device).
         """
         await self._http.request("DELETE", f"/api/v1/files/{file_id}")
+
+    async def list(self) -> FileList:
+        """List your durable stored files with a storage-usage summary.
+
+        Only DURABLE files appear here (e.g. emailed-in attachments that you
+        chose to keep) — ordinary uploads are ephemeral and are removed by the
+        platform's ~1-hour cleanup, so a just-uploaded transient file will not
+        be listed. An unauthenticated caller gets an empty list.
+        """
+        response = await self._http.request("GET", "/api/v1/files")
+        return FileList.model_validate(response.json())
 
     # ── Step orchestration (open for extension) ──────────────────
 
@@ -301,3 +312,6 @@ class Files:
 
     def delete(self, file_id: str) -> None:
         return self._run(self._async.delete(file_id))
+
+    def list(self) -> FileList:
+        return self._run(self._async.list())

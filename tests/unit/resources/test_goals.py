@@ -8,6 +8,7 @@ test churn.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from unittest.mock import patch
 
@@ -22,6 +23,7 @@ from convilyn import (
     GoalJob,
     GoalJobFailedError,
     GoalJobTimeoutError,
+    UnderstandUnavailableError,
 )
 from convilyn.resources.goals import AsyncGoals
 
@@ -157,6 +159,23 @@ class TestGoalsLogic:
         assert '"slotAnswers":[{"slotId":"industry_vertical","value":"saas"}]' in sent
         assert '"slots":' not in sent
 
+    @pytest.mark.asyncio
+    async def test_user_workflow_id_serialised_as_user_workflow_id(self) -> None:
+        """start(user_workflow_id=) must send ``userWorkflowId`` (#2546) — the
+        typed uw_* surface so callers no longer need the raw-request escape hatch."""
+        async with respx.mock(assert_all_called=True) as mock:
+            create = mock.post(f"{API_BASE}/api/v1/jobs/goal").mock(
+                return_value=httpx.Response(201, json=_job_response("queued", fileIds=[]))
+            )
+
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                await client.goals.start(user_workflow_id="uw_abc123")
+
+        sent = create.calls.last.request.read().decode().replace(" ", "")
+        assert '"userWorkflowId":"uw_abc123"' in sent
+        assert '"workflowId"' not in sent
+        assert '"goalText"' not in sent
+
 
 # ── 2. Boundary — input validation ──────────────────────────────────
 
@@ -165,14 +184,29 @@ class TestGoalsBoundary:
     @pytest.mark.asyncio
     async def test_neither_workflow_nor_goal_raises_typeerror(self) -> None:
         async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
-            with pytest.raises(TypeError, match="`workflow_id` or `goal_text`"):
+            with pytest.raises(TypeError, match="exactly one of"):
                 await client.goals.start(files=["file_abc"])
 
     @pytest.mark.asyncio
     async def test_both_workflow_and_goal_raises_typeerror(self) -> None:
         async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
-            with pytest.raises(TypeError, match="not both"):
+            with pytest.raises(TypeError, match="not multiple"):
                 await client.goals.start(workflow_id="x", goal_text="y", files=["file_abc"])
+
+    @pytest.mark.asyncio
+    async def test_workflow_id_and_user_workflow_id_raises_typeerror(self) -> None:
+        """The three workflow sources are mutually exclusive (#2546)."""
+        async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+            with pytest.raises(TypeError, match="not multiple"):
+                await client.goals.start(workflow_id="wf", user_workflow_id="uw_abc")
+
+    @pytest.mark.asyncio
+    async def test_user_workflow_id_and_goal_text_raises_typeerror(self) -> None:
+        async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+            with pytest.raises(TypeError, match="not multiple"):
+                await client.goals.start(
+                    user_workflow_id="uw_abc", goal_text="y", files=["file_abc"]
+                )
 
     @pytest.mark.asyncio
     async def test_goal_text_without_files_raises_value_error(self) -> None:
@@ -188,6 +222,17 @@ class TestGoalsBoundary:
             )
             async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
                 job = await client.goals.start(workflow_id="doc_analyzer")
+        assert job.status == "queued"
+
+    @pytest.mark.asyncio
+    async def test_user_workflow_id_path_can_omit_files(self) -> None:
+        """A uw_* run may start with no files (collected via checkpoints) — #2546."""
+        async with respx.mock(assert_all_called=True) as mock:
+            mock.post(f"{API_BASE}/api/v1/jobs/goal").mock(
+                return_value=httpx.Response(201, json=_job_response("queued", fileIds=[]))
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                job = await client.goals.start(user_workflow_id="uw_abc123")
         assert job.status == "queued"
 
 
@@ -781,9 +826,7 @@ class TestArtifacts:
                     },
                 )
             )
-            mock.get(storage_url).mock(
-                return_value=httpx.Response(200, content=b"PK\x03\x04zip")
-            )
+            mock.get(storage_url).mock(return_value=httpx.Response(200, content=b"PK\x03\x04zip"))
             async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
                 target = tmp_path / "out.xlsx"
                 returned = await client.goals.download_artifact_to("job_test", "art_1", to=target)
@@ -824,6 +867,346 @@ class TestArtifacts:
             client.close()
 
 
+# ── extract() — one-call document → JSON sugar (SDK E-4) ────────────
+
+
+def _json_artifact_payload(**overrides: Any) -> dict:
+    base = _artifact_payload(
+        artifactId="art_json",
+        fileName="document_actions.json",
+        mimeType="application/json",
+        sizeBytes=64,
+        downloadUrl="https://storage.example.com/bucket/doc.json?sig=abc",
+        artifactType="json",
+        isPrimary=True,
+    )
+    base.update(overrides)
+    return base
+
+
+def _mock_extract_chain(mock: respx.Router, *, artifacts: list[dict], storage_json: Any) -> Any:
+    """Wire the full start→poll→artifacts→download→storage chain; return the POST route."""
+    post = mock.post(f"{API_BASE}/api/v1/jobs/goal").mock(
+        return_value=httpx.Response(200, json=_job_response("analyzing"))
+    )
+    mock.get(f"{API_BASE}/api/v1/jobs/goal/job_test").mock(
+        return_value=httpx.Response(200, json=_completed_job())
+    )
+    mock.get(f"{API_BASE}/api/v1/jobs/goal/job_test/artifacts").mock(
+        return_value=httpx.Response(200, json={"artifacts": artifacts, "total": len(artifacts)})
+    )
+    mock.get(f"{API_BASE}/api/v1/jobs/goal/job_test/artifacts/art_json/download").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "downloadUrl": "https://storage.example.com/bucket/doc.json?sig=xyz",
+                "fileName": "document_actions.json",
+                "sizeBytes": 64,
+                "mimeType": "application/json",
+                "expiresAt": "2026-07-12T13:00:00Z",
+            },
+        )
+    )
+    mock.get("https://storage.example.com/bucket/doc.json?sig=xyz").mock(
+        return_value=httpx.Response(200, content=json.dumps(storage_json).encode("utf-8"))
+    )
+    return post
+
+
+class TestExtract:
+    @pytest.mark.asyncio
+    async def test_returns_parsed_json_and_targets_extract_workflow(self) -> None:
+        from convilyn.resources.goals import EXTRACT_WORKFLOW_ID
+
+        result = {"documents": [{"doc_type": "bill", "amount": 1200}]}
+        async with respx.mock(assert_all_called=True) as mock:
+            post = _mock_extract_chain(
+                mock, artifacts=[_json_artifact_payload()], storage_json=result
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                parsed = await client.goals.extract(["file_abc"])
+
+        assert parsed == result
+        assert json.loads(post.calls.last.request.content)["workflowId"] == EXTRACT_WORKFLOW_ID
+
+    @pytest.mark.asyncio
+    async def test_emits_deprecation_warning_steering_to_understand(self) -> None:
+        # extract() is superseded by understand(); the call still works (thin
+        # wrapper, behaviour unchanged) but warns to steer migration.
+        async with respx.mock(assert_all_called=True) as mock:
+            _mock_extract_chain(
+                mock, artifacts=[_json_artifact_payload()], storage_json={"documents": []}
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                with pytest.warns(DeprecationWarning, match="use goals.understand"):
+                    await client.goals.extract(["file_abc"])
+
+    @pytest.mark.asyncio
+    async def test_empty_files_raises_before_network(self) -> None:
+        async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+            with pytest.raises(ValueError, match="at least one file"):
+                await client.goals.extract([])
+
+    @pytest.mark.asyncio
+    async def test_no_json_artifact_raises(self) -> None:
+        async with respx.mock(assert_all_called=True) as mock:
+            mock.post(f"{API_BASE}/api/v1/jobs/goal").mock(
+                return_value=httpx.Response(200, json=_job_response("analyzing"))
+            )
+            mock.get(f"{API_BASE}/api/v1/jobs/goal/job_test").mock(
+                return_value=httpx.Response(200, json=_completed_job())
+            )
+            mock.get(f"{API_BASE}/api/v1/jobs/goal/job_test/artifacts").mock(
+                return_value=httpx.Response(
+                    200, json={"artifacts": [_artifact_payload()], "total": 1}
+                )
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                with pytest.raises(ValueError, match="no JSON artifact"):
+                    await client.goals.extract(["file_abc"])
+
+    @pytest.mark.asyncio
+    async def test_oversized_json_artifact_raises(self) -> None:
+        async with respx.mock(assert_all_called=True) as mock:
+            mock.post(f"{API_BASE}/api/v1/jobs/goal").mock(
+                return_value=httpx.Response(200, json=_job_response("analyzing"))
+            )
+            mock.get(f"{API_BASE}/api/v1/jobs/goal/job_test").mock(
+                return_value=httpx.Response(200, json=_completed_job())
+            )
+            mock.get(f"{API_BASE}/api/v1/jobs/goal/job_test/artifacts").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "artifacts": [_json_artifact_payload(sizeBytes=64 * 1024 * 1024)],
+                        "total": 1,
+                    },
+                )
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                with pytest.raises(ValueError, match="in-memory cap"):
+                    await client.goals.extract(["file_abc"])
+
+    def test_select_json_artifact_prefers_primary(self) -> None:
+        from convilyn.resources.goals import _select_json_artifact
+        from convilyn.types import Artifact
+
+        arts = [
+            Artifact.model_validate(_json_artifact_payload(artifactId="j1", isPrimary=False)),
+            Artifact.model_validate(_json_artifact_payload(artifactId="j2", isPrimary=True)),
+        ]
+        assert _select_json_artifact(arts).artifact_id == "j2"
+
+    def test_select_json_artifact_none_when_no_json(self) -> None:
+        from convilyn.resources.goals import _select_json_artifact
+        from convilyn.types import Artifact
+
+        arts = [Artifact.model_validate(_artifact_payload())]
+        assert _select_json_artifact(arts) is None
+
+    def test_sync_wrapper_present(self) -> None:
+        client = Convilyn(api_key="ck_test")  # pragma: allowlist secret
+        try:
+            assert callable(client.goals.extract)
+        finally:
+            client.close()
+
+
+# ── run_interactive() — callback-driven HITL loop (SDK F-5) ─────────
+
+
+def _pending_slot_payload(**overrides: Any) -> dict:
+    base = {
+        "slotId": "which_doc",
+        "slotType": "text",
+        "question": "Which document?",
+        "options": None,
+        "required": True,
+        "isDisambiguation": False,
+        "suggestedValue": None,
+        "suggestedConfidence": None,
+    }
+    base.update(overrides)
+    return base
+
+
+def _slots_pending_job() -> dict:
+    return _job_response("slots_pending", pendingSlots=[_pending_slot_payload()])
+
+
+def _confirm_ack() -> dict:
+    # confirm() ignores this body and re-reads via GET; only the 202 matters.
+    return {"jobSpecId": "job_test", "status": "executing", "messageId": "m1"}
+
+
+class TestRunInteractive:
+    @pytest.mark.asyncio
+    async def test_slot_then_confirm_runs_to_completion(self) -> None:
+        seen: list[str] = []
+
+        async def on_slot(slot, job):
+            seen.append(slot.slot_id)
+            return "invoice"
+
+        async with respx.mock(assert_all_called=True) as mock:
+            mock.post(f"{API_BASE}/api/v1/jobs/goal").mock(
+                return_value=httpx.Response(201, json=_job_response("analyzing"))
+            )
+            mock.get(f"{API_BASE}/api/v1/jobs/goal/job_test").mock(
+                side_effect=[
+                    httpx.Response(200, json=_slots_pending_job()),  # wait -> slots_pending
+                    httpx.Response(200, json=_job_response("ready")),  # wait -> ready
+                    httpx.Response(200, json=_job_response("executing")),  # confirm's poll
+                    httpx.Response(200, json=_completed_job()),  # wait -> completed
+                ]
+            )
+            mock.patch(f"{API_BASE}/api/v1/jobs/goal/job_test/slots").mock(
+                return_value=httpx.Response(200, json=_job_response("ready"))
+            )
+            mock.post(f"{API_BASE}/api/v1/jobs/goal/job_test/confirm").mock(
+                return_value=httpx.Response(202, json=_confirm_ack())
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                job = await client.goals.run_interactive(workflow_id="claim_flow", on_slot=on_slot)
+
+        assert job.status == "completed"
+        assert seen == ["which_doc"]
+
+    @pytest.mark.asyncio
+    async def test_preview_approved_confirms(self) -> None:
+        previews: list[str] = []
+
+        async def on_preview(job):
+            previews.append(job.status)
+            return True
+
+        async with respx.mock(assert_all_called=True) as mock:
+            mock.post(f"{API_BASE}/api/v1/jobs/goal").mock(
+                return_value=httpx.Response(201, json=_job_response("analyzing"))
+            )
+            mock.get(f"{API_BASE}/api/v1/jobs/goal/job_test").mock(
+                side_effect=[
+                    httpx.Response(200, json=_job_response("ready_with_preview")),
+                    httpx.Response(200, json=_job_response("executing")),  # confirm's poll
+                    httpx.Response(200, json=_completed_job()),
+                ]
+            )
+            mock.post(f"{API_BASE}/api/v1/jobs/goal/job_test/confirm").mock(
+                return_value=httpx.Response(202, json=_confirm_ack())
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                job = await client.goals.run_interactive(
+                    workflow_id="claim_flow",
+                    on_slot=lambda s, j: "x",
+                    on_preview=on_preview,
+                )
+
+        assert job.status == "completed"
+        assert previews == ["ready_with_preview"]
+
+    @pytest.mark.asyncio
+    async def test_preview_rejected_cancels(self) -> None:
+        async with respx.mock(assert_all_called=True) as mock:
+            mock.post(f"{API_BASE}/api/v1/jobs/goal").mock(
+                return_value=httpx.Response(201, json=_job_response("analyzing"))
+            )
+            mock.get(f"{API_BASE}/api/v1/jobs/goal/job_test").mock(
+                side_effect=[
+                    httpx.Response(200, json=_job_response("ready_with_preview")),
+                    httpx.Response(200, json=_job_response("cancelled")),  # cancel's poll
+                ]
+            )
+            mock.post(f"{API_BASE}/api/v1/jobs/goal/job_test/cancel").mock(
+                return_value=httpx.Response(200, json=_job_response("cancelled"))
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                job = await client.goals.run_interactive(
+                    workflow_id="claim_flow",
+                    on_slot=lambda s, j: "x",
+                    on_preview=lambda j: False,
+                )
+
+        assert job.status == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_no_input_runs_straight_to_completion(self) -> None:
+        # Silent-mode workflows never stop for input — on_slot is never called.
+        def on_slot(slot, job):
+            raise AssertionError("on_slot must not be called for a no-input run")
+
+        async with respx.mock(assert_all_called=True) as mock:
+            mock.post(f"{API_BASE}/api/v1/jobs/goal").mock(
+                return_value=httpx.Response(201, json=_job_response("analyzing"))
+            )
+            mock.get(f"{API_BASE}/api/v1/jobs/goal/job_test").mock(
+                return_value=httpx.Response(200, json=_completed_job())
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                job = await client.goals.run_interactive(workflow_id="silent_flow", on_slot=on_slot)
+
+        assert job.status == "completed"
+
+    @pytest.mark.asyncio
+    async def test_max_rounds_guard_raises(self) -> None:
+        async with respx.mock() as mock:
+            mock.post(f"{API_BASE}/api/v1/jobs/goal").mock(
+                return_value=httpx.Response(201, json=_job_response("analyzing"))
+            )
+            # Never leaves slots_pending — the guard must fire, not loop forever.
+            mock.get(f"{API_BASE}/api/v1/jobs/goal/job_test").mock(
+                return_value=httpx.Response(200, json=_slots_pending_job())
+            )
+            mock.patch(f"{API_BASE}/api/v1/jobs/goal/job_test/slots").mock(
+                return_value=httpx.Response(200, json=_slots_pending_job())
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                with pytest.raises(GoalJobTimeoutError) as info:
+                    await client.goals.run_interactive(
+                        workflow_id="loop_flow", on_slot=lambda s, j: "x", max_rounds=2
+                    )
+        assert info.value.reason == "rounds"
+
+    @pytest.mark.asyncio
+    async def test_none_on_slot_raises_typeerror(self) -> None:
+        async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+            with pytest.raises(TypeError, match="on_slot"):
+                await client.goals.run_interactive(workflow_id="f", on_slot=None)
+
+    @pytest.mark.asyncio
+    async def test_sync_callback_is_supported(self) -> None:
+        # A plain (non-async) on_slot must work — _maybe_await passes it through.
+        async with respx.mock(assert_all_called=True) as mock:
+            mock.post(f"{API_BASE}/api/v1/jobs/goal").mock(
+                return_value=httpx.Response(201, json=_job_response("analyzing"))
+            )
+            mock.get(f"{API_BASE}/api/v1/jobs/goal/job_test").mock(
+                side_effect=[
+                    httpx.Response(200, json=_slots_pending_job()),
+                    httpx.Response(200, json=_job_response("ready")),
+                    httpx.Response(200, json=_job_response("executing")),
+                    httpx.Response(200, json=_completed_job()),
+                ]
+            )
+            mock.patch(f"{API_BASE}/api/v1/jobs/goal/job_test/slots").mock(
+                return_value=httpx.Response(200, json=_job_response("ready"))
+            )
+            mock.post(f"{API_BASE}/api/v1/jobs/goal/job_test/confirm").mock(
+                return_value=httpx.Response(202, json=_confirm_ack())
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                job = await client.goals.run_interactive(
+                    workflow_id="f", on_slot=lambda slot, job: "answer"
+                )
+        assert job.status == "completed"
+
+    def test_sync_wrapper_present(self) -> None:
+        client = Convilyn(api_key="ck_test")  # pragma: allowlist secret
+        try:
+            assert callable(client.goals.run_interactive)
+        finally:
+            client.close()
+
+
 # ── WS token redaction (never leak the bearer in an error string) ───
 
 
@@ -840,3 +1223,97 @@ class TestWsTokenRedaction:
         from convilyn.resources.goals import _redact_ws_token
 
         assert _redact_ws_token("plain DNS failure, no url") == "plain DNS failure, no url"
+
+
+# ── understand() — grounded, schema-constrained understanding (#2528) ──
+
+_SCHEMA = {
+    "type": "object",
+    "properties": {"vendor": {"type": "string"}, "total": {"type": "number"}},
+    "required": ["vendor", "total"],
+}
+
+
+class TestUnderstand:
+    @pytest.mark.asyncio
+    async def test_returns_grounded_json_and_sends_output_schema(self) -> None:
+        result = {"vendor": "Acme", "total": 1200}
+        async with respx.mock(assert_all_called=True) as mock:
+            post = _mock_extract_chain(
+                mock, artifacts=[_json_artifact_payload()], storage_json=result
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                parsed = await client.goals.understand(
+                    ["file_abc"], schema=_SCHEMA, instructions="grab vendor + total"
+                )
+
+        assert parsed == result
+        body = json.loads(post.calls.last.request.content)
+        assert body["outputSchema"] == _SCHEMA
+        assert body["fileIds"] == ["file_abc"]
+        assert body["instructions"] == "grab vendor + total"
+        # understand() is schema-driven — it never sends a workflow source.
+        assert "workflowId" not in body
+        assert "goalText" not in body
+
+    @pytest.mark.asyncio
+    async def test_ready_job_is_confirmed_before_waiting(self) -> None:
+        # The FSM only enqueues execution on confirm — a schema-routed create
+        # lands READY with no slots, so understand() must confirm or the job
+        # parks forever (live regression, 2026-07-21 #2696 window).
+        result = {"vendor": "Acme", "total": 1200}
+        async with respx.mock(assert_all_called=True) as mock:
+            _mock_extract_chain(mock, artifacts=[_json_artifact_payload()], storage_json=result)
+            # Override the create route: job comes back READY, not analyzing.
+            mock.post(f"{API_BASE}/api/v1/jobs/goal").mock(
+                return_value=httpx.Response(200, json=_job_response("ready"))
+            )
+            confirm = mock.post(f"{API_BASE}/api/v1/jobs/goal/job_test/confirm").mock(
+                return_value=httpx.Response(200, json=_job_response("analyzing"))
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                parsed = await client.goals.understand(["file_abc"], schema=_SCHEMA)
+
+        assert parsed == result
+        assert confirm.called
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", [400, 404, 422, 501])
+    async def test_unsupported_backend_raises_understand_unavailable(self, status: int) -> None:
+        async with respx.mock as mock:
+            mock.post(f"{API_BASE}/api/v1/jobs/goal").mock(
+                return_value=httpx.Response(status, json={"code": "x", "message": "no"})
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                with pytest.raises(UnderstandUnavailableError):
+                    await client.goals.understand(["file_abc"], schema=_SCHEMA)
+
+    @pytest.mark.asyncio
+    async def test_real_conditions_propagate_not_swallowed(self) -> None:
+        # A 402 (quota) is a real, actionable condition — it must NOT be masked
+        # as "understand unavailable".
+        async with respx.mock as mock:
+            mock.post(f"{API_BASE}/api/v1/jobs/goal").mock(
+                return_value=httpx.Response(402, json={"code": "TIER_REQUIRED", "message": "pay"})
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                with pytest.raises(APIError) as info:
+                    await client.goals.understand(["file_abc"], schema=_SCHEMA)
+        assert info.value.status_code == 402
+        assert not isinstance(info.value, UnderstandUnavailableError)
+
+    @pytest.mark.asyncio
+    async def test_empty_files_raises_before_network(self) -> None:
+        async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+            with pytest.raises(ValueError, match="at least one file"):
+                await client.goals.understand([], schema=_SCHEMA)
+
+    @pytest.mark.asyncio
+    async def test_non_dict_schema_raises(self) -> None:
+        async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+            with pytest.raises(TypeError, match="JSON Schema dict"):
+                await client.goals.understand(["file_abc"], schema="not-a-dict")  # type: ignore[arg-type]
+
+    def test_sync_understand_is_wired(self) -> None:
+        client = Convilyn(api_key="ck_x", base_url=API_BASE)  # pragma: allowlist secret
+        assert hasattr(client.goals, "understand")

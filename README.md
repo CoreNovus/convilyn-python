@@ -33,7 +33,7 @@ Convilyn is for:
 ## Install
 
 ```bash
-pip install convilyn
+uv add convilyn          # or: pip install convilyn
 ```
 
 ## Quickstart

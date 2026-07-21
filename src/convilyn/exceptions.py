@@ -244,6 +244,29 @@ class WebSocketError(ConvilynError):
         super().__init__(message)
 
 
+class UnderstandUnavailableError(ConvilynError):
+    """:py:meth:`convilyn.resources.goals.AsyncGoals.understand` could not run.
+
+    Raised when the connected Convilyn platform does not (yet) support
+    schema-grounded understanding (the ``output_schema`` path), so no grounded,
+    schema-validated result could be produced. It is raised **instead of**
+    returning an ungrounded / unvalidated answer — an answer that was
+    not grounded by the platform is never silently returned as if it were.
+
+    The capability ships behind a platform rollout. Until it reaches the
+    environment you are calling, catch this and fall back to a workflow you
+    authored (``goals.run(user_workflow_id=...)``) or the fixed-schema
+    ``goals.extract(...)``.
+    """
+
+    def __init__(self, message: str | None = None) -> None:
+        super().__init__(
+            message
+            or "The connected Convilyn platform does not support schema-grounded "
+            "understanding (goals.understand) yet; no grounded result was returned."
+        )
+
+
 class RetryExhaustedError(APIError):
     """The retry policy ran out of attempts before the request succeeded.
 

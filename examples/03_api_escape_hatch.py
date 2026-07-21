@@ -22,7 +22,7 @@ async def main() -> None:
     async with AsyncConvilyn() as client:
         # raw_request returns the response on any status (4xx / 5xx
         # included) so callers can inspect the wire body for debugging.
-        # See sdk/consumer-python/AGENT.md for the SOLID seam this exposes.
+        # See docs/STABILITY.md ("escape hatch") for the stability contract.
         response = await client._async._http.raw_request(  # noqa: SLF001
             "GET",
             "/api/v1/jobs",

@@ -97,6 +97,17 @@ class TestAccountLogic:
         assert isinstance(plan, Plan)
         assert plan.tier == "pro"
 
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_get_plan_supports_business_tier(self, client: AsyncConvilyn) -> None:
+        """Regression: a business-tier caller must round-trip, not raise a
+        validation error (PlanTier previously omitted "business")."""
+        respx.post(f"{API_BASE}/api/v1/workflows/cost-preview").mock(
+            return_value=httpx.Response(200, json=_cost_preview_wire(tier="business"))
+        )
+        plan = await client.account.get_plan()
+        assert plan.tier == "business"
+
 
 # ── 2. Boundary — empty tools, quota soft-limit verdict ────────────
 

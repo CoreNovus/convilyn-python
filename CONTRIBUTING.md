@@ -40,7 +40,7 @@ against drift) while giving you a first-class contribution path.
 ```bash
 git clone https://github.com/CoreNovus/convilyn-python.git
 cd convilyn-python
-pip install -e ".[dev]" && pytest
+uv sync && uv run pytest
 ```
 
 Before pushing, run the same checks CI runs (see `.github/workflows/ci.yml`):

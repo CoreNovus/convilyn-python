@@ -483,3 +483,70 @@ class TestDelete:
             assert callable(sync_client.files.delete)
         finally:
             sync_client.close()
+
+
+# ── files.list() — durable storage + usage (SDK A1b) ────────────────
+
+
+def _stored_file_wire(**overrides: object) -> dict:
+    """The list endpoint returns snake_case (plain BaseModel, no aliases)."""
+    base = {
+        "file_id": "file_1",
+        "file_name": "invoice.pdf",
+        "file_size": 2048,
+        "mime_type": "application/pdf",
+        "file_extension": "pdf",
+        "created_at": "2026-07-12T10:00:00Z",
+    }
+    base.update(overrides)
+    return base
+
+
+class TestList:
+    @pytest.mark.asyncio
+    async def test_list_returns_typed_files_and_usage(self) -> None:
+        async with respx.mock(assert_all_called=True) as mock:
+            mock.get(f"{API_BASE}/api/v1/files").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "files": [_stored_file_wire()],
+                        "usage": {
+                            "used_bytes": 2048,
+                            "free_bytes": 524288000,
+                            "over_quota": False,
+                        },
+                    },
+                )
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                listing = await client.files.list()
+
+        assert listing.files[0].filename == "invoice.pdf"
+        assert listing.files[0].content_type == "application/pdf"
+        assert listing.usage.used_bytes == 2048
+        assert listing.usage.over_quota is False
+
+    @pytest.mark.asyncio
+    async def test_list_empty_returns_empty_files(self) -> None:
+        async with respx.mock(assert_all_called=True) as mock:
+            mock.get(f"{API_BASE}/api/v1/files").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "files": [],
+                        "usage": {"used_bytes": 0, "free_bytes": 0, "over_quota": False},
+                    },
+                )
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                listing = await client.files.list()
+
+        assert listing.files == []
+
+    def test_sync_wrapper_present(self) -> None:
+        sync_client = Convilyn(api_key="ck_test")  # pragma: allowlist secret
+        try:
+            assert callable(sync_client.files.list)
+        finally:
+            sync_client.close()

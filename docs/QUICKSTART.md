@@ -1,13 +1,13 @@
 # Convilyn SDK — Quickstart
 
-This guide takes you from `pip install` to a converted file in **under
+This guide takes you from install to a converted file in **under
 five minutes**. By the end you'll have run the same workflow from both
 Python and the shell.
 
 ## 1. Install
 
 ```bash
-pip install convilyn
+uv add convilyn          # or: pip install convilyn
 ```
 
 A single install gives you the Python library *and* the `convilyn`
@@ -176,6 +176,20 @@ print("final status:", job.status)
 `confirm()` submits the filled slots for execution; `wait()` then
 polls until the next stopping condition.
 
+**File-type slots.** When a `PendingSlot` has `slot_type == "file"`, the
+answer is a `file_id` (from `client.files.upload(...)`), not free text — pass
+one id, or a **list** for a slot that takes several files. Each id must be
+owned by the same account/key running the job (unowned ids are rejected 403):
+
+```python
+doc = client.files.upload(path="claim.pdf")
+job = client.goals.fill_slot(job.job_spec_id, slot_id="claim_doc", value=doc.file_id)
+
+# a multi-file slot takes a list of ids
+a, b = client.files.upload(path="r1.jpg"), client.files.upload(path="r2.jpg")
+job = client.goals.fill_slots(job.job_spec_id, {"receipts": [a.file_id, b.file_id]})
+```
+
 ### 7.3 WebSocket event stream (async-only)
 
 > **Not available in v1.** The event-stream gateway does not accept
@@ -251,6 +265,28 @@ $ convilyn goals retry   "$JOB_ID" --rerun-mode fresh_rerun
 * **Subscribe-then-start ordering.** If you subscribe before the
   server has created the job, the WS may close immediately. Always
   call `start()` first, then `events()`.
+
+### 7.6 Manage the workflows you author (`client.user_workflows`)
+
+Workflows you build in the chat Builder (`client.builder`, or the web
+app) are `uw_…` workflows you own. `client.user_workflows` is the typed
+management namespace for them — no escape hatch needed:
+
+```python
+page = client.user_workflows.list()               # your workflows, cursor-paged
+wf = client.user_workflows.get(page.items[0].workflow_id)
+
+job = client.goals.run(user_workflow_id=wf.workflow_id, files=["report.pdf"])
+
+runs = client.user_workflows.runs(wf.workflow_id)  # recent runs
+backup = client.user_workflows.export(wf.workflow_id)  # portable JSON document
+client.user_workflows.delete(wf.workflow_id)       # 409 while public — archive first
+```
+
+Editing / validating / publishing stay in the web Builder — the SDK is
+a thin data-plane client for the verticals you ship, not a second
+builder UI. Community workflows by *other* authors live under
+`client.workflows` (search / fork / like).
 
 ## 8. Check your plan + quota before running (`client.account`)
 
@@ -328,14 +364,51 @@ usual.
 
 | Action | Free tier | Pro tier |
 |---|---|---|
-| `pip install convilyn` | ✅ free | ✅ free |
+| installing `convilyn` | ✅ free | ✅ free |
 | Call any API (with valid `ck_` key) | ✅ free up to monthly cap | ✅ higher cap |
 | `client.convert` (file conversion) | ✅ within cap | ✅ within cap |
 | `client.goals` (agentic workflow run) | ✅ within cap | ✅ higher cap + soft-limit warning past 100% |
 | `client.workflows.fork` (private copy of a public workflow) | ❌ raises `PlanRequiredError` | ✅ |
 | `client.workflows.publish` (make your workflow public) | ❌ raises `PlanRequiredError` | ✅ |
 
-## 9. Going further
+## 9. Data handling & privacy
+
+Convilyn keeps only what a run needs. Full details — retention windows,
+processing regions, encryption, and the AI-training stance — are on the
+[Data handling & retention](https://docs.convilyn.corenovus.com/en/data-handling/)
+page. The essentials for SDK callers:
+
+* **Uploads are ephemeral by default.** Input files are deleted automatically
+  ~1 hour after upload (a workflow still using a file keeps it until the run
+  finishes). You do not opt in to ephemeral processing — it is the default.
+* **Delete on demand.** Don't want to wait for the sweep? Remove the cloud
+  copy the moment a run finishes:
+
+  ```python
+  client.files.delete(file_id)      # async: await client.files.delete(...)
+  ```
+
+* **Your content is not used for AI training.** Every run started with a
+  `ck_` API key is structurally excluded from Convilyn's training pipeline
+  (excluded by default, enforced in code), and the model provider (AWS Bedrock) does
+  not train on it either.
+* **List what's stored.** `client.files.list()` returns your *durable* files
+  (e.g. emailed-in attachments) plus a storage-usage summary. Ephemeral
+  uploads are not listed — they are already on the 1-hour sweep.
+
+**Honest limits — privacy-sensitive / edge callers, read this:**
+
+* **Processing region is fixed, not per-request.** Files are processed in AWS
+  Tokyo (inference in us-east-1); you cannot pin a region per call today. If
+  data residency is a hard requirement, contact us.
+* **Sensitive-value masking is per-workflow best-effort, not a platform
+  guarantee.** Some workflows (e.g. the personal-document workflow) mask
+  identifiers to their last 4 digits as output hygiene, but there is no
+  platform-wide PII-redaction step. If your documents must never leave the
+  device, process them locally — the cloud path fits content where ephemeral
+  storage plus deletion control is sufficient.
+
+## 10. Going further
 
 * **Async API**: use `AsyncConvilyn` if you're inside an event loop;
   every method has an `async` counterpart with the same signature.
@@ -347,13 +420,13 @@ usual.
   `HTTPClient` via the constructor so you can inject `httpx.MockTransport`
   or a recording transport for tests.
 * **Authoring your own workflow / tool server**: install the *author*
-  SDK with `pip install convilyn-author` (a separate package — see
+  SDK with `uv add convilyn-author` (a separate package — see
   [`sdk/author-python/docs/README.md`](../../author-python/docs/README.md)).
 * **Contributing**: read [`../AGENT.md`](../AGENT.md) for the SOLID
   seams (`RetryPolicy`, `OutputRenderer`, `_build_client` factory)
   before extending the SDK.
 
-## 10. Common questions
+## 11. Common questions
 
 **Where can I see all the supported formats?**
 Backend supports `document_conversion` between DOCX / PDF / PPTX / TXT

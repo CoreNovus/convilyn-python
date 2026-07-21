@@ -27,7 +27,15 @@ from convilyn._internal.resilience import RetryPolicy
 from convilyn._internal.throttle import AutoThrottleArg
 from convilyn._internal.ws import WSTransport
 from convilyn.client import AsyncConvilyn
-from convilyn.resources import Account, Convert, Files, Goals, Workflows
+from convilyn.resources import (
+    Account,
+    Builder,
+    Convert,
+    Files,
+    Goals,
+    UserWorkflows,
+    Workflows,
+)
 
 
 class Convilyn:
@@ -72,7 +80,9 @@ class Convilyn:
         self.convert = Convert(self._async.convert, run=self._runner.run)
         self.goals = Goals(self._async.goals, run=self._runner.run)
         self.workflows = Workflows(self._async.workflows, run=self._runner.run)
+        self.user_workflows = UserWorkflows(self._async.user_workflows, run=self._runner.run)
         self.account = Account(self._async.account, run=self._runner.run)
+        self.builder = Builder(self._async.builder, run=self._runner.run)
 
     @property
     def base_url(self) -> str:

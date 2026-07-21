@@ -24,9 +24,11 @@ from convilyn._internal.throttle import AutoThrottleArg, resolve_auto_throttle
 from convilyn._internal.ws import WebsocketsTransport, WSTransport
 from convilyn.resources import (
     AsyncAccount,
+    AsyncBuilder,
     AsyncConvert,
     AsyncFiles,
     AsyncGoals,
+    AsyncUserWorkflows,
     AsyncWorkflows,
 )
 
@@ -78,7 +80,9 @@ class AsyncConvilyn:
             ws_transport_factory=ws_transport_factory or WebsocketsTransport,
         )
         self.workflows = AsyncWorkflows(self._http)
+        self.user_workflows = AsyncUserWorkflows(self._http)
         self.account = AsyncAccount(self._http)
+        self.builder = AsyncBuilder(self._http)
 
     @property
     def ws_url(self) -> str | None:

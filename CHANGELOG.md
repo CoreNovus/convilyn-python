@@ -5,6 +5,151 @@ versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.2.0b13] - 2026-07-21
+
+### Changed
+
+- Install and development instructions are now uv-first across the README and examples (pip remains a documented alternative). No API or behaviour change.
+
+## [1.2.0b12] - 2026-07-21
+
+### Changed
+
+- Documentation polish across the public surface: docstrings, guides, examples, and this changelog now use plain product language throughout (internal shorthand and tracker references removed). No API or behaviour change.
+
+### Added
+
+- **`goals.understand(files, *, schema, instructions=None)` — grounded,
+  schema-constrained understanding.** Returns a result that
+  conforms to `schema` (a plain JSON Schema dict — language-neutral, no new
+  client-side validation dependency) and is grounded by the platform before it
+  is returned, instead of a freeform `goal_text` answer. **Safe-degrade:** when
+  the connected platform does not yet support schema-grounded understanding, it
+  raises the new `UnderstandUnavailableError` rather than silently returning an
+  ungrounded result (402/429/5xx propagate unchanged). async + sync. `extract()`
+  is now **deprecated** in favour of `understand()` (see _Deprecated_ below).
+- **`client.builder` — chat-driven workflow authoring.** Build a `uw_`
+  workflow by conversation from your own client (parity with the web app):
+  `create_session()` → `send_message()` → on a `register` verdict read
+  `BuilderTurn.registered_workflow_id` and hand it to `goals.run(...)`. Also
+  `get_session()`, `messages()`, and `quota()` (async + sync). Requires a
+  Pro-tier account (402 `TIER_REQUIRED`; the `discover` sub-mode is exempt). New
+  public types `BuilderSession` / `BuilderTurn` / `BuilderMessage` /
+  `BuilderMessageList` / `BuilderPendingSlot` / `BuilderAttachment` /
+  `BuilderQuota`.
+
+### Deprecated
+
+- **`goals.extract()` — superseded by `goals.understand()`.** `extract()`
+  now emits a `DeprecationWarning`. It runs a single fixed workflow with no
+  caller control over the output shape, whereas `understand(files, schema=...)`
+  returns a result that conforms to a caller-supplied JSON Schema and is grounded
+  by the platform before it is returned. `extract()` keeps working unchanged (a
+  thin wrapper over the same `run() → artifacts() → parse` machinery
+  `understand()` reuses) for back-compat; migrate to `understand()` for a
+  guaranteed, grounded shape.
+
+## [1.2.0b11] — 2026-07-21
+
+### Added
+
+- **`client.user_workflows` — typed management namespace for the workflows you
+  author.** `list()` (cursor-paged), `get()`, `runs()`, `export()`
+  (portable JSON document + `X-Export-Schema-Version`), `delete()` (409
+  `WORKFLOW_IS_PUBLIC_USE_ARCHIVE` while public). async + sync. Wraps the
+  curated `/user_workflows/*` management subset now declared in the SDK
+  contract (`sdk_public_openapi.yaml`); pairs with
+  `goals.run(user_workflow_id=…)` for running them and `client.builder` for
+  authoring them. New top-level models: `UserWorkflowSummary`,
+  `UserWorkflowsPage`, `UserWorkflowDetail`, `UserWorkflowRun`,
+  `UserWorkflowExport`. Community-gallery workflows by other authors remain
+  under `client.workflows` — the two namespaces stay deliberately distinct
+  (minor, additive).
+- The public API-surface test now also covers the `builder` resource methods
+  and the seven client resource accessors.
+
+## [1.2.0b10] — 2026-07-18
+
+### Added
+
+- **`goals.start(user_workflow_id=...)` / `run(...)` / `run_interactive(...)`
+  (async + sync) — run a Builder-authored workflow (`uw_...`) on the typed SDK
+  surface.** Previously only built-in catalog workflows (`workflow_id=`) or
+  natural-language goals (`goal_text=`) were typed parameters; a user-authored
+  workflow had to be sent through the `raw_request` escape hatch. The three
+  workflow sources (`workflow_id` / `user_workflow_id` / `goal_text`) are now
+  mutually exclusive and validated client-side (exactly one required). A
+  `user_workflow_id` run may start with no `files` (it can collect them via
+  checkpoints); only the `goal_text`-only NLP path still requires `files`. The
+  `convilyn goals start` CLI gains a matching `--user-workflow-id` flag. Wire
+  key: `userWorkflowId` (already on the create contract; this exposes it as a
+  first-class SDK argument).
+
+## [1.2.0b9] — 2026-07-18
+
+### Fixed
+
+- **`PlanTier` now includes `"business"`.** A business-tier account's
+  `account.get_plan()` / `account.get_quota()` response previously raised a
+  pydantic validation error because `PlanTier` was `Literal["free", "pro"]`.
+  The literal now mirrors the backend plan catalog (`free` / `pro` /
+  `business`). `get_plan()`'s docstring no longer references a phantom
+  `/billing/plan` endpoint — `cost-preview` is documented as the SDK's
+  canonical tier source (the `ck_`-accepting endpoint that returns
+  `quotaCheck.tier`; the web app's JWT-only `/payment/subscription` is not
+  reachable with a `ck_` key).
+
+### Tests
+
+- **Public-surface contract test truthed up to the shipped surface.** The
+  keystone guard (`tests/contract/test_public_surface.py`) had drifted: its
+  frozen sets never caught up with three already-released additions —
+  `goals.extract()` (`1.2.0b6`), `client.files.list()` + its `FileList` /
+  `StoredFile` / `StorageUsage` exports (`1.2.0b8`), and `goals.run_interactive()`
+  (`1.2.0b8`) — so the guard failed against the code it is meant to protect. The
+  frozen `__all__` and per-resource method sets now match the shipped surface.
+  No public API change — the contract snapshot catches up. This unblocks the
+  pre-publish gate (a red keystone test is a publish blocker).
+
+## [1.2.0b8] — 2026-07-13
+
+### Added
+
+- **`goals.run_interactive(on_slot=, on_preview=)`** (async + sync) — drives the
+  whole human-in-the-loop lifecycle to a terminal state so callers no longer
+  hand-roll the `slots_pending → fill_slot → confirm → wait` loop. Reacts to
+  each stop: `slots_pending` → `on_slot(slot, job)` for each pending slot →
+  `fill_slots`; `ready` → `confirm`; `ready_with_preview` → `on_preview(job)`
+  (default approve) → `confirm`/`cancel`; terminal → return. Callbacks may be
+  sync or async. A `max_rounds` guard (`GoalJobTimeoutError(reason="rounds")`)
+  bounds a runaway callback. Reuses the existing `wait`/`fill_slots`/`confirm`
+  primitives — no new endpoint, no changed semantics. (Compiled/silent-mode
+  workflows never stop for input, so this just runs them to completion.)
+
+### Added
+
+- **`client.files.list()`** (async + sync) — lists your **durable** stored
+  files (e.g. emailed-in attachments) with a storage-usage summary
+  (`used_bytes` / `free_bytes` / `over_quota`). Returns typed `FileList` /
+  `StoredFile` / `StorageUsage`. Note: ordinary uploads are ephemeral and are
+  removed by the platform's ~1-hour cleanup, so a just-uploaded transient file
+  is **not** listed here — this surfaces durable storage only. An
+  unauthenticated caller gets an empty list.
+
+## [1.2.0b6] — 2026-07-12
+
+### Added
+
+- **`goals.extract(files)`** (async + sync) — one-call document extraction.
+  Sugar over `start()` → `wait()` → `artifacts()` for the common "image/PDF →
+  one JSON object" case, so single-step extraction no longer pays the full
+  Goal Lane lifecycle boilerplate (start/wait/fetch/parse). Runs the platform's
+  document-extraction workflow and returns the parsed JSON of the job's primary
+  JSON artifact. It is **not** a new inference product — the understanding comes
+  from the same platform workflow; this only collapses the run-then-fetch-then-
+  parse dance into one method. A caller-supplied output `schema` is not yet
+  supported (roadmap); to steer the extraction, call `run()` + `artifacts()`.
+
 ## [1.2.0b5] — 2026-07-11
 
 ### Added
@@ -305,7 +450,7 @@ consumer is affected.
 ## [1.0.0] — 2026-05-24
 
 First production release. The package surface has stabilised across the
-R1-R5 workstreams; the bump from `0.1.0` reflects API readiness, not a
+pre-1.0 development cycle; the bump from `0.1.0` reflects API readiness, not a
 breaking change.
 
 ### Added
@@ -330,7 +475,7 @@ breaking change.
 - **`convilyn goals` CLI** — drive AI workflows from the shell.
   NDJSON streaming for `events`; pinned exit codes (0 / 1 / 2 / 3 / 130).
 - **`convilyn convert` CLI** + `client.convert` + `client.files`
-  resources (R1 ship).
+  resources.
 - **`convilyn doctor` CLI** — environment + connectivity diagnostics
   for the SDK's dependencies and auth setup.
 - **`convilyn api` CLI** — `gh`-style escape hatch for any backend

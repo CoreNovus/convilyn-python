@@ -29,13 +29,17 @@ import convilyn
 from convilyn.resources import (
     Account,
     AsyncAccount,
+    AsyncBuilder,
     AsyncConvert,
     AsyncFiles,
     AsyncGoals,
+    AsyncUserWorkflows,
     AsyncWorkflows,
+    Builder,
     Convert,
     Files,
     Goals,
+    UserWorkflows,
     Workflows,
 )
 
@@ -51,6 +55,13 @@ FROZEN_ALL = {
     "AsyncConvilyn",
     "AuthError",
     "AutoThrottleConfig",
+    "BuilderAttachment",
+    "BuilderMessage",
+    "BuilderMessageList",
+    "BuilderPendingSlot",
+    "BuilderQuota",
+    "BuilderSession",
+    "BuilderTurn",
     "CatalogWorkflow",
     "ConvertJob",
     "Convilyn",
@@ -58,6 +69,7 @@ FROZEN_ALL = {
     "CostEstimate",
     "ExponentialBackoffRetry",
     "File",
+    "FileList",
     "GoalEvent",
     "GoalJob",
     "GoalJobFailedError",
@@ -79,8 +91,16 @@ FROZEN_ALL = {
     "RetryExhaustedError",
     "RetryPolicy",
     "S3UploadError",
+    "StorageUsage",
+    "StoredFile",
     "ToolCostEstimate",
+    "UnderstandUnavailableError",
     "UsageHistoryEntry",
+    "UserWorkflowDetail",
+    "UserWorkflowExport",
+    "UserWorkflowRun",
+    "UserWorkflowSummary",
+    "UserWorkflowsPage",
     "WebSocketError",
     "Workflow",
     "WorkflowSearchPage",
@@ -124,7 +144,7 @@ EXPECTED_ERRORS = {
 }
 
 ASYNC_RESOURCE_METHODS = {
-    AsyncFiles: {"upload", "delete"},
+    AsyncFiles: {"upload", "delete", "list"},
     AsyncConvert: {
         "create",
         "retrieve",
@@ -138,6 +158,9 @@ ASYNC_RESOURCE_METHODS = {
         "retrieve",
         "wait",
         "run",
+        "run_interactive",
+        "extract",
+        "understand",
         "fill_slot",
         "fill_slots",
         "confirm",
@@ -149,6 +172,8 @@ ASYNC_RESOURCE_METHODS = {
         "download_artifact_to",
     },
     AsyncWorkflows: {"catalog", "search", "get", "fork", "publish", "patch", "like"},
+    AsyncUserWorkflows: {"list", "get", "delete", "export", "runs"},
+    AsyncBuilder: {"create_session", "send_message", "get_session", "messages", "quota"},
     AsyncAccount: {"get_quota", "get_plan", "usage_history"},
 }
 
@@ -156,7 +181,7 @@ ASYNC_RESOURCE_METHODS = {
 # streaming is async-only by design (a sync iterator would need a thread +
 # queue bridge). This asymmetry is itself part of the frozen contract.
 SYNC_RESOURCE_METHODS = {
-    Files: {"upload", "delete"},
+    Files: {"upload", "delete", "list"},
     Convert: {
         "create",
         "retrieve",
@@ -170,6 +195,9 @@ SYNC_RESOURCE_METHODS = {
         "retrieve",
         "wait",
         "run",
+        "run_interactive",
+        "extract",
+        "understand",
         "fill_slot",
         "fill_slots",
         "confirm",
@@ -180,6 +208,8 @@ SYNC_RESOURCE_METHODS = {
         "download_artifact_to",
     },
     Workflows: {"catalog", "search", "get", "fork", "publish", "patch", "like"},
+    UserWorkflows: {"list", "get", "delete", "export", "runs"},
+    Builder: {"create_session", "send_message", "get_session", "messages", "quota"},
     Account: {"get_quota", "get_plan", "usage_history"},
 }
 
@@ -255,10 +285,18 @@ def test_api_error_exposes_wire_fields() -> None:
 
 
 def test_client_exposes_all_resources() -> None:
-    """A constructed client wires up the five documented resource accessors."""
+    """A constructed client wires up the seven documented resource accessors."""
     client = convilyn.Convilyn(api_key="ck_contract")  # pragma: allowlist secret
     try:
-        for attr in ("files", "convert", "goals", "workflows", "account"):
+        for attr in (
+            "files",
+            "convert",
+            "goals",
+            "workflows",
+            "user_workflows",
+            "builder",
+            "account",
+        ):
             assert hasattr(client, attr), attr
     finally:
         client.close()
@@ -281,7 +319,13 @@ def test_sync_resource_methods_frozen() -> None:
 
 def test_response_models_are_frozen() -> None:
     """Key response models are immutable so callers can't mutate server state."""
-    for model in (convilyn.File, convilyn.ConvertJob, convilyn.GoalJob, convilyn.Workflow):
+    for model in (
+        convilyn.File,
+        convilyn.ConvertJob,
+        convilyn.GoalJob,
+        convilyn.Workflow,
+        convilyn.UserWorkflowDetail,
+    ):
         assert model.model_config.get("frozen") is True, model.__name__
 
 

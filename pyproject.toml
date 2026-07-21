@@ -41,19 +41,6 @@ dependencies = [
     "typing-extensions>=4.7.0; python_version < '3.11'",
 ]
 
-[project.optional-dependencies]
-author = [
-    # Reserved for v1.1: mirror imports of convilyn-author into convilyn.author.
-    # Until then, install `convilyn-author` directly for author-side functionality.
-]
-dev = [
-    "pytest>=7.0.0",
-    "pytest-asyncio>=0.23.0",
-    "pytest-cov>=4.1.0",
-    "respx>=0.22.0",
-    "ruff==0.15.6",
-]
-
 [project.urls]
 Homepage = "https://convilyn.corenovus.com"
 Documentation = "https://docs.convilyn.corenovus.com"
@@ -65,6 +52,18 @@ Changelog = "https://github.com/CoreNovus/convilyn-python/blob/main/CHANGELOG.md
 [project.scripts]
 convilyn = "convilyn.cli.main:cli"
 
+# Dev tooling lives in a PEP 735 dependency group (uv-native: `uv sync`
+# installs it by default). Kept out of the wheel/sdist METADATA. The
+# consumer-facing `author` extra above stays a project optional-dependency.
+[dependency-groups]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",
+    "respx>=0.22.0",
+    "ruff==0.15.6",
+]
+
 [tool.hatch.version]
 path = "src/convilyn/_version.py"
 
@@ -72,18 +71,24 @@ path = "src/convilyn/_version.py"
 packages = ["src/convilyn"]
 
 [tool.hatch.build.targets.sdist]
-# Ship CHANGELOG + tests + examples + docs in the sdist so
-# source-install workflows (e.g. `pip install --no-binary :all:`) get
-# the full repo surface. The wheel intentionally stays lean — README
-# is bundled in METADATA (rendered on PyPI); LICENSE is picked up via
-# `license-files = ["LICENSE"]` per PEP 639; CHANGELOG ships in the sdist
-# + wheel (see `include` below) — no public GitHub URL exists during the
-# beta. AGENT.md and any docs/internal/* paths are explicitly excluded —
-# they are agent-operating instructions, not user-facing documentation,
-# and must not ship to PyPI.
+# Ship CHANGELOG + examples + docs in the sdist so source-install workflows
+# (e.g. `pip install --no-binary :all:`) get the user-facing repo surface. The
+# wheel intentionally stays lean — README is bundled in METADATA (rendered on
+# PyPI); LICENSE is picked up via `license-files = ["LICENSE"]` per PEP 639;
+# CHANGELOG ships in the sdist + wheel (see `include` below) — no public GitHub
+# URL exists during the beta. AGENT.md and any docs/internal paths are
+# explicitly excluded — they are agent-operating instructions, not user-facing
+# documentation, and must not ship to PyPI.
+#
+# Supply-chain invariant — SHIPPED == SCANNED: every vocabulary-bearing surface
+# shipped here MUST be covered by the black-box blacklist lint's scan_roots
+# (`sdk/sdks.json` → consumer-python, read by
+# `scripts/ci/sdk_blackbox/lint_blacklist.py`). `examples/` ships AND is scanned
+# (mirrors author-python). The `tests/` suite is neither user-facing nor
+# scanned, so it is NOT shipped — dropping it keeps shipped == scanned and
+# removes unnecessary attack surface from the published artifact.
 include = [
     "src/convilyn",
-    "tests",
     "examples",
     "docs",
     "CHANGELOG.md",
@@ -92,7 +97,15 @@ include = [
 ]
 exclude = [
     "AGENT.md",
-    "docs/internal/*",
+    # Whole-subtree exclusion (not the single-level `docs/internal/*`) so a
+    # nested internal doc can never leak into the published sdist.
+    "docs/internal",
+    # hatchling's sdist otherwise ships the repo-root `.gitignore` (there is no
+    # package-local one) into the public, immutable PyPI artifact — leaking
+    # internal repo structure, operator secret-file naming conventions, and PII
+    # fixture filenames, and bypassing the SHIPPED==SCANNED blackbox lint (which
+    # has no `.gitignore` scan suffix). Exclude it explicitly.
+    ".gitignore",
 ]
 
 [tool.ruff]
