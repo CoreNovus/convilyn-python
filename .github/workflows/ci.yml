@@ -31,17 +31,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v5
         with:
           python-version: '3.12'
-      - name: Install (editable + dev extras)
-        run: python -m pip install -e ".[dev]"
+      - name: Install (project + dev group)
+        run: uv sync
       - name: Lint (ruff)
-        run: python -m ruff check .
+        run: uv run ruff check .
       - name: Format check (ruff)
-        run: python -m ruff format --check .
+        run: uv run ruff format --check .
       - name: Tests
-        run: python -m pytest
+        run: uv run pytest
 
   secret-scan:
     runs-on: ubuntu-latest
@@ -51,7 +51,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: detect-secrets (against the shipped baseline)
-        run: |
+        run: |  # pragma: allowlist secret
           python -m pip install detect-secrets==1.5.0
           # detect-secrets-hook exits non-zero ONLY on NEW, un-baselined secrets.
           # (A plain `scan --baseline` + `git diff --exit-code` would ALWAYS fail:
