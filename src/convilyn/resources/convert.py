@@ -36,6 +36,10 @@ from convilyn.types import ConvertJob, File
 DEFAULT_POLL_INTERVAL = 1.0
 DEFAULT_POLL_TIMEOUT = 300.0
 MAX_POLL_INTERVAL = 5.0
+#: Floor for any caller-supplied ``poll_interval`` — see the identical guard in
+#: :mod:`convilyn.resources.goals`. ``poll_interval=0`` would spin: the backoff is
+#: multiplicative so a zero never grows, and ``asyncio.sleep(0)`` does not wait.
+MIN_POLL_INTERVAL = 0.2
 STALE_PROGRESS_BACKOFF_AFTER = 3  # consecutive identical progress → grow interval
 BACKOFF_FACTOR = 1.5
 
@@ -231,7 +235,7 @@ class AsyncConvert:
         file conversion jobs.
         """
         start = time.monotonic()
-        interval = initial_interval
+        interval = max(initial_interval, MIN_POLL_INTERVAL)  # see MIN_POLL_INTERVAL
         stale_count = 0
         last_progress = -1
         while True:

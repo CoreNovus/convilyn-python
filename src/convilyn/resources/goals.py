@@ -53,6 +53,14 @@ from convilyn.types import Artifact, ArtifactDownload, GoalEvent, GoalJob, Pendi
 DEFAULT_POLL_INTERVAL = 1.0
 DEFAULT_POLL_TIMEOUT = 300.0
 MAX_POLL_INTERVAL = 5.0
+#: Floor for any caller-supplied ``poll_interval``. Without it, ``poll_interval=0``
+#: is a spin loop: the stale-progress backoff is multiplicative
+#: (``min(0 * BACKOFF_FACTOR, MAX) == 0``) so a zero never grows, and
+#: ``asyncio.sleep(0)`` yields without waiting — one misconfigured client then
+#: issues requests as fast as the network allows for the whole timeout window.
+#: Clamped rather than raised: a too-eager interval is a tuning mistake, not a
+#: programming error, and silently slowing it is friendlier than failing the run.
+MIN_POLL_INTERVAL = 0.2
 STALE_PROGRESS_BACKOFF_AFTER = 3
 BACKOFF_FACTOR = 1.5
 
@@ -235,7 +243,12 @@ class AsyncGoals:
         poll_interval: float = DEFAULT_POLL_INTERVAL,
         idle_timeout: float | None = None,
     ) -> GoalJob:
-        """Shortcut — ``start()`` then ``wait()``."""
+        """Shortcut — ``start()`` then wait, driving ``ready`` through
+        ``confirm``: run() is an end-to-end driver, so a job that
+        lands on the submittable ``ready`` state (no slots to fill) is
+        confirmed automatically instead of parking until timeout. The
+        auto-confirm semantics live in the shared ``_wait_loop`` — one
+        seam for run()/understand()."""
         job = await self.start(
             workflow_id=workflow_id,
             user_workflow_id=user_workflow_id,
@@ -244,11 +257,12 @@ class AsyncGoals:
             slots=slots,
             llm_config_id=llm_config_id,
         )
-        return await self.wait(
-            job.job_spec_id,
+        return await self._wait_loop(
+            job_spec_id=job.job_spec_id,
             timeout=timeout,
-            poll_interval=poll_interval,
+            initial_interval=poll_interval,
             idle_timeout=idle_timeout,
+            auto_confirm_ready=True,
         )
 
     async def extract(
@@ -359,15 +373,16 @@ class AsyncGoals:
             raise
         # The goal-job FSM only enqueues execution on confirm (backend
         # _SUBMITTABLE = {READY, …}); a schema-routed create lands READY with
-        # no slots, so confirm here or the job parks forever (first observed
-        # live 2026-07-21 — 300s poll timeout at status=ready).
-        if job.status == "ready":
-            job = await self.confirm(job.job_spec_id)
+        # no slots, so it must be confirmed or the job parks forever (first
+        # observed live 2026-07-21 — 300s poll timeout at status=ready).
+        # The confirm is driven by the shared _wait_loop auto_confirm_ready
+        # seam — single semantics for run()/understand().
         job = await self._wait_loop(
             job_spec_id=job.job_spec_id,
             timeout=timeout,
             initial_interval=poll_interval,
             idle_timeout=idle_timeout,
+            auto_confirm_ready=True,
         )
         if job.needs_input:
             raise ValueError(
@@ -518,6 +533,7 @@ class AsyncGoals:
         initial_interval: float,
         idle_timeout: float | None = None,
         extra_stop_statuses: frozenset[str] = frozenset(),
+        auto_confirm_ready: bool = False,
     ) -> GoalJob:
         """Polling loop with stale-progress backoff.
 
@@ -531,13 +547,33 @@ class AsyncGoals:
         non-terminal states (``run_interactive`` passes ``ready`` /
         ``ready_with_preview`` so it can drive the HITL loop). ``wait()``
         passes none, so its public behaviour is unchanged.
+
+        ``auto_confirm_ready`` is the shared READY-park fix: the
+        goal-job FSM only enqueues execution on confirm (backend
+        ``_SUBMITTABLE = {READY, …}``), so an end-to-end driver
+        (``run()`` / ``understand()``) that merely polls a ``ready`` job
+        waits forever — first observed live 2026-07-21 (300s poll
+        timeout at status=ready). With the flag on, a ``ready`` poll
+        auto-confirms ONCE and keeps polling; a job still ``ready``
+        after that surfaces through the normal idle/total timeouts
+        rather than a confirm storm. Only plain ``ready`` is driven —
+        ``ready_with_preview`` carries a preview the caller must
+        approve, so it is never auto-approved here (``run_interactive``
+        owns that consent via ``on_preview``). ``wait()`` stays a
+        passive observer (flag off): a manual ``start() → review →
+        confirm() → wait()`` flow must never have its cost-consent
+        step executed implicitly by the SDK.
         """
         start = time.monotonic()
-        interval = initial_interval
+        # Clamp at the single choke point every public waiter funnels through
+        # (wait / run / understand / run_interactive), so no entry point can
+        # bypass the floor — see MIN_POLL_INTERVAL.
+        interval = max(initial_interval, MIN_POLL_INTERVAL)
         stale_count = 0
         last_progress = -1
         last_status: str | None = None
         last_change = start
+        confirmed = False
         while True:
             job = await self._poll_once(job_spec_id)
             if job.is_terminal:
@@ -550,6 +586,18 @@ class AsyncGoals:
                 # Caller-requested non-terminal stop (e.g. ready /
                 # ready_with_preview for the interactive driver).
                 return job
+            if auto_confirm_ready and job.status == "ready" and not confirmed:
+                confirmed = True
+                try:
+                    job = await self.confirm(job_spec_id)
+                except APIError as exc:
+                    # 409 = someone else already confirmed (OCC race) —
+                    # benign for this driver; keep polling. Anything
+                    # else is a real error and surfaces.
+                    if exc.status_code != 409:
+                        raise
+                if job.is_terminal:
+                    return self._finalise(job)
 
             if job.status != last_status:
                 last_status = job.status

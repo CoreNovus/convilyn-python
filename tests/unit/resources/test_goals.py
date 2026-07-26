@@ -1260,7 +1260,9 @@ class TestUnderstand:
     async def test_ready_job_is_confirmed_before_waiting(self) -> None:
         # The FSM only enqueues execution on confirm — a schema-routed create
         # lands READY with no slots, so understand() must confirm or the job
-        # parks forever (live regression, 2026-07-21 #2696 window).
+        # parks forever (live regression, 2026-07-21 #2696 window). The
+        # confirm is driven by the shared _wait_loop auto_confirm_ready seam
+        # (#2856), so it fires off the POLLED status, not the create response.
         result = {"vendor": "Acme", "total": 1200}
         async with respx.mock(assert_all_called=True) as mock:
             _mock_extract_chain(mock, artifacts=[_json_artifact_payload()], storage_json=result)
@@ -1268,11 +1270,21 @@ class TestUnderstand:
             mock.post(f"{API_BASE}/api/v1/jobs/goal").mock(
                 return_value=httpx.Response(200, json=_job_response("ready"))
             )
+            # Poll #1 sees ready → auto-confirm (its refetch sees analyzing)
+            # → poll #2 completes.
+            mock.get(f"{API_BASE}/api/v1/jobs/goal/job_test").mock(
+                side_effect=[
+                    httpx.Response(200, json=_job_response("ready")),
+                    httpx.Response(200, json=_job_response("analyzing")),
+                    httpx.Response(200, json=_completed_job()),
+                ]
+            )
             confirm = mock.post(f"{API_BASE}/api/v1/jobs/goal/job_test/confirm").mock(
-                return_value=httpx.Response(200, json=_job_response("analyzing"))
+                return_value=httpx.Response(200, json={})
             )
             async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
-                parsed = await client.goals.understand(["file_abc"], schema=_SCHEMA)
+                with patch("convilyn.resources.goals.asyncio.sleep", return_value=None):
+                    parsed = await client.goals.understand(["file_abc"], schema=_SCHEMA)
 
         assert parsed == result
         assert confirm.called
@@ -1317,3 +1329,215 @@ class TestUnderstand:
     def test_sync_understand_is_wired(self) -> None:
         client = Convilyn(api_key="ck_x", base_url=API_BASE)  # pragma: allowlist secret
         assert hasattr(client.goals, "understand")
+
+
+# ── READY-park auto-confirm (#2856) ──────────────────────────────────
+
+
+class TestReadyAutoConfirm:
+    """run() drives a submittable ``ready`` job through confirm via the
+    shared ``_wait_loop`` seam; ``wait()`` stays a passive observer."""
+
+    @pytest.mark.asyncio
+    async def test_run_confirms_ready_job_and_converges(self) -> None:
+        # READY → confirm → running → completed: the run() driver must not
+        # park at ready (live regression: plain goals.run() 300s poll
+        # timeout at status=ready, 2026-07-21 #2696 window).
+        async with respx.mock(assert_all_called=True) as mock:
+            mock.post(f"{API_BASE}/api/v1/jobs/goal").mock(
+                return_value=httpx.Response(201, json=_job_response("created"))
+            )
+            mock.get(f"{API_BASE}/api/v1/jobs/goal/job_test").mock(
+                side_effect=[
+                    httpx.Response(200, json=_job_response("ready")),
+                    httpx.Response(200, json=_job_response("executing")),
+                    httpx.Response(200, json=_completed_job()),
+                ]
+            )
+            confirm = mock.post(f"{API_BASE}/api/v1/jobs/goal/job_test/confirm").mock(
+                return_value=httpx.Response(200, json={})
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                with patch("convilyn.resources.goals.asyncio.sleep", return_value=None):
+                    job = await client.goals.run(workflow_id="doc_analyzer", files=["file_abc"])
+
+        assert (job.status, confirm.call_count) == ("completed", 1)
+
+    @pytest.mark.asyncio
+    async def test_ready_stall_times_out_with_single_confirm(self) -> None:
+        # A job that stays ready after confirm surfaces through the normal
+        # timeout — exactly ONE confirm attempt, never a confirm storm.
+        async with respx.mock as mock:
+            mock.post(f"{API_BASE}/api/v1/jobs/goal").mock(
+                return_value=httpx.Response(201, json=_job_response("created"))
+            )
+            mock.get(f"{API_BASE}/api/v1/jobs/goal/job_test").mock(
+                return_value=httpx.Response(200, json=_job_response("ready"))
+            )
+            confirm = mock.post(f"{API_BASE}/api/v1/jobs/goal/job_test/confirm").mock(
+                return_value=httpx.Response(200, json={})
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                with patch("convilyn.resources.goals.asyncio.sleep", return_value=None):
+                    with pytest.raises(GoalJobTimeoutError):
+                        await client.goals.run(
+                            workflow_id="doc_analyzer", files=["file_abc"], timeout=0.05
+                        )
+
+        assert confirm.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_confirm_409_race_is_benign_and_polling_continues(self) -> None:
+        # Someone else confirmed first (OCC race): the 409 is swallowed and
+        # the driver keeps polling to the terminal state.
+        async with respx.mock(assert_all_called=True) as mock:
+            mock.post(f"{API_BASE}/api/v1/jobs/goal").mock(
+                return_value=httpx.Response(201, json=_job_response("created"))
+            )
+            mock.get(f"{API_BASE}/api/v1/jobs/goal/job_test").mock(
+                side_effect=[
+                    httpx.Response(200, json=_job_response("ready")),
+                    httpx.Response(200, json=_completed_job()),
+                ]
+            )
+            mock.post(f"{API_BASE}/api/v1/jobs/goal/job_test/confirm").mock(
+                return_value=httpx.Response(
+                    409, json={"code": "CONFLICT", "message": "already queued"}
+                )
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                with patch("convilyn.resources.goals.asyncio.sleep", return_value=None):
+                    job = await client.goals.run(workflow_id="doc_analyzer", files=["file_abc"])
+
+        assert job.status == "completed"
+
+    @pytest.mark.asyncio
+    async def test_confirm_server_error_propagates(self) -> None:
+        # A non-409 confirm failure is a real error — surfaced, not swallowed.
+        async with respx.mock as mock:
+            mock.post(f"{API_BASE}/api/v1/jobs/goal").mock(
+                return_value=httpx.Response(201, json=_job_response("created"))
+            )
+            mock.get(f"{API_BASE}/api/v1/jobs/goal/job_test").mock(
+                return_value=httpx.Response(200, json=_job_response("ready"))
+            )
+            mock.post(f"{API_BASE}/api/v1/jobs/goal/job_test/confirm").mock(
+                return_value=httpx.Response(500, json={"code": "ERR", "message": "boom"})
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                with patch("convilyn.resources.goals.asyncio.sleep", return_value=None):
+                    with pytest.raises(APIError) as info:
+                        await client.goals.run(workflow_id="doc_analyzer", files=["file_abc"])
+
+        assert info.value.status_code == 500
+
+    @pytest.mark.asyncio
+    async def test_wait_stays_passive_on_ready(self) -> None:
+        # wait() must never execute the caller's cost-consent step: a ready
+        # job under plain wait() is observed, not confirmed.
+        async with respx.mock as mock:
+            mock.get(f"{API_BASE}/api/v1/jobs/goal/job_test").mock(
+                return_value=httpx.Response(200, json=_job_response("ready"))
+            )
+            confirm = mock.post(f"{API_BASE}/api/v1/jobs/goal/job_test/confirm").mock(
+                return_value=httpx.Response(200, json={})
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                with patch("convilyn.resources.goals.asyncio.sleep", return_value=None):
+                    with pytest.raises(GoalJobTimeoutError):
+                        await client.goals.wait("job_test", timeout=0.05)
+
+        assert confirm.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_run_never_confirms_ready_with_preview(self) -> None:
+        # ready_with_preview carries a preview the caller must approve —
+        # run() must not auto-approve it; the stall surfaces as a timeout.
+        async with respx.mock as mock:
+            mock.post(f"{API_BASE}/api/v1/jobs/goal").mock(
+                return_value=httpx.Response(201, json=_job_response("created"))
+            )
+            mock.get(f"{API_BASE}/api/v1/jobs/goal/job_test").mock(
+                return_value=httpx.Response(200, json=_job_response("ready_with_preview"))
+            )
+            confirm = mock.post(f"{API_BASE}/api/v1/jobs/goal/job_test/confirm").mock(
+                return_value=httpx.Response(200, json={})
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                with patch("convilyn.resources.goals.asyncio.sleep", return_value=None):
+                    with pytest.raises(GoalJobTimeoutError):
+                        await client.goals.run(
+                            workflow_id="doc_analyzer", files=["file_abc"], timeout=0.05
+                        )
+
+        assert confirm.call_count == 0
+
+
+# ── 5. Boundary — poll-interval floor (server-load / cost guard) ──
+
+
+class _LoopBreakerError(Exception):
+    """Sentinel to break the otherwise-unbounded loop under a patched sleep."""
+
+
+class TestGoalsPollIntervalFloor:
+    """A caller-supplied ``poll_interval`` can never drive an unbounded request rate.
+
+    ``poll_interval=0`` used to spin: the stale-progress backoff is multiplicative
+    (``min(0 * BACKOFF_FACTOR, MAX) == 0``) so a zero never grew, and
+    ``asyncio.sleep(0)`` yields without waiting. One misconfigured client then
+    polled as fast as the network allowed for the whole timeout window — and this
+    is an edge/IoT product, so a device fleet does that from many IPs at once,
+    where per-IP WAF limits do not aggregate.
+    """
+
+    @pytest.mark.asyncio
+    async def test_zero_poll_interval_is_clamped_to_the_floor(self) -> None:
+        from convilyn.resources.goals import MIN_POLL_INTERVAL
+
+        slept: list[float] = []
+
+        async def _record(duration: float) -> None:
+            slept.append(duration)
+            if len(slept) >= 3:
+                raise _LoopBreakerError
+
+        async with respx.mock() as mock:
+            mock.get(f"{API_BASE}/api/v1/jobs/goal/job_spin").mock(
+                return_value=httpx.Response(200, json=_job_response("executing"))
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                with patch("convilyn.resources.goals.asyncio.sleep", side_effect=_record):
+                    with pytest.raises(_LoopBreakerError):
+                        await client.goals.wait(
+                            "job_spin", timeout=3600.0, poll_interval=0.0
+                        )
+
+        assert slept, "the loop never slept — it was spinning"
+        assert min(slept) >= MIN_POLL_INTERVAL, (
+            f"poll_interval=0 produced sleeps of {slept}; every wait must be at "
+            f"least MIN_POLL_INTERVAL ({MIN_POLL_INTERVAL}s) or one client can "
+            "saturate the polled endpoint."
+        )
+
+    @pytest.mark.asyncio
+    async def test_generous_poll_interval_is_left_alone(self) -> None:
+        """The floor clamps only downward — it must not override a slower cadence."""
+        slept: list[float] = []
+
+        async def _record(duration: float) -> None:
+            slept.append(duration)
+            raise _LoopBreakerError
+
+        async with respx.mock() as mock:
+            mock.get(f"{API_BASE}/api/v1/jobs/goal/job_slow").mock(
+                return_value=httpx.Response(200, json=_job_response("executing"))
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                with patch("convilyn.resources.goals.asyncio.sleep", side_effect=_record):
+                    with pytest.raises(_LoopBreakerError):
+                        await client.goals.wait(
+                            "job_slow", timeout=3600.0, poll_interval=2.5
+                        )
+
+        assert slept == [2.5]

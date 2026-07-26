@@ -31,10 +31,9 @@ What stays server-side:
   the ``uw_*`` workflow's slot answers) is the only scenario-aware piece and is a
   constructor argument; the operator names no scenario itself.
 
-The retail cashier scenario wires this exact pattern into
-``RetailWorkflows.explain_pos_error`` — see the runnable, scenario-specific
-counterpart at ``sdk/solution-retail-cashier/examples/cloud_placement_adapter.py``.
-This file is the generic, retail-pack-free version consumer-SDK users start from.
+A vertical Solution Pack wires this exact pattern into its own scenario
+workflows; this file is the generic, scenario-free version consumer-SDK users
+start from.
 
 Usage::
 

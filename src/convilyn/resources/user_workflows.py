@@ -108,6 +108,47 @@ class AsyncUserWorkflows:
             schema_version=response.headers.get("X-Export-Schema-Version"),
         )
 
+    async def grounded_contract(
+        self,
+        workflow_id: str,
+        *,
+        model_binding: str | None = None,
+        locale: str | None = None,
+    ) -> dict[str, Any]:
+        """Export a workflow's grounded contract — the device artifact.
+
+        The platform-manufactured wire the ``convilyn-edge`` SDK's
+        ``load_contract`` parses: save the returned dict verbatim as
+        ``authored/<name>.uw.json`` and an edge Solution Pack consumes it
+        drop-in. Owner-only (the wire embeds the rendered extractor prompt).
+
+        Args:
+            model_binding: server-model id the contract binds (e.g.
+                ``local-qwen3-4b``) — pass the model the device will ACTUALLY
+                run so ``ModelResult`` provenance is truthful. Omitted = a
+                binding-less contract.
+            locale: locale the extractor prompt renders at (server default
+                ``en``).
+
+        Raises:
+            APIError: status 404 for an unknown id or a workflow you don't
+                own (both ``WORKFLOW_NOT_FOUND``), or a bare 404 when the
+                edge export feature flag is off in this environment; status
+                409 (``CONTRACT_NOT_DERIVABLE``) when the workflow declares
+                no extract stage — change the workflow in the Builder, then
+                re-export; status 422 for an authoring-time defect (a
+                Builder re-save recompiles the stored spec).
+        """
+        params: dict[str, Any] = {}
+        if model_binding is not None:
+            params["model_binding"] = model_binding
+        if locale is not None:
+            params["locale"] = locale
+        response = await self._http.request(
+            "GET", f"{_BASE}/{workflow_id}/grounded-contract", params=params or None
+        )
+        return response.json()
+
     async def runs(self, workflow_id: str, *, limit: int | None = None) -> list[UserWorkflowRun]:
         """List recent AI-workflow runs of a workflow you own (newest first).
 
@@ -144,6 +185,9 @@ class UserWorkflows:
 
     def export(self, workflow_id: str) -> UserWorkflowExport:
         return self._run(self._async.export(workflow_id))
+
+    def grounded_contract(self, workflow_id: str, **kwargs: Any) -> dict[str, Any]:
+        return self._run(self._async.grounded_contract(workflow_id, **kwargs))
 
     def runs(self, workflow_id: str, **kwargs: Any) -> list[UserWorkflowRun]:
         return self._run(self._async.runs(workflow_id, **kwargs))

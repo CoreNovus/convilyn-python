@@ -24,8 +24,9 @@ client.convert.download_to(job, to="report.pdf")
 * **Python SDK** — `Convilyn` (sync) and `AsyncConvilyn` (async) with
   resource-style accessors: `client.files`, `client.convert`,
   `client.goals` (agentic / AI workflows with HITL slot filling),
-  `client.workflows` (community marketplace), and `client.account`
-  (billing tier + cost-preview).
+  `client.workflows` (community marketplace), `client.user_workflows`
+  (manage the workflows you authored), `client.builder` (chat-Builder
+  sessions), and `client.account` (billing tier + cost-preview).
 
   > **Goal progress is polling-only in v1.** Follow a run with
   > `client.goals.wait(...)` / `retrieve(...)` (or `convilyn goals
@@ -68,8 +69,8 @@ convilyn-author init my-server
 
 The two packages are intentionally separate so consumers don't pay
 the uvicorn / FastAPI dependency cost. See
-[`sdk/author-python`](https://github.com/CoreNovus/convilyn/tree/main/sdk/author-python)
-in the source repo.
+[`convilyn-author`](https://github.com/CoreNovus/convilyn-author-python)
+for its source and docs.
 
 ## Next
 

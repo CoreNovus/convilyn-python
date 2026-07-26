@@ -38,9 +38,7 @@ job = await client.goals.run(user_workflow_id="uw_acme.pos_error_explainer", slo
 > / `delete`) — no raw endpoint calls needed.
 
 - **Generic reference:** [`examples/10_uw_as_edge_operator.py`](../examples/10_uw_as_edge_operator.py)
-  — a retail-pack-free `UserWorkflowModelOperator` with a self-verifying offline demo.
-- **Scenario reference:** `sdk/solution-retail-cashier/examples/cloud_placement_adapter.py`
-  — the same pattern wired into `RetailWorkflows.explain_pos_error`.
+  — a scenario-free `UserWorkflowModelOperator` with a self-verifying offline demo.
 
 ## Boundary — what the adapter must NOT do
 

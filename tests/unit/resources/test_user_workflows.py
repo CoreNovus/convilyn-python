@@ -161,6 +161,36 @@ class TestListLogic:
 
     @pytest.mark.asyncio
     @respx.mock
+    async def test_grounded_contract_returns_raw_wire(self, client: AsyncConvilyn) -> None:
+        wire = {"contract_id": f"user_me.{UW}", "fields": [], "prompt_template": "p"}
+        respx.get(f"{API_BASE}/api/v1/user_workflows/{UW}/grounded-contract").mock(
+            return_value=httpx.Response(200, json=wire)
+        )
+
+        contract = await client.user_workflows.grounded_contract(UW)
+
+        assert contract == wire
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_grounded_contract_threads_binding_and_locale(
+        self, client: AsyncConvilyn
+    ) -> None:
+        route = respx.get(f"{API_BASE}/api/v1/user_workflows/{UW}/grounded-contract").mock(
+            return_value=httpx.Response(200, json={})
+        )
+
+        await client.user_workflows.grounded_contract(
+            UW, model_binding="local-qwen3-4b", locale="ja"
+        )
+
+        assert dict(route.calls[0].request.url.params) == {
+            "model_binding": "local-qwen3-4b",
+            "locale": "ja",
+        }
+
+    @pytest.mark.asyncio
+    @respx.mock
     async def test_runs_returns_typed_rows(self, client: AsyncConvilyn) -> None:
         respx.get(f"{API_BASE}/api/v1/user_workflows/{UW}/runs").mock(
             return_value=httpx.Response(
@@ -324,6 +354,24 @@ class TestObjectState:
             sync_client.close()
 
         assert observed == (UW, UW, "3", "job-1", None)
+
+    @respx.mock
+    def test_sync_facade_round_trips_grounded_contract(self) -> None:
+        import convilyn
+
+        respx.get(f"{API_BASE}/api/v1/user_workflows/{UW}/grounded-contract").mock(
+            return_value=httpx.Response(200, json={"contract_id": f"user_me.{UW}"})
+        )
+        sync_client = convilyn.Convilyn(
+            api_key="ck_test_sync_contract",  # pragma: allowlist secret
+            base_url=API_BASE,
+        )
+        try:
+            contract = sync_client.user_workflows.grounded_contract(UW)
+        finally:
+            sync_client.close()
+
+        assert contract == {"contract_id": f"user_me.{UW}"}
 
     def test_sync_facade_mirrors_async_surface(self) -> None:
         import convilyn

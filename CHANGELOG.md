@@ -5,6 +5,18 @@ versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.2.0b14] - 2026-07-26
+
+### Fixed
+
+- A caller-supplied `poll_interval` is now clamped to a `MIN_POLL_INTERVAL`
+  (0.2s) floor in both the goal-lane and convert wait loops. `poll_interval=0`
+  previously produced an unbounded request rate for the whole timeout window:
+  the stale-progress backoff is multiplicative, so a zero never grew, and
+  `asyncio.sleep(0)` yields without waiting. The clamp is applied at the single
+  loop both public waiters funnel through, so no entry point can bypass it.
+  A slower cadence than the floor is left untouched.
+
 ## [1.2.0b13] - 2026-07-21
 
 ### Changed
