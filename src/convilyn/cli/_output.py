@@ -52,13 +52,33 @@ class HumanRenderer:
         # Map event kinds to a leading glyph for at-a-glance scanning.
         glyph = _GLYPHS.get(kind, "•")
         message = fields.get("message") or _format_event(kind, fields)
-        print(f"{glyph} {message}", file=self._stderr)
+        _write(f"{glyph} {message}", self._stderr)
 
     def final(self, payload: dict[str, Any]) -> None:
         # The summary line goes to stdout so a caller redirecting
         # ``> result.txt`` still captures a sensible one-liner.
         summary = payload.get("summary") or _format_summary(payload)
-        print(summary, file=self._stdout)
+        _write(summary, self._stdout)
+
+
+def _write(line: str, stream: IO[str]) -> None:
+    """Print a line, degrading rather than crashing on a narrow codepage.
+
+    The glyphs and typographic punctuation this CLI prints are not
+    representable everywhere: a Windows console left on ``cp437`` cannot encode
+    ``✓`` or an em dash, and Python raises ``UnicodeEncodeError`` from inside
+    ``print`` rather than dropping the character. That turns a successful
+    conversion into a traceback **after the file was already written**, which
+    is the worst of both — the work happened and the user is told it failed.
+
+    Retried with ``backslashreplace`` rather than dropping the line, so an
+    unprintable character degrades to a visible escape and the message survives.
+    """
+    try:
+        print(line, file=stream)
+    except UnicodeEncodeError:
+        encoding = getattr(stream, "encoding", None) or "ascii"
+        print(line.encode(encoding, errors="backslashreplace").decode(encoding), file=stream)
 
 
 class JsonRenderer:

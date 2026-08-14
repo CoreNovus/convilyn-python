@@ -11,6 +11,8 @@ writing Python. Sub-commands:
 * ``confirm``    — submit filled slots for execution
 * ``cancel``     — cancel a running / queued job
 * ``retry``      — retry a failed job
+* ``understand`` — grounded, schema-constrained understanding of file(s)
+  (lives in :mod:`.goals_understand`; registered onto the group below)
 
 Exit codes follow the pinned convention in :mod:`._exit_codes`:
 ``0`` success, ``1`` usage, ``2`` API / transport error,
@@ -646,3 +648,14 @@ _EVENT_GLYPHS: dict[str, str] = {
     "agent_text": "›",
     "agent_text_done": "›",
 }
+
+
+# ── Sub-command registration ────────────────────────────────────────
+# Imported at the BOTTOM, after this module's shared helpers are bound:
+# `goals_understand` reaches back into this module for `_build_client` /
+# `_parse_file_ids` / `_print_error`, so the import must run once those names
+# exist. `add_command` is the same registration idiom `cli/main.py` uses one
+# level up, so a new sub-command stays a new module plus one line here (OCP).
+from convilyn.cli.goals_understand import understand_command  # noqa: E402
+
+goals_command.add_command(understand_command, name="understand")

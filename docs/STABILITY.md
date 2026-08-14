@@ -17,14 +17,45 @@ The public, semver-covered surface of this package is:
    (`ConvilynError` and its subclasses), and the resilience config
    (`RetryPolicy`, `ExponentialBackoffRetry`, `NoRetry`,
    `AutoThrottleConfig`, also re-exported from `convilyn.config`).
+   **1b. `convilyn.local`** — the offline conversion namespace, covered from
+   **1.3.0**. That is every name in `convilyn.local.__all__`: the functions
+   (`convert`, `convert_many`, `plan`, `capabilities`, `detect_format`, and the
+   `a`-prefixed async wrappers), the models (`Route`, `Requirement`,
+   `ConversionResult`, `Capabilities`, `ProgressEvent`), and the error taxonomy
+   (`LocalError` and its subclasses, all of which also subclass
+   `ConvilynError`).
+
+   The `convilyn.local.pdf` sub-namespace is covered on the same terms from
+   **1.6.0**: every name in its `__all__` (`select`, `merge`, `rotate`,
+   `compress`, `encrypt`, `decrypt`, `burst`, `extract_text`, `page_count`).
+   Page operations are separate from `convert` because they change the pages
+   and never the format; that split is part of the surface, not an
+   implementation detail, and will not be collapsed in a minor release.
+
+   Clause 1b is listed separately from clause 1 because it is reached as
+   `convilyn.local`, not through `convilyn.__all__`, so clause 1 does not
+   describe it. `tests/contract/test_local_surface.py` freezes it.
+
+   **The names of the optional extras are covered; their contents are not.**
+   `convilyn[pdf]` will keep meaning "PDF support" — but which distributions
+   provide it may change in a minor release, because that is a packaging
+   decision rather than an API. Depend on the extra, never on what it installs.
+   `convilyn.local._engine` is likewise **not** public: it is generated from
+   Convilyn's server-side engine and regenerated whenever that changes.
 2. **The `convilyn` CLI** — command names, documented flags, the
    `--json` output shape, and the exit codes (`0` ok, `1` usage,
-   `2` API error, `3` job failed, `130` interrupted).
+   `2` API error, `3` job failed, `130` interrupted). This includes the
+   `convilyn local` group (`convert`, `batch`, `formats`, `doctor`, and the
+   `pdf` sub-group).
 3. **The authentication contract** — a consumer API key (canonical prefix
    `ck_`, minted in the API Console / Settings → API) passed as
    `api_key=` or `CONVILYN_API_KEY`. Author-SDK / developer-portal tokens
    (`cvl_` / `cvi_`) are **rejected** with a precise error — they are not
    consumer keys; any other prefix is accepted (forward-compat).
+
+   **`convilyn.local` is outside this clause entirely.** It reads no
+   credential, opens no connection, and consumes no quota. Everything else in
+   this package needs a key; that half does not.
 
 A test guards this surface: `tests/contract/test_public_surface.py`
 freezes `convilyn.__all__`, the resource method sets, and the exception

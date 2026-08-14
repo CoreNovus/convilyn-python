@@ -17,6 +17,7 @@ still maps to one category from the unit-testing skill:
 from __future__ import annotations
 
 import ast
+import importlib.util
 import re
 from pathlib import Path
 
@@ -96,12 +97,35 @@ class TestQuickstartImportsAreValid:
                 names.add(raw.strip())
         return names
 
+    @staticmethod
+    def _importable(name: str) -> bool:
+        """Would ``from convilyn import <name>`` actually work?
+
+        Two ways it can, and the check has to cover both. An attribute is the
+        obvious one. A **submodule** is the other: ``from convilyn import local``
+        succeeds because the import system falls back to importing
+        ``convilyn.local``, but `hasattr` is False until something has done so.
+
+        Asking only about attributes therefore reported a documented, working
+        import as broken — which is the opposite of this class's job.
+        """
+        if hasattr(convilyn, name):
+            return True
+        try:
+            return importlib.util.find_spec(f"convilyn.{name}") is not None
+        except (ImportError, AttributeError, ValueError):
+            return False
+
     def test_every_documented_import_exists(self, quickstart_imports: set[str]) -> None:
-        missing = {name for name in quickstart_imports if not hasattr(convilyn, name)}
+        missing = {name for name in quickstart_imports if not self._importable(name)}
         assert not missing, (
             f"QUICKSTART references symbols that no longer exist on `convilyn`: "
             f"{sorted(missing)}. Either restore the symbol or update the doc."
         )
+
+    def test_the_check_rejects_something_that_does_not_exist(self) -> None:
+        """Guard the guard: a check that accepts anything proves nothing."""
+        assert self._importable("no_such_symbol_9f3a") is False
 
 
 # ── 4. Object-state — AGENT.md cross-references real seams ─────────

@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 
 from convilyn._internal.auth import (
-    ACCEPTED_KEY_PREFIXES,
     AUTHOR_KEY_PREFIXES,
+    CONSUMER_KEY_PREFIX,
     APIKey,
     is_author_key,
     is_known_prefix,
@@ -90,9 +90,8 @@ class TestResolveAuth:
 
 
 class TestForwardCompat:
-    def test_known_prefixes_recognised(self):
-        for prefix in ACCEPTED_KEY_PREFIXES:
-            assert is_known_prefix(f"{prefix}example") is True
+    def test_the_consumer_prefix_is_recognised(self):
+        assert is_known_prefix(f"{CONSUMER_KEY_PREFIX}example") is True
 
     def test_unknown_prefix_still_constructs(self):
         # If a future backend mints a `cvx_` consumer tier the SDK should still work.

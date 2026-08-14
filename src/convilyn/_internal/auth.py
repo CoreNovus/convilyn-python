@@ -32,9 +32,6 @@ CONSUMER_KEY_PREFIX = "ck_"  # pragma: allowlist secret
 #: one is pasted here by mistake.
 AUTHOR_KEY_PREFIXES: tuple[str, ...] = ("cvl_", "cvi_")  # pragma: allowlist secret
 
-#: Retained for back-compat; the recognised consumer prefix(es).
-ACCEPTED_KEY_PREFIXES: tuple[str, ...] = (CONSUMER_KEY_PREFIX,)
-
 
 def is_author_key(key: str) -> bool:
     """True when ``key`` is an Author-SDK / developer-portal token, not a consumer key."""
@@ -136,4 +133,4 @@ def is_known_prefix(key: str) -> bool:
     rejected, because new backend key tiers may roll out before an SDK
     release acknowledges them.
     """
-    return any(key.startswith(p) for p in ACCEPTED_KEY_PREFIXES)
+    return key.startswith(CONSUMER_KEY_PREFIX)

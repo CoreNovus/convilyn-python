@@ -391,6 +391,24 @@ class AsyncGoals:
             )
         return await self._fetch_json_artifact(job.job_spec_id)
 
+    async def to_markdown(
+        self,
+        files: list[str],
+        *,
+        timeout: float = DEFAULT_POLL_TIMEOUT,
+        poll_interval: float = DEFAULT_POLL_INTERVAL,
+        idle_timeout: float | None = None,
+    ) -> str:
+        """Extract unstructured content into Markdown — METERED, and NOT
+        yet served by any build: raises ``UnderstandUnavailableError`` naming the
+        free conversion path. See :mod:`convilyn.resources._goals_markdown`.
+        """
+        from convilyn.resources._goals_markdown import run_to_markdown
+
+        return await run_to_markdown(
+            self, files, timeout=timeout, poll_interval=poll_interval, idle_timeout=idle_timeout
+        )
+
     async def run_interactive(
         self,
         *,
@@ -1005,6 +1023,9 @@ class Goals:
 
     def understand(self, files: list[str], **kwargs: Any) -> Any:
         return self._run(self._async.understand(files, **kwargs))
+
+    def to_markdown(self, files: list[str], **kwargs: Any) -> str:
+        return self._run(self._async.to_markdown(files, **kwargs))
 
     def run_interactive(self, **kwargs: Any) -> GoalJob:
         return self._run(self._async.run_interactive(**kwargs))

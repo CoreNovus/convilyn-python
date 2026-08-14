@@ -16,6 +16,7 @@ from convilyn.cli.api import api_command
 from convilyn.cli.convert import convert_command
 from convilyn.cli.doctor import doctor_command
 from convilyn.cli.goals import goals_command
+from convilyn.cli.local import local_command
 
 
 @click.group(
@@ -38,6 +39,7 @@ cli.add_command(doctor_command, name="doctor")
 cli.add_command(api_command, name="api")
 cli.add_command(goals_command, name="goals")
 cli.add_command(account_command, name="account")
+cli.add_command(local_command, name="local")
 
 
 if __name__ == "__main__":

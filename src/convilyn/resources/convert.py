@@ -1,4 +1,4 @@
-"""Convert resource — document conversion jobs.
+"""Convert resource — the free, deterministic conversion lane.
 
 Wraps Convilyn's file conversion job API:
 
@@ -6,11 +6,17 @@ Wraps Convilyn's file conversion job API:
 * ``GET  /api/v1/jobs/{id}``      — poll status (returns full JobResponse)
 * ``GET  <resultFiles[0].url>``   — download the produced artifact
 
-This resource exposes the ``document_conversion`` processor (DOCX / PDF
-/ PPTX / TXT / HTML / Markdown interchange). The backend supports other
-processor types (image, OCR, media, pdf_operations, image_compression,
-document_compression); each can be added as its own resource method or
-sibling resource without touching this file's orchestration.
+It reaches all three conversions that lane runs — ``document_conversion``,
+``image_conversion`` and ``media_processing`` — and the caller never names one.
+The processor is derived from the formats
+(:mod:`convilyn._internal.convert_families`), so ``report.docx → pdf``,
+``photo.png → webp`` and ``clip.mp4 → mp3`` are one verb rather than three.
+
+**Nothing here spends credits.** The metered processors — OCR, video and audio
+transcription — are not reachable from this resource by construction, which is
+what makes `convert` and `goals.understand()` distinguishable without reading a
+flag. Whether a given pair is *producible* is the backend's answer, published at
+``GET /api/v1/{document,image,media}/support``; this SDK carries no copy of it.
 
 Design follows OpenAI / Stripe convention: data on the
 :class:`convilyn.types.ConvertJob` model, behaviour on the resource.
@@ -24,6 +30,7 @@ import time
 from pathlib import Path
 from typing import Any, cast
 
+from convilyn._internal.convert_families import build_payload, detect_format
 from convilyn._internal.download import download_url_to_path
 from convilyn._internal.http import HTTPClient
 from convilyn._internal.loop_runner import CoroRunner
@@ -42,25 +49,6 @@ MAX_POLL_INTERVAL = 5.0
 MIN_POLL_INTERVAL = 0.2
 STALE_PROGRESS_BACKOFF_AFTER = 3  # consecutive identical progress → grow interval
 BACKOFF_FACTOR = 1.5
-
-# Extensions that the SDK can auto-derive into a `source_format`. The
-# backend accepts the same lowercase tokens for document conversion;
-# keep the mapping explicit so future renames are obvious.
-_SOURCE_FORMAT_BY_SUFFIX: dict[str, str] = {
-    ".docx": "docx",
-    ".doc": "doc",
-    ".pdf": "pdf",
-    ".pptx": "pptx",
-    ".ppt": "ppt",
-    ".xlsx": "xlsx",
-    ".xls": "xls",
-    ".txt": "txt",
-    ".rtf": "rtf",
-    ".html": "html",
-    ".htm": "html",
-    ".md": "md",
-    ".odt": "odt",
-}
 
 
 class AsyncConvert:
@@ -82,28 +70,40 @@ class AsyncConvert:
         file_id: str | None = None,
         target_format: str,
         source_format: str | None = None,
-        quality: str = "standard",
+        quality: str | int | None = None,
         page_range: str | None = None,
     ) -> ConvertJob:
-        """Create a document conversion job and return immediately.
+        """Create a conversion job and return immediately.
 
-        The returned :class:`ConvertJob` will be in ``queued`` or
-        ``processing`` state; call :py:meth:`wait` to block until
-        terminal, or :py:meth:`retrieve` for one-shot polling.
+        The processor is derived from the source and target formats, so a
+        document, an image and a media transcode are all this one call. The
+        returned :class:`ConvertJob` will be in ``queued`` or ``processing``
+        state; call :py:meth:`wait` to block until terminal, or
+        :py:meth:`retrieve` for one-shot polling.
+
+        Args:
+            quality: Omitted from the request when ``None``, so each processor
+                applies its own default. Document and media conversions take a
+                preset name (``"standard"`` / ``"high"``); image conversions
+                take a 1-100 integer.
+            page_range: Document conversions only — passing it for an image or
+                media conversion raises rather than being silently dropped.
+
+        Raises:
+            ValueError: the two formats name no single conversion, or a
+                parameter does not belong to the one they name.
         """
         resolved_file_id, resolved_source = self._resolve_source(
             file=file, file_id=file_id, source_format=source_format
         )
-        params: dict[str, Any] = {
-            "source_file_id": resolved_file_id,
-            "source_format": resolved_source,
-            "target_format": target_format,
-            "quality": quality,
-        }
-        if page_range is not None:
-            params["page_range"] = page_range
         return await self._create_job(
-            payload={"processor_type": "document_conversion", "params": params}
+            payload=build_payload(
+                file_id=resolved_file_id,
+                source_format=resolved_source,
+                target_format=target_format,
+                quality=quality,
+                page_range=page_range,
+            )
         )
 
     async def retrieve(self, job_id: str) -> ConvertJob:
@@ -137,7 +137,7 @@ class AsyncConvert:
         file_id: str | None = None,
         target_format: str,
         source_format: str | None = None,
-        quality: str = "standard",
+        quality: str | int | None = None,
         page_range: str | None = None,
         timeout: float = DEFAULT_POLL_TIMEOUT,
         poll_interval: float = DEFAULT_POLL_INTERVAL,
@@ -192,10 +192,15 @@ class AsyncConvert:
         file_id: str | None,
         source_format: str | None,
     ) -> tuple[str, str]:
-        """Resolve ``(source_file_id, source_format)`` from caller input.
+        """Resolve ``(file_id, source_format)`` from caller input.
 
         Either ``file`` or ``file_id`` must be supplied; ``source_format``
         is required when only ``file_id`` is given.
+
+        The resolved source format always decides which processor runs. It is
+        additionally *sent* only for document conversions — image and media
+        requests carry no source field, because the backend reads that one off
+        the stored object's key.
         """
         if file is not None and file_id is not None:
             raise TypeError("create() accepts either `file` or `file_id`, not both")
@@ -272,9 +277,8 @@ class AsyncConvert:
 
     @staticmethod
     def _infer_source_format(filename: str) -> str | None:
-        """Map common document suffixes to backend ``source_format`` tokens."""
-        suffix = Path(filename).suffix.lower()
-        return _SOURCE_FORMAT_BY_SUFFIX.get(suffix)
+        """The source format a filename names, or ``None`` when it has none."""
+        return detect_format(filename)
 
     async def _ensure_job(self, job: ConvertJob | str) -> ConvertJob:
         """Return a :class:`ConvertJob` whether the caller passed one or a job_id."""

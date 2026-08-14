@@ -2,13 +2,14 @@
 
 Composes the Python SDK exactly as a third-party caller would:
 ``files.upload`` → ``convert.create_and_wait`` → ``convert.download_to``.
-The CLI never touches ``_internal`` or HTTPClient directly so every
-behaviour available on the command line is also available
-programmatically.
+The CLI never touches HTTPClient directly so every behaviour available on the
+command line is also available programmatically.
 
-``--dry-run`` short-circuits before any network call and prints what
-the live invocation would send. ``--json`` swaps the renderer to a
-single JSON object on stdout for shell pipelines and AI agents.
+``--dry-run`` short-circuits before any network call and prints what the live
+invocation would send — including **which processor** it would reach, which is
+how a user confirms they are on the free lane before spending anything.
+``--json`` swaps the renderer to a single JSON object on stdout for shell
+pipelines and AI agents.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ import os
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import click
 
@@ -28,6 +30,7 @@ from convilyn import (
     JobFailedError,
     JobTimeoutError,
 )
+from convilyn._internal.convert_families import build_payload, detect_format
 from convilyn.cli._exit_codes import (
     EXIT_API_ERROR,
     EXIT_JOB_FAILED,
@@ -35,11 +38,27 @@ from convilyn.cli._exit_codes import (
 )
 from convilyn.cli._output import OutputRenderer, make_renderer
 
+#: Stands in for the file id `--dry-run` has not obtained, so the preview can
+#: run the SAME payload builder the live path runs. A dry run that assembled
+#: its own approximation would be able to disagree with the request it claims
+#: to be previewing — which is the one thing it must never do.
+_PENDING_UPLOAD = "<pending upload>"
+
 
 @click.command(
     help=(
-        "Convert a local file into a different format.\n\n"
-        "Example: convilyn convert report.docx --to pdf"
+        "Convert a local file into a different format — documents, images, "
+        "audio and video.\n\n"
+        "This is the deterministic lane: it does not consume AI credits. "
+        "Extracting meaning from a file (reading a scan, describing a figure, "
+        "transcribing speech) is a different, metered verb — see "
+        "`convilyn goals understand`.\n\n"
+        "The processor is chosen from the two formats, so there is no flag to "
+        "read to know which one you get; `--dry-run` prints it.\n\n"
+        "Examples:\n\n"
+        "  convilyn convert report.docx --to pdf\n\n"
+        "  convilyn convert photo.png --to webp\n\n"
+        "  convilyn convert clip.mp4 --to mp3"
     ),
 )
 @click.argument(
@@ -50,7 +69,7 @@ from convilyn.cli._output import OutputRenderer, make_renderer
     "--to",
     "target_format",
     required=True,
-    help="Target format token (e.g. pdf, docx, html).",
+    help="Target format token (e.g. pdf, webp, mp3).",
 )
 @click.option(
     "--output",
@@ -68,8 +87,12 @@ from convilyn.cli._output import OutputRenderer, make_renderer
 )
 @click.option(
     "--quality",
-    default="standard",
-    help="Conversion quality hint (standard / high). Backend-specific.",
+    default=None,
+    help=(
+        "Quality hint. Document and media conversions take a preset "
+        "(standard / high); image conversions take 1-100. Omitted by default, "
+        "so each processor applies its own."
+    ),
 )
 @click.option(
     "--json",
@@ -88,19 +111,35 @@ def convert_command(
     target_format: str,
     output_path: Path | None,
     source_format: str | None,
-    quality: str,
+    quality: str | None,
     json_output: bool,
     dry_run: bool,
 ) -> None:
     """Convert ``INPUT_FILE`` to ``--to`` format."""
     renderer = make_renderer(json_output=json_output)
     resolved_output = _resolve_output_path(input_file, output_path, target_format)
-    resolved_source = source_format or _guess_source_format(input_file.name)
+    resolved_source = source_format or detect_format(input_file.name)
+    if resolved_source is None:
+        raise SystemExit(EXIT_USAGE) from _print_error(
+            ValueError(f"{input_file.name!r} has no extension"),
+            "Cannot tell what this file is — pass --source-format",
+        )
+
+    # Resolved before the upload, deliberately: an unconvertible pair should
+    # cost nothing, and uploading first would spend a round trip and a stored
+    # object to learn what the two format tokens already say.
+    payload = _payload_or_exit(
+        source_format=resolved_source,
+        target_format=target_format,
+        quality=quality,
+        page_range=None,
+    )
 
     if dry_run:
         _emit_dry_run(
             renderer=renderer,
             input_file=input_file,
+            payload=payload,
             source_format=resolved_source,
             target_format=target_format,
             quality=quality,
@@ -133,16 +172,6 @@ def _resolve_output_path(
     return input_file.with_suffix(f".{target_format}")
 
 
-def _guess_source_format(filename: str) -> str | None:
-    """Best-effort source-format hint from the file extension.
-
-    Returns ``None`` when the extension is unknown — the SDK then
-    consults its own mapping or asks the caller to be explicit.
-    """
-    suffix = Path(filename).suffix.lower().lstrip(".")
-    return suffix or None
-
-
 def _build_client() -> Convilyn:
     """Construct a synchronous Convilyn client from environment variables.
 
@@ -155,25 +184,31 @@ def _emit_dry_run(
     *,
     renderer: OutputRenderer,
     input_file: Path,
-    source_format: str | None,
+    payload: dict[str, Any],
+    source_format: str,
     target_format: str,
-    quality: str,
+    quality: str | None,
     output_path: Path,
 ) -> None:
-    """Render the dry-run preview using the same renderer pipeline."""
+    """Render the dry-run preview using the same renderer pipeline.
+
+    *payload* is the real request body, built by the same function the live
+    path calls, so the preview cannot claim a processor the live call would not
+    reach.
+    """
+    params = {key: value for key, value in payload["params"].items() if value != _PENDING_UPLOAD}
     file_size = input_file.stat().st_size
     content_type = mimetypes.guess_type(input_file.name)[0] or "application/octet-stream"
     renderer.event(
         "upload",
         message=f"[dry-run] Would upload: {input_file.name} ({file_size} B, {content_type})",
     )
+    rendered = ", ".join(f"{key}={value}" for key, value in params.items())
     renderer.event(
         "create",
         message=(
             "[dry-run] Would POST /api/v1/jobs: "
-            f"{{processor_type=document_conversion, "
-            f"source_format={source_format}, target_format={target_format}, "
-            f"quality={quality}}}"
+            f"{{processor_type={payload['processor_type']}, {rendered}}}"
         ),
     )
     renderer.event(
@@ -185,6 +220,7 @@ def _emit_dry_run(
             "command": "convert",
             "dry_run": True,
             "input_file": str(input_file),
+            "processor_type": payload["processor_type"],
             "source_format": source_format,
             "target_format": target_format,
             "quality": quality,
@@ -194,14 +230,39 @@ def _emit_dry_run(
     )
 
 
+def _payload_or_exit(
+    *,
+    source_format: str,
+    target_format: str,
+    quality: str | None,
+    page_range: str | None,
+) -> dict[str, Any]:
+    """`build_payload`, with its `ValueError` turned into a one-line usage exit.
+
+    A pair that names no conversion is the caller's arguments being wrong, not
+    a transport failure, so it exits ``EXIT_USAGE`` rather than raising a
+    traceback at somebody reading a shell.
+    """
+    try:
+        return build_payload(
+            file_id=_PENDING_UPLOAD,
+            source_format=source_format,
+            target_format=target_format,
+            quality=quality,
+            page_range=page_range,
+        )
+    except ValueError as exc:
+        raise SystemExit(EXIT_USAGE) from _print_error(exc, "Cannot convert")
+
+
 def _run_conversion(
     *,
     client_factory: Callable[[], Convilyn],
     renderer: OutputRenderer,
     input_file: Path,
-    source_format: str | None,
+    source_format: str,
     target_format: str,
-    quality: str,
+    quality: str | None,
     output_path: Path,
 ) -> None:
     """Real path — upload, convert, download. Translates SDK exceptions

@@ -41,6 +41,40 @@ dependencies = [
     "typing-extensions>=4.7.0; python_version < '3.11'",
 ]
 
+# Offline conversion (`convilyn.local`). One extra per format family, so a user
+# who wants PDF → Markdown does not also install a presentation parser and, with
+# it, lxml. The composites are declared in terms of the leaves rather than
+# repeating their contents, so there is one list per package, not two.
+#
+# `csv`, `txt` and Markdown rendering need NOTHING — they work on a bare
+# install, which is worth knowing before reaching for an extra.
+#
+# Two things these cannot cover, and both are stated in the docs rather than
+# papered over: `pptx` pulls Pillow transitively (python-pptx depends on it),
+# and LibreOffice / Calibre are desktop applications that no extra can install.
+#
+# **The floors are the org's, not invented here**, and
+# `tests/unit/qa/test_cross_file_dependency_agreement.py` in backend-api holds
+# them to it. The first draft of this table wrote its own ranges and was wrong
+# in the direction that matters: `Pillow>=11.0` and `pypdf>=6.0` would have let
+# a user of this published package install versions carrying, respectively,
+# three GHSAs (one of them a decompression bomb) and twenty-two DoS advisories
+# that the rest of the repo had already floored past. A published SDK is where
+# a low floor does the most damage, not the least.
+#
+# Upper caps were dropped for the same reason: every distinct specifier string
+# is one more thing to keep in step across nine manifests, and the repo's
+# convention is a floor.
+[project.optional-dependencies]
+pdf = ["pdfplumber>=0.11.9", "pypdf>=6.10.2"]
+docx = ["python-docx>=1.0.0"]
+pptx = ["python-pptx>=1.0.0"]
+xlsx = ["openpyxl>=3.1.0"]
+xml = ["defusedxml>=0.7.0"]
+images = ["Pillow>=12.2.0"]
+documents = ["convilyn[pdf,docx,pptx,xlsx,xml]"]
+all = ["convilyn[documents,images]"]
+
 [project.urls]
 Homepage = "https://convilyn.corenovus.com"
 Documentation = "https://docs.convilyn.corenovus.com"
@@ -53,15 +87,39 @@ Changelog = "https://github.com/CoreNovus/convilyn-python/blob/main/CHANGELOG.md
 convilyn = "convilyn.cli.main:cli"
 
 # Dev tooling lives in a PEP 735 dependency group (uv-native: `uv sync`
-# installs it by default). Kept out of the wheel/sdist METADATA. The
-# consumer-facing `author` extra above stays a project optional-dependency.
+# installs it by default). Kept out of the wheel/sdist METADATA.
 [dependency-groups]
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.23.0",
     "pytest-cov>=4.1.0",
     "respx>=0.22.0",
-    "ruff==0.15.22",
+    "ruff==0.16.2",
+    # The `typecheck` gate's checker (#3917). Specifier deliberately identical
+    # to the one already in scripts/oss/templates/pyproject.toml: this repo's
+    # cross-file agreement ratchet compares specifier STRINGS, and a new
+    # spelling here would be a new disagreement it may not accept. The exact
+    # version is pinned by uv.lock, which `--locked` enforces.
+    "pyright>=1.1.350",
+    # Mirrors [project.optional-dependencies]. `uv sync --locked` installs the
+    # project's dependencies plus this group and NOT its extras, so without the
+    # mirror the engine's tests cannot import their parsers — they would skip,
+    # and the coverage floor would then be measuring code nothing exercised.
+    # A green run over un-run code is the failure this repo keeps paying for.
+    #
+    # Kept in agreement with the extras by
+    # `scripts/ci/tests/test_sdk_local_extras_policy.py`, so the duplication is
+    # machine-checked rather than remembered.
+    "pdfplumber>=0.11.9",
+    "pypdf>=6.10.2",
+    "python-docx>=1.0.0",
+    "python-pptx>=1.0.0",
+    "openpyxl>=3.1.0",
+    "defusedxml>=0.7.0",
+    "Pillow>=12.2.0",
+    # Test-only: the PDF and image fixtures are BUILT, not committed, so the
+    # suite needs a writer for formats no extractor produces.
+    "reportlab>=4.1.0",
 ]
 
 [tool.hatch.version]
@@ -100,17 +158,38 @@ exclude = [
     # Whole-subtree exclusion (not the single-level `docs/internal/*`) so a
     # nested internal doc can never leak into the published sdist.
     "docs/internal",
-    # hatchling's sdist otherwise ships the repo-root `.gitignore` (there is no
-    # package-local one) into the public, immutable PyPI artifact — leaking
-    # internal repo structure, operator secret-file naming conventions, and PII
-    # fixture filenames, and bypassing the SHIPPED==SCANNED blackbox lint (which
-    # has no `.gitignore` scan suffix). Exclude it explicitly.
+    # hatchling's sdist otherwise ships a `.gitignore` into the public,
+    # immutable PyPI artifact — leaking internal repo structure, operator
+    # secret-file naming conventions, and PII fixture filenames, and bypassing
+    # the SHIPPED==SCANNED blackbox lint (which has no `.gitignore` scan
+    # suffix). Exclude it explicitly.
     ".gitignore",
 ]
+
+[tool.pyright]
+# Read by the `typecheck` gate — `uv run --locked pyright src`
+# (scripts/ci/sdk_local_ci.py, #3917) — and by an editor, so both agree.
+#
+# The mode is PINNED rather than inherited: pyright's default
+# typeCheckingMode has moved before now, so leaving it unstated would make
+# this gate's strictness a property of whichever pyright the lock resolves.
+typeCheckingMode = "standard"
+pythonVersion = "3.10"
+include = ["src"]
 
 [tool.ruff]
 target-version = "py310"
 line-length = 100
+# `.md` is out of scope for BOTH ruff gates, stated here so a manual
+# `ruff format` and the CI gate see the same tree (#3939).
+#
+# ruff 0.16 formats python code fences inside markdown; `ruff check` does NOT
+# scan markdown at all. Left unstated, `format` would cover a surface `lint`
+# does not, and the READMEs here ship inside the published package — measured,
+# the reflow explodes deliberately-compact multi-name imports in quickstart
+# samples one-per-line. Formatting published docs is a docs decision, not a
+# side effect of adding a formatter gate; tracked separately.
+extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP", "B"]

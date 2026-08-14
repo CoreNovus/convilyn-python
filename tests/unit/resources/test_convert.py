@@ -7,6 +7,7 @@ orchestration can evolve without test churn.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from unittest.mock import patch
 
@@ -115,6 +116,45 @@ class TestConvertLogic:
         assert '"target_format":"pdf"' in sent_body.replace(" ", "")
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("filename", "target", "expected_processor", "expected_file_key"),
+        [
+            ("photo.png", "webp", "image_conversion", "file_id"),
+            ("clip.mp4", "mp3", "media_processing", "file_id"),
+        ],
+    )
+    async def test_an_image_or_media_file_reaches_its_own_processor(
+        self, filename: str, target: str, expected_processor: str, expected_file_key: str
+    ) -> None:
+        """The resource wires the family derivation, not just the helper module.
+
+        `image_conversion` and `media_processing` params carry NO source field —
+        the backend reads that off the stored object's key — so this also pins
+        that the SDK does not invent one.
+        """
+        uploaded = File.model_validate(
+            {
+                "fileId": "file_media",
+                "fileName": filename,
+                "fileSize": 100,
+                "mimeType": "application/octet-stream",
+                "createdAt": "2026-05-20T12:00:00Z",
+            }
+        )
+        async with respx.mock(assert_all_called=True) as mock:
+            create = mock.post(f"{API_BASE}/api/v1/jobs").mock(
+                return_value=httpx.Response(202, json=_job_response("queued"))
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                await client.convert.create(file=uploaded, target_format=target)
+
+        body = json.loads(create.calls.last.request.read().decode())
+        assert body["processor_type"] == expected_processor
+        assert body["params"][expected_file_key] == "file_media"
+        assert body["params"]["output_format"] == target
+        assert "source_format" not in body["params"]
+
+    @pytest.mark.asyncio
     async def test_download_to_fetches_first_result_file(self, file_obj, tmp_path) -> None:
         async with respx.mock(assert_all_called=True) as mock:
             mock.get(S3_DOWNLOAD_URL).mock(
@@ -181,8 +221,23 @@ class TestConvertBoundary:
             }
         )
         async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
-            with pytest.raises(ValueError, match="Could not infer source_format"):
+            with pytest.raises(ValueError, match="pass source_format"):
                 await client.convert.create(file=weird_file, target_format="pdf")
+
+    @pytest.mark.asyncio
+    async def test_a_file_with_no_extension_at_all_raises(self) -> None:
+        nameless = File.model_validate(
+            {
+                "fileId": "file_x",
+                "fileName": "receipt",
+                "fileSize": 100,
+                "mimeType": "application/octet-stream",
+                "createdAt": "2026-05-20T12:00:00Z",
+            }
+        )
+        async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+            with pytest.raises(ValueError, match="Could not infer source_format"):
+                await client.convert.create(file=nameless, target_format="pdf")
 
 
 # ── 3. Error — per-step failure surfaces a typed exception ──────────

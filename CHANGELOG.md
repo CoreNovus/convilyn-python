@@ -5,6 +5,286 @@ versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **`convert` now reaches images and media, not only documents.**
+  `client.convert.create(file=photo, target_format="webp")` and
+  `convilyn convert clip.mp4 --to mp3` work. Previously the resource sent a
+  hardcoded `document_conversion` and could not derive a source format from
+  anything but 13 document extensions, so `convilyn convert video.mp4 --to mp3`
+  failed locally without issuing a request — and for a video the *metered* verb
+  was the only one available, which is the wrong way round for a split whose
+  whole purpose is knowing before you spend.
+
+  **The processor is derived, never named by the caller.** It is the conversion
+  family that speaks *both* the source and the target format — which is why
+  `clip.gif --to png` is an image conversion and `clip.gif --to mp4` is a media
+  one. Reading the family off the source alone cannot answer that.
+
+  ```python
+  await client.convert.create_and_wait(file=clip, target_format="mp3")
+  # → {"processor_type": "media_processing", "params": {...}}
+  ```
+
+  **Nothing `convert` can reach spends credits.** OCR and transcription are not
+  in the derivation at all; extraction remains `goals.understand()`. Whether a
+  particular pair is *producible* stays the backend's answer, published at
+  `GET /api/v1/{document,image,media}/support` — this SDK carries no copy of it.
+
+- `convilyn convert --dry-run` now prints the `processor_type` it would reach
+  (and carries it in `--json`), so the lane is visible before anything uploads.
+  It builds the real request body rather than describing one, so an argument the
+  live call would reject is rejected here too.
+
+### Changed
+
+- **`quality` defaults to omitted rather than to `"standard"`, and accepts an
+  integer.** Each processor's own default then applies — which it must, because
+  they disagree: document and media conversions take a preset name, image
+  conversions take a 1-100 integer, and a request carrying `"standard"` for an
+  image is rejected by the API. Callers passing `quality="standard"` for a
+  document conversion are unaffected; that is the server's default for it.
+- `page_range` now raises when passed with an image or media conversion instead
+  of being sent to params that do not define it.
+- An unconvertible pair is refused before the upload rather than after it.
+
+### Fixed
+
+- **`convilyn convert page.htm --to pdf` no longer fails inside a worker.** The
+  CLI had its own extension guess that returned the raw suffix, and since the
+  resource only infers when no source format was supplied, the SDK's own mapping
+  was unreachable from the command line — `htm` reached a worker that builds its
+  format enum bare and raises. Both entry points now share one derivation, which
+  also lower-cases and strips a leading dot.
+
+- **`goals.to_markdown(files)` — extract unstructured content into Markdown.**
+  The metered path, for documents whose content has to be *extracted* before it
+  can be written down: scanned pages with no text layer, embedded figures that
+  need describing. That work calls per-unit billed third-party APIs, so it is
+  charged.
+
+  **If you only need a plain rendered `.md`, do not use this.** Deterministic
+  document-to-Markdown conversion ships free on every plan through the
+  file-conversion API; this method will never be the cheaper way to get one.
+
+  ```python
+  try:
+      md = await client.goals.to_markdown(["file_abc"])
+  except convilyn.UnderstandUnavailableError:
+      ...  # fall back to file conversion
+  ```
+
+  **Not yet served by any platform build** — every call currently raises
+  `UnderstandUnavailableError`, naming the free alternative. The method ships
+  ahead of the pipeline so code written against it keeps working unchanged when
+  the capability is enabled server-side, exactly as `understand()` shipped ahead
+  of its own rollout. A differently-shaped result is never returned in its place.
+
+- **`Route.unavailable_kind` — why a conversion cannot run, in a form a program
+  can act on.** `available=False` did not mean the same thing on every engine: a
+  document route was unavailable only because something was not installed, while
+  an image route could be unavailable because this build of Pillow has no encoder
+  for the target — which no install changes. Telling those apart meant reading the
+  English in `unavailable_reason`, or knowing which engine produced the row.
+
+  ```python
+  routes = convilyn.local.capabilities().routes
+  worth_fixing = [
+      r for r in routes if not r.available and r.unavailable_kind != "unsupported_by_build"
+  ]
+  ```
+
+  The three values are `missing_requirement` (a declared requirement is absent —
+  `Route.missing` names it), `missing_plugin` (fixable, but by a component this
+  package does not distribute, such as `pillow-heif`), and
+  `unsupported_by_build` (nothing installable changes the answer). `None` exactly
+  when the route is available.
+- `UnavailableKind`, the type alias for that field.
+- `convilyn local formats --json` and `convilyn local convert --dry-run --json`
+  carry `unavailable_kind` alongside `unavailable_reason`.
+
+### Changed
+
+- Nothing raises differently. `convert()` still raises `MissingDependencyError`
+  when a declared requirement is missing and `UnsupportedRouteError` otherwise —
+  the error taxonomy continues to split on "is it one of our extras", which is a
+  question this SDK can answer for a caller, while `unavailable_kind` answers the
+  separate one of whether a fix exists at all.
+- **`ConversionResult.engine` is now `Engine | None`.** It is set on every success
+  and on every failure that reached an engine; it is `None` only when the requested
+  conversion has no route at all, because an unknown extension has no engine and
+  naming one would state a fact about the run that is not true.
+
+### Fixed
+
+- **A failed conversion no longer reports the wrong engine.**
+  `ConversionResult.engine` was the literal `"structured"` for every failure, so a
+  failed image conversion — and `convilyn local batch --json` reporting it — named
+  an engine that had not run. It now comes from the route the failure occurred on.
+- **`convilyn local convert` no longer prints a traceback for a conversion that
+  cannot run.** A route can be unavailable with nothing missing (Pillow installed,
+  this build unable to write the target), and the command tested only for missing
+  requirements — so that case fell through to a `UnsupportedRouteError` nothing
+  caught. It now refuses with the same one-line message as every other refusal.
+
+## [1.6.0b1] - 2026-08-13
+
+### Added
+
+- **PDF page operations, offline — `convilyn.local.pdf`.** Merge, select pages,
+  split into single pages, rotate, compress, and add or remove a password, all
+  on the local machine with no API key:
+
+  ```python
+  from convilyn.local import pdf
+
+  pdf.merge(["a.pdf", "b.pdf"], "combined.pdf")
+  pdf.select("report.pdf", "summary.pdf", pages="1-3,10")
+  pdf.burst("scan.pdf", "pages/")
+  ```
+
+  A separate namespace from `convert` because these are not conversions:
+  a PDF goes in and a PDF comes out, rearranged. Needs the `pdf` extra.
+- **`convilyn local pdf` CLI group** — `merge`, `select`, `split`, `rotate`,
+  `compress`, `protect`, `unlock`, `info`. `protect` and `unlock` prompt for the
+  password when it is omitted, so it stays out of shell history.
+- `PdfOperationError`, under `LocalError` like the rest of the taxonomy.
+
+### Fixed
+
+- **The CLI no longer crashes on a console that cannot encode its glyphs.**
+  A Windows console left on `cp437` cannot represent `✓` or an em dash, and
+  Python raises from inside `print` rather than dropping the character — so a
+  finished conversion ended in a traceback *after* the file had been written.
+  Unencodable characters now degrade to a visible escape and the message
+  survives.
+- A malformed page range reported `invalid literal for int() with base 10:
+  'oops'`. It now names what was typed and what was expected.
+
+### Changed
+
+- `MissingDependencyError.route` is now optional. A page operation has no route,
+  and inventing one to describe a missing package would have put a fictional
+  value in the attribute callers are meant to trust. Existing callers are
+  unaffected — the parameter keeps its position and meaning.
+
+## [1.5.0b1] - 2026-08-13
+
+### Added
+
+- **Image conversion, offline.** `convilyn local convert photo.png --to webp`
+  converts between the raster formats Pillow supports on your machine — no API
+  key, no network, no account. Alpha is composited when the target cannot carry
+  it, so a transparent PNG becomes a JPEG rather than an error.
+  - Install with `uv add "convilyn[images]"` (or `pip install "convilyn[images]"`).
+  - Images are refused above 40 megapixels. A file's declared dimensions are
+    checked before it is decoded, so a decompression bomb costs a header read.
+- **Every known conversion now appears in `capabilities()`, available or not**,
+  and an unavailable one says what would fix it. Asking for `heic` on a machine
+  without the HEIF codec previously returned nothing — indistinguishable from a
+  typo — and now returns a route naming `pillow-heif`. Where nothing would fix
+  it, the reason says so instead of naming a package that cannot help.
+- **`convilyn goals understand` — the CLI counterpart of
+  `goals.understand()`.** Runs a grounded, schema-constrained understanding
+  over one or more uploaded files straight from the shell:
+
+  ```
+  convilyn goals understand --files file_abc,file_def \
+      --schema-file invoice.schema.json \
+      [--instructions "totals only"] [--timeout 300] [--json] [--dry-run]
+  ```
+
+  `--json` emits a single object — `{command, file_ids, result}` — with the
+  grounded result under `result` and no duplicated pretty-print riding along;
+  human mode prints the indented result, because the result *is* this
+  command's output. `--dry-run` reads and validates the schema file, prints
+  the would-be request, and makes no network call.
+
+  A missing, unreadable, non-JSON, or non-object `--schema-file` exits `1`
+  with one error line — before any network call — instead of a traceback.
+  `UnderstandUnavailableError` (the connected platform has not rolled the
+  capability out) exits `2`: it is a property of the backend, not of your
+  arguments. No public API surface changed — the command calls the existing
+  `client.goals.understand(...)`.
+
+### Changed
+
+- `convilyn local formats` groups by source format. The image engine alone
+  produces several hundred routes and the flat list had become unreadable; the
+  `--json` payload is unchanged and still carries every route individually.
+- `capabilities()` is cached for the process. Building it probes every codec
+  with a one-pixel save, which a batch was otherwise paying for once per file.
+
+### Fixed
+
+- Converting to a format Pillow can read but not write (`psd`, `pcd`) raised
+  `ConversionFailedError` wrapping a `KeyError` from deep inside the encoder. It
+  now raises `UnsupportedRouteError` before opening the file, carrying the same
+  sentence `capabilities()` would have shown.
+- **LibreOffice conversions no longer fail when LibreOffice is already open.**
+  It refuses to start a second instance against a profile another one holds,
+  exiting non-zero with nothing in stderr — so converting an `.odt` while the
+  desktop application was running reported "conversion failed" and no reason.
+  Conversions now run against a profile of their own, kept under the user's
+  cache directory. Deleting it is safe; it is rebuilt on the next conversion.
+
+## [1.4.0b1] - 2026-08-13
+
+### Added
+
+- **Legacy, OpenDocument and ebook formats now convert**, rather than being
+  declared and unavailable. `.doc`, `.odt`, `.rtf`, `.xls`, `.ods`, `.ppt` and
+  `.odp` go through LibreOffice; `.epub`, `.mobi` and `.azw3` through Calibre.
+  Each is converted once into the modern sibling this engine already reads well,
+  so all ten inherit headings, tables and embedded images without a second
+  parser being written for any of them.
+  - The result reports the **original** format, not the sibling's, and carries a
+    warning saying which sibling was used. Nothing about the route is hidden.
+  - Neither program can be installed from PyPI, so neither is an extra.
+    `convilyn local doctor` reports which are present and where to get the rest.
+
+### Changed
+
+- A conversion that reaches a vanished external program now raises
+  `MissingDependencyError` rather than `ConversionFailedError`. The two are
+  acted on differently — install something, or look at the file.
+- `convilyn.local` internals are renamed to make the layering legible: a leading
+  underscore now means internal, with no exceptions (`_probe`, `_tools`, `_run`,
+  `_routes`, `_engine`). No public symbol moved; `convilyn.local.__all__` is
+  unchanged. A contract test holds the rule.
+
+## [1.3.0b1] - 2026-08-13
+
+### Added
+
+- **Offline file conversion — `convilyn.local`.** Converts PDF, Word,
+  PowerPoint, Excel, CSV, XML and plain text to Markdown entirely on the local
+  machine: no API key, no network, no account, no quota. Structure survives —
+  headings, lists and tables — and embedded images are written to an `assets/`
+  directory beside the Markdown so their links resolve.
+  - `convert`, `convert_many`, `plan`, `capabilities`, `detect_format`, and the
+    thread-offloading `aconvert` / `aconvert_many`.
+  - `capabilities()` and `plan()` **never raise**: a missing dependency is
+    reported as a `Route` with `available=False` and a sentence saying what to
+    install. `convert()` raises typed errors; `convert_many()` returns a result
+    per file so one bad input does not stop a batch.
+  - Semver-covered from this release — see `docs/STABILITY.md`.
+- **`convilyn local` CLI** — `convert`, `batch`, `formats`, `doctor`. Works with
+  no credential configured.
+- **Optional extras, one per format family** — `pdf`, `docx`, `pptx`, `xlsx`,
+  `xml`, `images`, plus the composites `documents` and `all`. Install only what
+  you read; plain text, CSV and Markdown rendering need nothing. Extra *names*
+  are semver-covered; the distributions behind them are not.
+
+### Notes
+
+- Legacy and OpenDocument office formats and ebooks are **declared but not yet
+  runnable**: they need LibreOffice or Calibre, which no extra can install.
+  `capabilities()` reports them with instructions rather than hiding them, so
+  the missing piece is discoverable.
+- `pip uninstall convilyn` does **not** remove an extra's packages — a pip
+  limitation. `uv remove` / `uv tool uninstall` do. See QUICKSTART §1.
+
 ## [1.2.0b14] - 2026-07-26
 
 ### Fixed

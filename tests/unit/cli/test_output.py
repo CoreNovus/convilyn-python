@@ -128,3 +128,48 @@ class TestRendererObjectState:
         # Two events on stderr (separate lines), one summary on stdout.
         assert len(err.getvalue().strip().splitlines()) == 2
         assert len(out.getvalue().strip().splitlines()) == 1
+
+
+class TestNarrowConsoleCodepage:
+    """A console that cannot encode the CLI's glyphs must not crash it.
+
+    Windows leaves plenty of consoles on `cp437` or `cp850`, neither of which
+    can represent `✓` or an em dash. Python raises `UnicodeEncodeError` from
+    inside `print` rather than dropping the character, so before this guard a
+    finished conversion ended in a traceback — after the output file had
+    already been written.
+    """
+
+    @staticmethod
+    def _narrow() -> tuple[io.TextIOWrapper, io.BytesIO]:
+        raw = io.BytesIO()
+        return io.TextIOWrapper(raw, encoding="cp437", newline="\n"), raw
+
+    def test_the_stream_really_cannot_encode_the_glyph(self) -> None:
+        """Without this, the two tests below prove nothing."""
+        stream, _raw = self._narrow()
+
+        with pytest.raises(UnicodeEncodeError):
+            print("✓", file=stream)
+
+    def test_an_event_survives_as_an_escape(self) -> None:
+        stream, raw = self._narrow()
+
+        HumanRenderer(stdout=stream, stderr=stream).event("ok", message="Wrote a — b")
+        stream.flush()
+
+        written = raw.getvalue().decode("cp437")
+        assert "Wrote a" in written
+        # Both directions: the character itself is gone, and the escape naming
+        # it is present. Asserting only the second would also pass if the line
+        # had been dropped and something else printed "u2014".
+        assert chr(0x2014) not in written
+        assert "u2014" in written
+
+    def test_a_summary_survives_too(self) -> None:
+        stream, raw = self._narrow()
+
+        HumanRenderer(stdout=stream, stderr=stream).final({"summary": "Converted 1 file ✓"})
+        stream.flush()
+
+        assert "Converted 1 file" in raw.getvalue().decode("cp437")

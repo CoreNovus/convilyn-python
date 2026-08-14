@@ -1509,9 +1509,7 @@ class TestGoalsPollIntervalFloor:
             async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
                 with patch("convilyn.resources.goals.asyncio.sleep", side_effect=_record):
                     with pytest.raises(_LoopBreakerError):
-                        await client.goals.wait(
-                            "job_spin", timeout=3600.0, poll_interval=0.0
-                        )
+                        await client.goals.wait("job_spin", timeout=3600.0, poll_interval=0.0)
 
         assert slept, "the loop never slept — it was spinning"
         assert min(slept) >= MIN_POLL_INTERVAL, (
@@ -1536,8 +1534,6 @@ class TestGoalsPollIntervalFloor:
             async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
                 with patch("convilyn.resources.goals.asyncio.sleep", side_effect=_record):
                     with pytest.raises(_LoopBreakerError):
-                        await client.goals.wait(
-                            "job_slow", timeout=3600.0, poll_interval=2.5
-                        )
+                        await client.goals.wait("job_slow", timeout=3600.0, poll_interval=2.5)
 
         assert slept == [2.5]

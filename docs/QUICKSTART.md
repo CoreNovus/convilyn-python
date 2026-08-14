@@ -15,6 +15,147 @@ binary — no separate package, no extras needed.
 
 > Requires Python 3.10 or later.
 
+### Optional extras — offline conversion
+
+Everything in §2 onward needs an API key. The offline converter (§1b) does not,
+and it needs one optional dependency per file format. Install only what you use:
+
+| I want to read… | Install | Also pulls in |
+|---|---|---|
+| PDF | `uv add "convilyn[pdf]"` | pdfminer.six, cryptography — the heaviest leaf |
+| Word (`.docx`) | `uv add "convilyn[docx]"` | lxml |
+| PowerPoint (`.pptx`) | `uv add "convilyn[pptx]"` | lxml **and Pillow** |
+| Excel (`.xlsx`) | `uv add "convilyn[xlsx]"` | — |
+| XML | `uv add "convilyn[xml]"` | — |
+| Images — convert between them, and better image handling everywhere | `uv add "convilyn[images]"` | Pillow |
+| All of the above | `uv add "convilyn[all]"` | |
+
+**Plain text, CSV and Markdown rendering need nothing at all** — they work on
+the bare install above.
+
+Two format families need a desktop application rather than a package: legacy and
+OpenDocument office files (`.doc`, `.odt`, `.rtf`, `.xls`, `.ods`, `.ppt`,
+`.odp`) go through **LibreOffice**, and ebooks (`.epub`, `.mobi`, `.azw3`)
+through **Calibre**. Neither can come from PyPI, so neither is an extra. Install
+either one and its formats become available with no further configuration —
+`convilyn local doctor` reports which are present and where to get the rest.
+
+Those ten are converted once into the modern sibling this engine already reads
+(`.odt` → `.docx`, `.ods` → `.xlsx`, and so on) and then read from there, so
+they inherit headings, tables and embedded images exactly as the modern formats
+do. The result reports the format you gave it, not the sibling's, and says in
+its warnings which route it took.
+
+#### Images are measured, not promised
+
+`convilyn[images]` installs Pillow, and what Pillow can do varies by build and
+platform. So the route table is **probed on your machine** rather than copied
+from a list: `capabilities()` asks each codec whether it can actually read and
+write, which is why it can tell you that this install converts `png` and does
+not convert `heic`.
+
+A format that needs a codec Pillow does not bundle still appears, with the
+package that would add it:
+
+```console
+$ convilyn local formats --from heic
+!  heic → unavailable. Reading heic needs pillow-heif, a Pillow plugin this
+   package does not install: a HEIF/HEIC codec. Add it with
+   `pip install pillow-heif` and the format becomes available with no further
+   configuration.
+```
+
+Those plugins are named rather than shipped as extras. Each needs a native
+library whose wheel coverage is uneven across platforms, and a failed build of
+one would otherwise break installing `convilyn[images]` for everybody. A few
+formats — `psd`, `pcd` — Pillow reads and never writes; there the reason says
+so instead of naming a package that would not help.
+
+Images are refused above **40 megapixels**, checked against the header before
+the file is decoded. That is a decompression-bomb guard, not a quality limit.
+
+### Adding and removing
+
+`uv` is recommended for a reason that is not taste: **`pip uninstall convilyn`
+does not remove an extra's packages.** That is a pip limitation, and a user who
+does not know it concludes the SDK left rubbish behind.
+
+| | add | remove |
+|---|---|---|
+| uv, as a library | `uv add "convilyn[pdf]"` | `uv remove convilyn` — prunes what it pulled in |
+| uv, CLI only | `uv tool install "convilyn[documents]"` | `uv tool uninstall convilyn` — the whole environment goes |
+| uv, one-off | `uvx --from "convilyn[pdf]" convilyn local convert a.pdf --to md` | nothing was installed |
+| pip | `pip install "convilyn[pdf]"` | `pip uninstall convilyn` leaves the extra's packages behind |
+
+## 1b. Convert a file offline (no API key)
+
+The fastest useful thing this package does, and the only part that needs no
+account:
+
+```bash
+convilyn local convert report.docx --to md      # → report.md
+convilyn local convert photo.png --to webp      # → photo.webp
+convilyn local batch 'docs/*.pdf' --to md --out-dir build/
+convilyn local formats                          # what this machine can do
+convilyn local doctor                           # …and how to extend it
+```
+
+```python
+from convilyn import local
+
+result = local.convert("report.docx", to="md")
+print(result.output)  # report.md
+print(result.warnings)  # anything the extractor had to guess
+
+local.convert("photo.png", to="jpg")  # images too — see §1b, Images
+```
+
+Nothing here opens a connection, reads `CONVILYN_API_KEY`, or consumes quota.
+Structure survives the conversion: headings stay headings, lists stay lists,
+tables become GitHub-Flavoured Markdown tables, and embedded images are written
+to an `assets/` directory beside the Markdown so their links resolve.
+
+### Rearranging PDFs
+
+Page operations are their own namespace, because they are not conversions — a
+PDF goes in and a PDF comes out, with the pages rearranged:
+
+```python
+from convilyn.local import pdf
+
+pdf.merge(["a.pdf", "b.pdf"], "combined.pdf")
+pdf.select("report.pdf", "summary.pdf", pages="1-3,10")
+pdf.burst("scan.pdf", "pages/")  # one file per page
+pdf.rotate("sideways.pdf", "upright.pdf", degrees=270)
+pdf.encrypt("draft.pdf", "sealed.pdf", password="…")
+```
+
+```bash
+convilyn local pdf merge a.pdf b.pdf -o combined.pdf
+convilyn local pdf select report.pdf summary.pdf --pages 1-3,10
+convilyn local pdf split scan.pdf --out-dir pages/
+convilyn local pdf protect draft.pdf sealed.pdf     # prompts for the password
+convilyn local pdf info report.pdf --text
+```
+
+Page numbers are 1-based, as printed. `--pages` takes single pages, inclusive
+ranges, or both: `3`, `1-5`, `1-3,7,10-12`. Everything needs `convilyn[pdf]`.
+
+`protect` and `unlock` prompt when `--password` is omitted, so the password
+stays out of your shell history.
+
+**Ask before you convert.** A missing dependency is reported, never guessed at:
+
+```python
+route = local.capabilities().can("odt", "md")
+if not route.available:
+    print(route.unavailable_reason)
+    # Converting odt needs LibreOffice, which was not found on PATH or in the
+    # standard install location for this platform. Install LibreOffice from
+    # https://www.libreoffice.org/download/ (provides `soffice`). Formats that
+    # need no external program: csv, docx, pdf, pptx, txt, xlsx, xml.
+```
+
 ## 2. Get an API key
 
 Sign up at <https://convilyn.corenovus.com>, then mint your `ck_…` API key from
@@ -68,8 +209,9 @@ What just happened:
 
 1. `files.upload` got a storage URL from the API, streamed the
    file to storage, and registered the upload with the backend.
-2. `convert.create_and_wait` started a `document_conversion` job and
-   polled until it finished (or failed).
+2. `convert.create_and_wait` derived the processor from the two
+   formats — `docx → pdf` is a `document_conversion` — started the job
+   and polled until it finished (or failed).
 3. `convert.download_to` fetched the presigned download URL from the
    completed job and wrote the bytes to disk.
 
@@ -111,10 +253,20 @@ Safe preview before spending an API call:
 ```bash
 $ convilyn convert report.docx --to pdf --dry-run
 ↑ [dry-run] Would upload: report.docx (32400 B, application/vnd.openxmlformats-officedocument.wordprocessingml.document)
-▶ [dry-run] Would POST /api/v1/jobs: {processorType=document_conversion, ...}
+▶ [dry-run] Would POST /api/v1/jobs: {processor_type=document_conversion, target_format=pdf, source_format=docx}
 ↓ [dry-run] Would download to: report.pdf
 [dry-run] No API calls made.
+
+$ convilyn convert clip.mp4 --to mp3 --dry-run
+↑ [dry-run] Would upload: clip.mp4 (8300124 B, video/mp4)
+▶ [dry-run] Would POST /api/v1/jobs: {processor_type=media_processing, output_format=mp3}
+↓ [dry-run] Would download to: clip.mp3
+[dry-run] No API calls made.
 ```
+
+The `processor_type` line is the point: it is derived from the two
+formats, and every processor `convert` can reach is free. There is no
+flag to read to find out which lane you are on.
 
 ## 6. Call any endpoint (escape hatch)
 
@@ -205,6 +357,7 @@ Streaming is async-only — there is no sync iterator:
 import asyncio
 from convilyn import AsyncConvilyn
 
+
 async def main():
     async with AsyncConvilyn(ws_url="wss://ws.convilyn.corenovus.com") as client:
         job = await client.goals.start(workflow_id="doc_analyzer", files=["file_abc"])
@@ -212,6 +365,7 @@ async def main():
             print(ev.type, ev.data)
             if ev.is_terminal:
                 break
+
 
 asyncio.run(main())
 ```
@@ -273,14 +427,14 @@ app) are `uw_…` workflows you own. `client.user_workflows` is the typed
 management namespace for them — no escape hatch needed:
 
 ```python
-page = client.user_workflows.list()               # your workflows, cursor-paged
+page = client.user_workflows.list()  # your workflows, cursor-paged
 wf = client.user_workflows.get(page.items[0].workflow_id)
 
 job = client.goals.run(user_workflow_id=wf.workflow_id, files=["report.pdf"])
 
 runs = client.user_workflows.runs(wf.workflow_id)  # recent runs
 backup = client.user_workflows.export(wf.workflow_id)  # portable JSON document
-client.user_workflows.delete(wf.workflow_id)       # 409 while public — archive first
+client.user_workflows.delete(wf.workflow_id)  # 409 while public — archive first
 ```
 
 Editing / validating / publishing stay in the web Builder — the SDK is
@@ -299,7 +453,7 @@ call without parsing raw HTTP errors.
 
 ```python
 plan = client.account.get_plan()
-print(plan.tier)              # "free" | "pro"
+print(plan.tier)  # "free" | "pro"
 ```
 
 ### 8.2 Will this workflow fit my quota?
@@ -385,13 +539,13 @@ page. The essentials for SDK callers:
   copy the moment a run finishes:
 
   ```python
-  client.files.delete(file_id)      # async: await client.files.delete(...)
+  client.files.delete(file_id)  # async: await client.files.delete(...)
   ```
 
 * **Your content is not used for AI training.** Every run started with a
   `ck_` API key is structurally excluded from Convilyn's training pipeline
-  (excluded by default, enforced in code), and the model provider (AWS Bedrock) does
-  not train on it either.
+  (excluded by default, enforced in code), and the underlying model provider is
+  contractually barred from training on it either.
 * **List what's stored.** `client.files.list()` returns your *durable* files
   (e.g. emailed-in attachments) plus a storage-usage summary. Ephemeral
   uploads are not listed — they are already on the 1-hour sweep.
@@ -429,11 +583,19 @@ page. The essentials for SDK callers:
 ## 11. Common questions
 
 **Where can I see all the supported formats?**
-Backend supports `document_conversion` between DOCX / PDF / PPTX / TXT
-/ HTML / Markdown / RTF / ODT. Other processor types
-(`image_conversion`, `ocr_processing`, `media_processing`,
-`pdf_operations`, image / document compression) ship as additional
-SDK methods in subsequent releases.
+Ask the backend — it publishes the producible pairs per family at
+`GET /api/v1/document/support`, `GET /api/v1/image/support` and
+`GET /api/v1/media/support`. (`convilyn api GET /api/v1/media/support
+--json` prints one from the shell.) This page deliberately does not
+reproduce those lists: a copy of a matrix is stale the moment the
+matrix moves.
+
+`convert` covers all three of those families and picks the processor
+from your two formats, so documents, images and media transcodes are
+one verb. `--dry-run` prints which one a given call would reach.
+Processors that are *not* reachable from `convert` are the metered
+ones — OCR and transcription — because it is the verb that does not
+spend credits; see `goals.understand()`.
 
 **What if a job takes more than 5 minutes?**
 The default `convert.create_and_wait` timeout is 5 minutes; override

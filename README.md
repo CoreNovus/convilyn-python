@@ -16,9 +16,40 @@ Convilyn helps people turn repeated AI-assisted work into workflows that can be 
 
 ## What is Convilyn?
 
-Convilyn is an open source Python SDK for building with free file conversion tools and basic AI workflow capabilities.
+Convilyn is the official Python client for the Convilyn platform, and it has two
+halves.
 
-Its main value is helping people use the computing resources they already have — such as local machines, AI PCs, and edge devices — to run practical AI workflows without depending entirely on paid cloud services.
+**Offline conversion runs entirely on your machine.** `convilyn.local` works
+with no API key, no account, and no network:
+
+- **Documents to Markdown** — PDF, Word, PowerPoint, Excel, CSV, XML, plain
+  text, and (with LibreOffice or Calibre installed) OpenDocument, legacy Office
+  and ebook formats. Headings, lists and tables survive the trip, and embedded
+  images come with it.
+- **Images between formats** — PNG, JPEG, WebP, AVIF, TIFF and the rest of what
+  Pillow supports on your machine. Transparency is composited when the target
+  cannot carry it.
+- **PDF page operations** — merge, select pages, split, rotate, compress, and
+  add or remove a password.
+
+Install only what you use (`convilyn[pdf]`, `convilyn[docx]`, `convilyn[images]`,
+…); plain text and CSV need nothing at all.
+
+```bash
+pip install "convilyn[docx]"
+convilyn local convert report.docx --to md
+```
+
+Run `convilyn local doctor` to see what your machine can do and how to extend
+it — it never guesses, and it never fails silently.
+
+**Platform workflows run in the cloud, and need a key.** `Convilyn(...)` reaches
+the hosted AI workflows — the part where a conversion becomes something you can
+save, share, re-run and improve.
+
+The long-term goal is for more of the first half to be possible: practical AI
+workflows on the computing resources people already have, including AI PCs and
+edge devices. `convilyn-edge` is where that work runs today.
 
 ## Who is this for?
 

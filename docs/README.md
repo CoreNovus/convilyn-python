@@ -21,6 +21,12 @@ client.convert.download_to(job, to="report.pdf")
 
 ## What you get
 
+* **Offline conversion — no API key** — `convilyn.local` converts PDF, Word,
+  PowerPoint, Excel, CSV, XML and plain text to Markdown entirely on your
+  machine. No connection, no account, no quota. Install one extra per format you
+  read (`convilyn[pdf]`, `convilyn[docx]`, …); plain text and CSV need none.
+  `convilyn local doctor` reports what this machine can do and how to extend it.
+  See [QUICKSTART §1b](./QUICKSTART.md#1b-convert-a-file-offline-no-api-key).
 * **Python SDK** — `Convilyn` (sync) and `AsyncConvilyn` (async) with
   resource-style accessors: `client.files`, `client.convert`,
   `client.goals` (agentic / AI workflows with HITL slot filling),

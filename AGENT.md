@@ -81,6 +81,64 @@ These are the extension points. Use them; do not duplicate them.
 5. Add a 4-category test file in `tests/test_cli_<name>.py` with
    `CliRunner` + respx.
 
+## The offline `local` namespace
+
+`convilyn.local` converts files on the user's machine. It has no client, no
+transport, and no credential, so several conventions above do **not** apply to
+it. Read this before "fixing" any of them.
+
+**It is synchronous, and that is deliberate.** The rest of this SDK is
+async-primary because it is IO-bound over HTTP — an `await` there lets the loop
+run something else while the network answers. Conversion is CPU- and
+subprocess-bound, which inverts the argument: an `async def` running pdfplumber
+inline would satisfy the letter of the convention while blocking the loop for
+seconds. `aconvert` / `aconvert_many` are thin `asyncio.to_thread` wrappers, and
+they require the synchronous implementation to be the real one.
+`tests/unit/local/test_api.py::TestAsyncWrappers` pins both halves.
+
+**Layering: a leading underscore means internal, and there are no exceptions.**
+Public are `__init__`, `types`, `errors`, `api`. Internal are `_probe` (is this
+package importable / where is this executable), `_tools` (*what* the external
+programs are and where they live), `_run` (*how* to invoke them), `_routes` (the
+route table and the availability join), and `_engine` (generated). A reader
+should never have to check a denylist to know which side a module is on — if you
+add a module, its name states the answer.
+
+`_tools` and `_run` are separate on purpose. "Do I have LibreOffice" is asked
+whenever somebody lists what this machine can convert; "run LibreOffice" happens
+only once a conversion starts. The split lets `_routes` answer the first without
+being able to spawn a subprocess, and lets the generated bridge invoke the
+second without importing the discovery tables.
+
+**`_engine/` is GENERATED. Never edit it.** It is projected from Convilyn's
+server-side conversion engine by `scripts/oss/project_local_engine.py` and
+regenerated whenever that engine changes; a hand edit is silently lost at the
+next regeneration. Every file carries a DO-NOT-EDIT header, a drift gate in
+`scripts/ci/sdk_local_ci.py` compares the tree against a fresh projection, and
+`tests/packaging/test_offline_engine_packaging.py` asserts the headers. To
+change conversion behaviour, change it upstream and re-project.
+
+**No optional dependency may be imported at module scope**, anywhere reachable
+from `convilyn/__init__.py` or `cli/main.py`. The release pipeline installs the
+wheel with **no extras** and runs `convilyn --version`; an eager parser import
+would break that on a user's machine rather than here. Extractors are imported
+lazily inside their registry entry, and the property is held by a packaging
+test rather than by memory.
+
+**Availability is data, not an exception.** `capabilities()` and `plan()` never
+raise — a missing dependency is a fact about the machine, and the caller asking
+is the one who has not decided what to do about it yet. Each `Route` carries
+`unavailable_reason`, a full sentence naming what is missing and how to get it,
+authored once in `local/routes.py`; the error classes quote it rather than
+composing their own.
+
+**Probes are injectable, and tests must inject them.** This suite runs with the
+extras installed and, on some machines, with LibreOffice installed — so the
+"missing dependency" arm that users on a fresh install actually meet would
+otherwise never execute. Inject `probe=` (packages) and `find=` (external
+tools). Note that injecting the lower-level `which` is *not* enough: the lookup
+falls through to the platform's install locations and finds the real one.
+
 ## Testing rules
 
 * **No real backend calls in unit tests.** Use respx to mock HTTP and

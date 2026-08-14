@@ -146,6 +146,26 @@ class TestConvertLogic:
         assert result.exit_code == EXIT_OK
         assert target.exists()
 
+    def test_a_spelling_the_worker_cannot_read_is_normalised(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        mock_client: MagicMock,
+    ) -> None:
+        """Regression: the CLI used to send the raw suffix.
+
+        It had its own extension guess that returned `Path.suffix` verbatim,
+        and `_resolve_source` short-circuits on any non-None source_format — so
+        the SDK's own mapping was unreachable from the command line, and a
+        `.htm` upload reached a worker that builds `DocumentFormat("htm")` and
+        raises. One derivation now serves both entry points.
+        """
+        page = tmp_path / "page.htm"
+        page.write_bytes(b"<html></html>")
+        result = runner.invoke(convert_command, [str(page), "--to", "pdf"])
+        assert result.exit_code == EXIT_OK
+        assert mock_client.convert.create_and_wait.call_args.kwargs["source_format"] == "html"
+
 
 # ── 2. Boundary — required flags, missing file, dry-run ─────────────
 
@@ -181,6 +201,65 @@ class TestConvertBoundary:
         last_line = result.output.strip().splitlines()[-1]
         payload = json.loads(last_line)
         assert payload["dry_run"] is True
+
+    @pytest.mark.parametrize(
+        ("filename", "target", "expected"),
+        [
+            ("report.docx", "pdf", "document_conversion"),
+            ("photo.png", "webp", "image_conversion"),
+            ("clip.mp4", "mp3", "media_processing"),
+        ],
+    )
+    def test_dry_run_names_the_processor_it_would_reach(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        filename: str,
+        target: str,
+        expected: str,
+    ) -> None:
+        """Seeing the lane before spending anything is the point of the split.
+
+        `convert` reaches only free processors, so what this proves is not that
+        the value is right for one file but that it is *derived* — three
+        different inputs, three different answers, no flag involved.
+        """
+        monkeypatch.setattr(
+            convert_module,
+            "_build_client",
+            MagicMock(side_effect=AssertionError("client factory must not be called")),
+        )
+        source = tmp_path / filename
+        source.write_bytes(b"content")
+        result = runner.invoke(
+            convert_command, [str(source), "--to", target, "--dry-run", "--json"]
+        )
+        assert result.exit_code == EXIT_OK
+        payload = json.loads(result.output.strip().splitlines()[-1])
+        assert payload["processor_type"] == expected
+
+    def test_an_unconvertible_pair_is_refused_before_any_upload(
+        self,
+        runner: CliRunner,
+        sample_file: Path,
+        mock_client: MagicMock,
+    ) -> None:
+        result = runner.invoke(convert_command, [str(sample_file), "--to", "mp4"])
+        assert result.exit_code == EXIT_USAGE
+        mock_client.files.upload.assert_not_called()
+
+    def test_a_file_with_no_extension_asks_for_source_format(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        mock_client: MagicMock,
+    ) -> None:
+        nameless = tmp_path / "receipt"
+        nameless.write_bytes(b"content")
+        result = runner.invoke(convert_command, [str(nameless), "--to", "pdf"])
+        assert result.exit_code == EXIT_USAGE
+        assert "--source-format" in result.output
 
 
 # ── 3. Error — typed exceptions map to documented exit codes ────────
