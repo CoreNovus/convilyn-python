@@ -9,6 +9,11 @@ comma, so tab- and semicolon-separated exports read correctly without the caller
 having to say which they have.
 
 Needs no optional dependency — this extractor works on a bare install.
+
+Large files are truncated at a row cap, which the caller may raise, lower or
+lift entirely. The cap counts DATA rows: the header is not charged to it, so a
+cap of 5,000 converts 5,000 rows of data and the warning reports that same
+number.
 """
 
 from __future__ import annotations
@@ -31,13 +36,24 @@ def _dialect(sample: str) -> type[csv.Dialect] | csv.Dialect:
         return csv.excel
 
 
-def extract(path: Path) -> MarkdownDoc:
+def extract(path: Path, *, max_rows: int = MAX_ROWS) -> MarkdownDoc:
     """Read a delimited-text file into one table block.
 
     The first row becomes the table header, matching what a reader expects of a
     spreadsheet export. Very large files are truncated at a row cap and the returned
     document says so in its warnings rather than silently losing the tail.
+
+    ``max_rows`` is how many DATA rows to read, not counting the header. It defaults
+    to a cap that keeps a runaway file from rendering into a Markdown table no
+    reader can open; pass a smaller number to sample the head of a large export, or
+    ``0`` to read the whole thing. ``0`` is the caller asserting they want it — half
+    a million rows will be rendered on request. A negative value raises
+    ``ValueError`` rather than being clamped, since no reading of it is the one the
+    caller meant.
     """
+    if max_rows < 0:
+        raise ValueError(f"max_rows must be 0 (no limit) or a positive row count, not {max_rows}")
+
     raw = read_text_file(path)
     if not raw.strip():
         return MarkdownDoc(source_format="csv", warnings=("empty CSV",))
@@ -46,8 +62,8 @@ def extract(path: Path) -> MarkdownDoc:
 
     rows: list[tuple[str, ...]] = []
     truncated = False
-    for row in reader:
-        if len(rows) >= MAX_ROWS:
+    for index, row in enumerate(reader):
+        if max_rows and index > max_rows:
             truncated = True
             break
         rows.append(tuple(cell.strip() for cell in row))
@@ -57,7 +73,7 @@ def extract(path: Path) -> MarkdownDoc:
 
     warnings: list[str] = []
     if truncated:
-        warnings.append(f"truncated: only the first {MAX_ROWS} rows were converted")
+        warnings.append(f"truncated: only the first {max_rows} data rows were converted")
 
     return MarkdownDoc(
         blocks=(Block(kind="table", rows=tuple(rows)),),

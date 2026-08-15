@@ -11,7 +11,7 @@ license = "Apache-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
 authors = [
-    { name = "Convilyn", email = "sdk@convilyn.corenovus.com" },
+    { name = "Convilyn", email = "support@corenovus.com" },
 ]
 keywords = [
     "convilyn",

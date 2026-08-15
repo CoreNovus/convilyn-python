@@ -35,7 +35,6 @@ from convilyn._internal.download import download_url_to_path
 from convilyn._internal.http import HTTPClient
 from convilyn._internal.loop_runner import CoroRunner
 from convilyn.exceptions import JobFailedError, JobTimeoutError
-from convilyn.resources.files import AsyncFiles
 from convilyn.types import ConvertJob, File
 
 # ── Tunables ────────────────────────────────────────────────────────
@@ -57,9 +56,8 @@ class AsyncConvert:
     Attached to :class:`convilyn.AsyncConvilyn` as ``client.convert``.
     """
 
-    def __init__(self, http: HTTPClient, files: AsyncFiles) -> None:
+    def __init__(self, http: HTTPClient) -> None:
         self._http = http
-        self._files = files
 
     # ── Public API ───────────────────────────────────────────────
 
@@ -174,14 +172,31 @@ class AsyncConvert:
         job: ConvertJob | str,
         *,
         to: str | os.PathLike[str],
+        overwrite: bool = False,
     ) -> Path:
         """Download the first result file to ``to`` and return the path.
 
         Uses :py:meth:`HTTPClient.external_put`-style raw GET to bypass
         Convilyn auth headers on the storage URL.
+
+        Raises ``FileExistsError`` when ``to`` already exists, unless
+        ``overwrite=True``. That matches :func:`convilyn.local.convert`,
+        whose docstring states the reason as a position rather than a
+        default: guessing what somebody wanted is how a converter
+        overwrites the wrong file. This method used to overwrite silently,
+        so the same package answered that question two ways depending on
+        which half of it you reached — which is not two defaults, it is no
+        position at all.
+
+        Re-running a download that already landed is the common case, and
+        it is one word:
+
+        ```python
+        client.convert.download_to(job, to="out/report.pdf", overwrite=True)
+        ```
         """
         url = await self.download_url(job)
-        return await download_url_to_path(self._http, url, to)
+        return await download_url_to_path(self._http, url, to, overwrite=overwrite)
 
     # ── Private steps (extensible by subclassing) ───────────────
 
@@ -313,5 +328,11 @@ class Convert:
     def download_url(self, job: ConvertJob | str) -> str:
         return self._run(self._async.download_url(job))
 
-    def download_to(self, job: ConvertJob | str, *, to: str | os.PathLike[str]) -> Path:
-        return self._run(self._async.download_to(job, to=to))
+    def download_to(
+        self,
+        job: ConvertJob | str,
+        *,
+        to: str | os.PathLike[str],
+        overwrite: bool = False,
+    ) -> Path:
+        return self._run(self._async.download_to(job, to=to, overwrite=overwrite))

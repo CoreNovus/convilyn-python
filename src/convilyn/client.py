@@ -73,7 +73,7 @@ class AsyncConvilyn:
         )
         self._ws_url = ws_url
         self.files = AsyncFiles(self._http)
-        self.convert = AsyncConvert(self._http, self.files)
+        self.convert = AsyncConvert(self._http)
         self.goals = AsyncGoals(
             self._http,
             ws_url=ws_url,

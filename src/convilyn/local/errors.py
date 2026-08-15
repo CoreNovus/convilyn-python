@@ -5,6 +5,12 @@ handling SDK failures keeps working without knowing this namespace exists. None
 of them carries an HTTP status: nothing here reaches the network, and inventing
 a status code for a local file would be describing a request that never happened.
 
+**One exception is not offline-only.** :class:`UnsupportedRouteError` is raised by
+``client.convert`` as well, because "there is no conversion from A to B" is one
+question and deserves one name. So catching :class:`LocalError` now also catches
+that refusal from the hosted lane. That is a widening, never a narrowing: an
+``except`` that worked before still catches everything it did.
+
 The messages are not composed here. A route already knows why it cannot run —
 ``Route.unavailable_reason`` — and that sentence is written once, in
 :mod:`convilyn.local._routes`, so the string a user sees from
@@ -18,11 +24,22 @@ from convilyn.local.types import Requirement, Route
 
 
 class LocalError(ConvilynError):
-    """Base class for every offline-conversion failure."""
+    """Base class for every offline-conversion failure.
+
+    And for :class:`UnsupportedRouteError`, which the hosted lane raises too —
+    see the module docstring for why that one is shared rather than duplicated.
+    """
 
 
 class UnsupportedRouteError(LocalError):
-    """This engine will not convert ``source_format`` to ``target_format`` here.
+    """``source_format`` will not convert to ``target_format`` here.
+
+    Raised by both halves of the package, because it is one question:
+
+    * offline — this engine has no such route, or cannot run it on this machine;
+    * hosted — the two formats name no single conversion the platform performs
+      (``txt`` and ``mp3`` are in different families), which is refused before
+      the upload so an impossible request costs nothing.
 
     Distinct from :class:`MissingDependencyError` by what the caller can do
     about it: that one names an **extra of this package** and is fixed by
@@ -34,6 +51,11 @@ class UnsupportedRouteError(LocalError):
     The distinction is drawn on "is it one of our extras", not on "is it
     fixable", because the first is a question the SDK can answer for a caller
     and the second is not.
+
+    ``supported_targets`` is populated by the offline engine, which knows the
+    whole matrix; the hosted lane leaves it empty and points at
+    ``GET /api/v1/{document,image,media}/support`` in ``reason`` instead, because
+    that answer is the server's and a copy here would go stale.
     """
 
     def __init__(

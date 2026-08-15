@@ -3,7 +3,7 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [2.0.0] - 2026-08-15
 
 ### Added
 
@@ -35,27 +35,6 @@ versioning follows [Semantic Versioning](https://semver.org/).
   (and carries it in `--json`), so the lane is visible before anything uploads.
   It builds the real request body rather than describing one, so an argument the
   live call would reject is rejected here too.
-
-### Changed
-
-- **`quality` defaults to omitted rather than to `"standard"`, and accepts an
-  integer.** Each processor's own default then applies — which it must, because
-  they disagree: document and media conversions take a preset name, image
-  conversions take a 1-100 integer, and a request carrying `"standard"` for an
-  image is rejected by the API. Callers passing `quality="standard"` for a
-  document conversion are unaffected; that is the server's default for it.
-- `page_range` now raises when passed with an image or media conversion instead
-  of being sent to params that do not define it.
-- An unconvertible pair is refused before the upload rather than after it.
-
-### Fixed
-
-- **`convilyn convert page.htm --to pdf` no longer fails inside a worker.** The
-  CLI had its own extension guess that returned the raw suffix, and since the
-  resource only infers when no source format was supplied, the SDK's own mapping
-  was unreachable from the command line — `htm` reached a worker that builds its
-  format enum bare and raises. Both entry points now share one derivation, which
-  also lower-cases and strips a leading dot.
 
 - **`goals.to_markdown(files)` — extract unstructured content into Markdown.**
   The metered path, for documents whose content has to be *extracted* before it
@@ -99,12 +78,212 @@ versioning follows [Semantic Versioning](https://semver.org/).
   package does not distribute, such as `pillow-heif`), and
   `unsupported_by_build` (nothing installable changes the answer). `None` exactly
   when the route is available.
+- **Media conversion in `convilyn.local` — offline, no API key.** Video and audio
+  containers convert into one another, and a video converts into an audio file:
+  `mov → mp4`, `mp4 → mp3`, `wav → flac`, and 67 other pairs.
+
+  ```bash
+  convilyn local convert clip.mov --to mp4
+  convilyn local formats --from mov      # what this machine can do with a .mov
+  ```
+
+  ```python
+  from convilyn import local
+  local.convert("clip.mov", to="mp4")
+  ```
+
+  **It needs FFmpeg, which is a program rather than a package**, so — like
+  LibreOffice and Calibre — it is not an extra and `pip` cannot supply it.
+  Nothing raises to find that out: an unavailable route says so as data, with
+  `unavailable_kind="missing_requirement"` and a sentence naming the download.
+  `convilyn local doctor` lists it alongside the other two.
+
+  Animated GIF is a **source only**. It has no encoder here, so `*-to-gif` is not
+  offered rather than offered and failing.
+
+  **`Engine` gains `"media"`.** The union is wider, so a caller that exhaustively
+  matches on it — a `match` statement with no default, or a dict keyed by every
+  engine — needs a branch for the new value. Reading the field, comparing it, or
+  printing it is unaffected.
+
+  Not included: trimming, cropping, resolution changes, and compressing to a
+  target size. Also not included, and never will be: transcription and anything
+  else that calls a paid service. `convilyn.local` is the half that needs nothing
+  from us, and a conversion whose cost depends on how long your video is does not
+  belong in it.
+- **`--out-dir` on `convilyn local convert`.** `batch` has always had it, and
+  reaching for it on `convert` got only *"Did you mean '--out'?"*. It writes into
+  the directory keeping the source's name — `convert report.docx --to md --out-dir
+  build/` → `build/report.md`. Passing it together with `--out` is refused rather
+  than ranked: one names a file and the other a directory, so honouring one would
+  mean silently ignoring the other.
 - `UnavailableKind`, the type alias for that field.
 - `convilyn local formats --json` and `convilyn local convert --dry-run --json`
   carry `unavailable_kind` alongside `unavailable_reason`.
+- **`max_rows` on `local.convert()` / `local.convert_many()`, and `--max-rows` on
+  `convilyn local convert` / `batch`.** The CSV row cap was a module constant no
+  caller could reach, so neither "this is 500,000 rows, give me the first 200"
+  nor "give me all of it" could be said at all.
+
+  ```bash
+  convilyn local convert transactions.csv --to md --max-rows 200
+  convilyn local convert transactions.csv --to md --max-rows 0    # the whole file
+  ```
+
+  It counts **data** rows — the header is not charged to it — and applies only to
+  row-based sources. Passing it for a source with no rows is refused rather than
+  ignored: a cap silently dropped on some inputs and honoured on others is the
+  same invisibility this option exists to remove. In a batch that refusal is one
+  file's `ok=False` result, not a stopped run.
 
 ### Changed
 
+- **An unsupported conversion raises `UnsupportedRouteError`, not `ValueError`.**
+  QUICKSTART says *"catch the base `ConvilynError` to handle them all
+  uniformly"*, and `ValueError` is not one — so anyone who wrote their error
+  handling from the documentation missed this entire class:
+
+  ```python
+  client.convert.create_and_wait(file=txt_file, target_format="mp3")
+  # was: ValueError  — invisible to `except ConvilynError`
+  # now: UnsupportedRouteError — which is a ConvilynError
+  ```
+
+  The message is unchanged, and the refusal still happens **before** the upload,
+  so an impossible pair still costs nothing. Only the type moved.
+
+  It is the type `convilyn.local` already uses for the same question, reused
+  rather than duplicated under a second name.
+
+  **⚠️ That changes what `LocalError` means.** `UnsupportedRouteError` subclasses
+  `LocalError`, so `except LocalError:` now also catches this refusal from the
+  **hosted** lane:
+
+  ```python
+  try:
+      client.convert.create_and_wait(file=txt_file, target_format="mp3")
+  except LocalError:
+      ...  # reached now; would not have been before
+  ```
+
+  No `except` loses a case — every clause that caught something still catches it,
+  so this cannot silently miss. But `LocalError` has stopped being a reliable
+  answer to *"was this an offline failure?"*, and code that branches on it to
+  route between the two halves needs to read `UnsupportedRouteError` explicitly
+  instead.
+
+  The alternative — moving `UnsupportedRouteError` out from under `LocalError`
+  into the shared taxonomy — was considered and rejected: it would **narrow**
+  `except LocalError:` so it stopped catching genuine offline route failures,
+  which is the silent direction. A widening you can see beats a narrowing you
+  cannot.
+
+  The same applies to a source extension no family speaks, and to asking for a
+  format to convert to itself — both reach the same refusal and both moved with
+  it.
+
+  **Argument mistakes deliberately stay builtins.** `upload()` with neither
+  `path` nor `content`, a `page_range` on an image conversion, a `max_attempts`
+  below zero — those keep raising `ValueError` / `TypeError`. The line is *the
+  conversion you asked for cannot be produced* (a domain failure) versus *the
+  arguments you passed do not make sense* (not one).
+
+- **`convilyn local convert --out photo.webp` now converts to WebP.** `--out` named
+  the path and nothing else, so the target format still defaulted to Markdown — the
+  command planned a conversion to `md`, converted to the suffix, and reported the
+  failure of the plan it had not run:
+
+  ```console
+  $ convilyn local convert logo.svg --out logo.png
+  ✗ Unsupported conversion: No route from svg to md. This engine cannot read svg at all.
+                                            ^^ nobody asked for md
+  ```
+
+  It now reports what was actually wrong:
+
+  ```console
+  ✗ Cannot convert here: Reading svg needs cairosvg, a Pillow plugin this package
+    does not install: a vector rasteriser, which needs a native cairo. …
+  ```
+
+  This is the semantics the library has always documented — *`to` names the format
+  and the output sits beside the input; `out` names the path and the format comes
+  from its suffix* — so the CLI now matches the Python API rather than contradicting
+  it. Passing `--to` as well still wins, and `--out` with no extension is refused
+  with a message naming the flag to add, instead of guessing.
+
+- **`local.plan()` accepts `out=`.** It took only `to=`, so it could not answer the
+  question `convert(out=...)` answers, which is why the CLI had to guess a format
+  before asking. `plan(src)` with neither still means Markdown; passing both lets
+  `to` win, the same precedence `convert` uses.
+
+- **⚠️ `convert.download_to()` and `goals.download_artifact_to()` no longer replace
+  an existing file. They raise `FileExistsError` unless you pass
+  `overwrite=True`.** This is a behaviour change to methods that already shipped,
+  not a new option: a script that re-downloads to the same path succeeded before
+  and now raises.
+
+  ```python
+  # before: silently replaced whatever was there
+  # now:    FileExistsError — "out/report.pdf exists; pass overwrite=True to replace it"
+  client.convert.download_to(job, to="out/report.pdf")
+
+  # the re-run, and the whole migration
+  client.convert.download_to(job, to="out/report.pdf", overwrite=True)
+  ```
+
+  Why it is worth a break: `convilyn.local.convert()` has always refused, and its
+  docstring gives the reason as a product position rather than a default —
+  *guessing what somebody wanted is how a converter overwrites the wrong file.*
+  The cloud half overwrote silently. A package that answers the same question two
+  ways, depending on which half you reach, does not have two defaults; it has no
+  position, and you cannot reason from one side to the other.
+
+  `goals.download_artifact_to()` changed with it. Both call one writer whose
+  docstring promises they behave identically, so fixing only the reported one
+  would have made that promise false and recreated the inconsistency one resource
+  over.
+
+  A pre-existing **symlink** at the destination is still refused outright, and
+  `overwrite=True` does not override that — following it would write the bytes
+  wherever it points, which is a different hazard with a different answer.
+
+- **`convilyn convert` gained `--overwrite`.** The CLI downloads through the
+  method above, so without it a second run of the same command had no way to
+  finish. Same name and same meaning as `convilyn local convert --overwrite`,
+  which has always had it.
+- **XLSX conversion now carries percentage and currency formats across, and
+  still refuses everything lossy.** A cell formatted `0.0%` used to convert as
+  `-0.720386735542037`, which is correct but drops the fact that it is a ratio.
+  It now converts as `-72.0386735542037%`.
+
+  **The format's rounding is deliberately not applied.** A spreadsheet displays
+  that cell as `-72.0%`, and so does the hosted `xlsx → csv` route; matching that
+  string would discard eleven digits the file actually contains. The rule is
+  *lossless and adds meaning*:
+
+  | format | applied | why |
+  |---|---|---|
+  | percentage `0.0%` | yes, without the rounding | lossless; says it is a ratio |
+  | currency `"NT$"#,##0` | yes, the symbol | lossless; nothing else records the currency |
+  | thousands `#,##0` | no | no meaning, and separators break parsing |
+  | rounding | never | a rounded number is a different number |
+
+  The shift is an exact decimal one, so no digit appears that was not in the
+  file: `0.07` under `0%` converts as `7`, not `7.000000000000001`.
+
+  Dates are unaffected — they were already emitted as ISO rather than as Excel
+  serial numbers.
+
+- **`quality` defaults to omitted rather than to `"standard"`, and accepts an
+  integer.** Each processor's own default then applies — which it must, because
+  they disagree: document and media conversions take a preset name, image
+  conversions take a 1-100 integer, and a request carrying `"standard"` for an
+  image is rejected by the API. Callers passing `quality="standard"` for a
+  document conversion are unaffected; that is the server's default for it.
+- `page_range` now raises when passed with an image or media conversion instead
+  of being sent to params that do not define it.
+- An unconvertible pair is refused before the upload rather than after it.
 - Nothing raises differently. `convert()` still raises `MissingDependencyError`
   when a declared requirement is missing and `UnsupportedRouteError` otherwise —
   the error taxonomy continues to split on "is it one of our extras", which is a
@@ -114,9 +293,66 @@ versioning follows [Semantic Versioning](https://semver.org/).
   and on every failure that reached an engine; it is `None` only when the requested
   conversion has no route at all, because an unknown extension has no engine and
   naming one would state a fact about the run that is not true.
+- **`AsyncConvert` is constructed from the HTTP transport alone.** It also took a
+  `files` resource, stored it, and never read it — a dead dependency that made the
+  two SDKs' constructors disagree, since the TypeScript `Convert` has always taken
+  only the transport. Callers are unaffected: the resource is reached as
+  `client.convert` and is not constructed directly.
+- **Error decoding recognises two envelope shapes rather than three.** The SDK also
+  unwrapped a top-level `{"error": {...}}`, described as coming from "older
+  endpoints". No endpoint sends it: every error body declared across the API
+  contracts is either flat or `detail`-wrapped, and the only object-valued `error`
+  fields belong to *job-status* responses, which error decoding never reads. A
+  response in some other shape now reports the HTTP status as its code instead of
+  taking a code from an arbitrary nested object.
 
 ### Fixed
 
+- **CSV truncation converted one row fewer than its warning claimed.** The row
+  cap was charged the header, so a 6,000-row export produced 4,999 data rows
+  under a warning saying 5,000. The off-by-one on its own is minor; a truncation
+  warning that misreports what it truncated is not, because it is the only thing
+  telling the reader the tail is gone at all. The cap now counts data rows, and
+  the warning says `data rows` so the two cannot be read past each other.
+- **`convilyn local batch` no longer makes one document's Markdown point at another
+  document's images.** The engine names extracted assets per document —
+  `img-0001.png`, `img-0002.png` — which is unambiguous inside one document and
+  collides once a batch renders several into the same directory. The second write
+  won, silently: the Markdown still linked to a file that existed, so nothing
+  errored and nothing warned, and the reader got the wrong picture.
+
+  **This changes where batch output lands.** Companion files now go under a
+  per-document directory:
+
+  ```
+  md/
+    report.md                        ![…](assets/report/img-0001.png)
+    deck.md                          ![…](assets/deck/img-0001.png)
+    assets/
+      report/img-0001.png
+      deck/img-0001.png
+  ```
+
+  Anything that globs `assets/*.png` after a batch, or hard-codes the flat path,
+  needs the extra segment. The links inside the Markdown are rewritten to match, so
+  a rendered document and its images stay a valid pair wherever they are moved.
+
+  **`convilyn local convert` — the single-file path — is unchanged.** It writes
+  `assets/img-0001.png` exactly as before. It shares its output directory with
+  nothing this call knows about, so it never had the collision, and a path change
+  it did not need would be one users pay for and gain nothing from.
+
+  The directory name is the source's stem, which is already required to be unique
+  across a batch: two inputs whose outputs would collide are refused before
+  anything is written, and that check now protects the assets as well as the
+  `.md`.
+
+- **`convilyn convert page.htm --to pdf` no longer fails inside a worker.** The
+  CLI had its own extension guess that returned the raw suffix, and since the
+  resource only infers when no source format was supplied, the SDK's own mapping
+  was unreachable from the command line — `htm` reached a worker that builds its
+  format enum bare and raises. Both entry points now share one derivation, which
+  also lower-cases and strips a leading dot.
 - **A failed conversion no longer reports the wrong engine.**
   `ConversionResult.engine` was the literal `"structured"` for every failure, so a
   failed image conversion — and `convilyn local batch --json` reporting it — named
@@ -126,6 +362,46 @@ versioning follows [Semantic Versioning](https://semver.org/).
   this build unable to write the target), and the command tested only for missing
   requirements — so that case fell through to a `UnsupportedRouteError` nothing
   caught. It now refuses with the same one-line message as every other refusal.
+- **Eight links in the PyPI project description no longer 404.** The packaged
+  README (`docs/README.md`) linked to `./QUICKSTART.md`, `../CHANGELOG.md`,
+  `../examples/`, `../AGENT.md`, `../LICENSE` and `./STABILITY.md` relatively.
+  Those resolve against GitHub when the file is read in the repository, and
+  against `pypi.org` when it is read as the project description — where none of
+  them exist. Every link is now absolute to the public mirror, which is correct
+  in all three places the file is rendered.
+- **The project description no longer omits image conversion and PDF page
+  operations.** Both shipped (1.5.0b1, 1.6.0b1) while the packaged README still
+  described offline conversion as documents-to-Markdown only, so the two newest
+  offline capabilities were invisible to anyone reading the PyPI page. It also
+  opened by exporting an API key, which is not needed for anything under
+  `convilyn local`; the zero-setup path now comes first.
+
+### Documentation
+
+- **QUICKSTART covers `out=` and `overwrite=`.** It showed only `to=`, so the
+  natural guess for "put it here" was `output=` — which is a `TypeError` — and
+  nothing said that `to` and `out` are mutually exclusive or that a second run
+  needs `overwrite=True`. All three were in the docstrings and in no document.
+  `plan(out=...)` is shown alongside, since it answers the same question without
+  converting. `docs/README.md` gets the short form of the same three facts, so the
+  PyPI page and the guide do not disagree.
+
+- **QUICKSTART warns that Git Bash rewrites `api` arguments on Windows.** MSYS2
+  converts anything shaped like a Unix path before the program runs, so
+  `convilyn api GET /api/v1/health` requests
+  `C:/Program Files/Git/api/v1/health` and returns **404** — a symptom that reads
+  as a broken backend and has been misdiagnosed as one. The fix is
+  `export MSYS2_ARG_CONV_EXCL='*'`.
+
+  Not an SDK defect — every program invoked that way sees the same rewritten
+  argument — but `api` is the escape hatch this package points people at, and it
+  is the one command whose arguments are always paths.
+
+- The `[Unreleased]` section above had two `### Changed` headings and two
+  `### Fixed` headings, and four entries that add API (`goals.to_markdown`,
+  `Route.unavailable_kind`, `UnavailableKind`, `--json` carrying
+  `unavailable_kind`) were filed under `### Fixed`. Regrouped without changing
+  any wording, so the next release's notes describe additions as additions.
 
 ## [1.6.0b1] - 2026-08-13
 

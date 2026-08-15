@@ -24,7 +24,7 @@ RequirementKind = Literal["python_package", "external_tool"]
 
 #: Which engine performs a conversion. Reported so a caller can tell a pure
 #: Python route from one that shells out.
-Engine = Literal["structured", "office-suite", "ebook", "image"]
+Engine = Literal["structured", "office-suite", "ebook", "image", "media"]
 
 #: Why a route cannot run here — and, load-bearing, whether anything fixes it.
 #:

@@ -18,7 +18,6 @@ Design follows the same SOLID seams as
 from __future__ import annotations
 
 import asyncio
-import inspect
 import json
 import os
 import re
@@ -30,6 +29,7 @@ from typing import Any, Literal
 
 from pydantic import ValidationError
 
+from convilyn._internal.callbacks import maybe_await
 from convilyn._internal.download import download_url_to_path
 from convilyn._internal.http import HTTPClient
 from convilyn._internal.loop_runner import CoroRunner
@@ -86,17 +86,6 @@ _INTERACTIVE_STOP_STATUSES = frozenset({"ready", "ready_with_preview"})
 DEFAULT_MAX_INTERACTIVE_ROUNDS = 100
 
 
-async def _maybe_await(value: Any) -> Any:
-    """Return ``value``, awaiting it first if it is awaitable.
-
-    Lets ``run_interactive`` accept either sync or async callbacks — a sync
-    callback returns a plain value; an async one returns a coroutine we await.
-    """
-    if inspect.isawaitable(value):
-        return await value
-    return value
-
-
 class AsyncGoals:
     """Asynchronous AI workflow resource.
 
@@ -146,8 +135,9 @@ class AsyncGoals:
         error surfaces before the network round-trip.
 
         ``user_workflow_id`` runs your compiled UserWorkflow through the same
-        Goal Lane agent. Per the compile-time contract it has no required slots
-        (the agent never pauses to ask you) and the resulting job's spec id is
+        agent a built-in catalog workflow runs on. Per the compile-time contract
+        it has no required slots (the agent never pauses to ask you) and the
+        resulting job's spec id is
         ``user_<ownerPrefix>.<workflowId>``. Discover and manage the ``uw_``
         workflows you own via ``client.user_workflows``
         (:class:`convilyn.resources.user_workflows.AsyncUserWorkflows` —
@@ -472,7 +462,7 @@ class AsyncGoals:
                 return job
             if job.status == "slots_pending":
                 answers = {
-                    slot.slot_id: await _maybe_await(on_slot(slot, job))
+                    slot.slot_id: await maybe_await(on_slot(slot, job))
                     for slot in job.pending_slots
                 }
                 job = await self.fill_slots(job.job_spec_id, answers)
@@ -480,7 +470,7 @@ class AsyncGoals:
             if job.status == "ready_with_preview":
                 approved = True
                 if on_preview is not None:
-                    approved = bool(await _maybe_await(on_preview(job)))
+                    approved = bool(await maybe_await(on_preview(job)))
                 if not approved:
                     return await self.cancel(job.job_spec_id)
                 job = await self.confirm(job.job_spec_id)
@@ -820,16 +810,19 @@ class AsyncGoals:
         artifact_id: str,
         *,
         to: str | os.PathLike[str],
+        overwrite: bool = False,
     ) -> Path:
         """Download one artifact to ``to`` and return the path.
 
-        Mints a fresh presigned URL first, then streams the body to disk
-        (shares :func:`convilyn._internal.download.download_url_to_path`
-        with ``convert.download_to`` — same size-capped streaming and
-        symlink refusal).
+        Mints a fresh presigned URL first, then streams the body to disk. Shares
+        :func:`convilyn._internal.download.download_url_to_path` with
+        ``convert.download_to``, so the two behave identically: size-capped
+        streaming, symlink refusal, and ``FileExistsError`` on an existing
+        destination unless ``overwrite=True``. That last one is why this method
+        changed when its sibling did — the promise is only true if both hold it.
         """
         info = await self.download_artifact_url(job_spec_id, artifact_id)
-        return await download_url_to_path(self._http, info.download_url, to)
+        return await download_url_to_path(self._http, info.download_url, to, overwrite=overwrite)
 
     async def _fetch_json_artifact(self, job_spec_id: str) -> Any:
         """Fetch + parse a completed job's primary JSON artifact.
@@ -1062,5 +1055,8 @@ class Goals:
         artifact_id: str,
         *,
         to: str | os.PathLike[str],
+        overwrite: bool = False,
     ) -> Path:
-        return self._run(self._async.download_artifact_to(job_spec_id, artifact_id, to=to))
+        return self._run(
+            self._async.download_artifact_to(job_spec_id, artifact_id, to=to, overwrite=overwrite)
+        )

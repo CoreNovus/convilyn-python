@@ -84,8 +84,13 @@ def mock_client(
     client.files.upload.return_value = fake_file_obj
     client.convert.create_and_wait.return_value = completed_job
 
-    def _fake_download(job: object, *, to: Path) -> Path:
+    def _fake_download(job: object, *, to: Path, overwrite: bool = False) -> Path:
+        # Mirrors the real signature so the CLI's call shape is under test. A
+        # double that accepted **kwargs would keep passing if the command
+        # stopped forwarding `--overwrite` at all.
         path = Path(to)
+        if path.exists() and not overwrite:
+            raise FileExistsError(f"{path} exists; pass overwrite=True to replace it")
         path.write_bytes(b"%PDF-1.4 fake")
         return path
 
@@ -95,6 +100,64 @@ def mock_client(
 
 
 # ── 1. Logic — happy path ────────────────────────────────────────────
+
+
+class TestOverwrite:
+    """`convilyn convert` gained `--overwrite` when `download_to` stopped
+    replacing files silently. Without the flag a second run of the same command
+    would have had no way to finish — and `convilyn local convert` has carried
+    the identically-named flag all along, which is the consistency #4005 is about
+    reaching the CLI as well as the library.
+    """
+
+    def test_a_rerun_without_the_flag_refuses(
+        self, runner: CliRunner, sample_file: Path, mock_client: MagicMock, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "already.pdf"
+        out.write_bytes(b"the file the user already had")
+
+        result = runner.invoke(
+            convert_command, [str(sample_file), "--to", "pdf", "--output", str(out)]
+        )
+
+        assert result.exit_code != EXIT_OK
+
+    def test_the_refused_run_leaves_the_file_alone(
+        self, runner: CliRunner, sample_file: Path, mock_client: MagicMock, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "already.pdf"
+        out.write_bytes(b"the file the user already had")
+
+        runner.invoke(convert_command, [str(sample_file), "--to", "pdf", "--output", str(out)])
+
+        assert out.read_bytes() == b"the file the user already had"
+
+    def test_the_flag_lets_the_rerun_through(
+        self, runner: CliRunner, sample_file: Path, mock_client: MagicMock, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "already.pdf"
+        out.write_bytes(b"stale")
+
+        result = runner.invoke(
+            convert_command,
+            [str(sample_file), "--to", "pdf", "--output", str(out), "--overwrite"],
+        )
+
+        assert result.exit_code == EXIT_OK
+
+    def test_the_flag_is_forwarded_rather_than_accepted_and_dropped(
+        self, runner: CliRunner, sample_file: Path, mock_client: MagicMock, tmp_path: Path
+    ) -> None:
+        """A flag the command parses and never passes on would look identical
+        from the outside on a fresh path."""
+        out = tmp_path / "fresh.pdf"
+
+        runner.invoke(
+            convert_command,
+            [str(sample_file), "--to", "pdf", "--output", str(out), "--overwrite"],
+        )
+
+        assert mock_client.convert.download_to.call_args.kwargs["overwrite"] is True
 
 
 class TestConvertLogic:

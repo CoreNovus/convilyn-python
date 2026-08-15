@@ -160,3 +160,51 @@ class TestXlsx:
 
     def test_source_format_is_reported(self, workbook):
         assert extract_xlsx(workbook).source_format == "xlsx"
+
+
+# ── number formats, in the tree that ships ───────────────────────────
+#
+# The rule: a number format is applied when doing so is LOSSLESS and ADDS
+# meaning, and refused when it only reshapes appearance. Pinned here as well as
+# upstream because this module's docstring — hand-written, installed by the
+# projection — is what a user reads, and it now states this rule. Nothing else
+# checks that a projected doc tells the truth.
+
+
+def _one_cell(tmp_path, value, number_format: str) -> str:
+    """The rendered text of a single formatted cell."""
+    import openpyxl
+
+    book = openpyxl.Workbook()
+    cell = book.active.cell(row=1, column=1, value=value)
+    cell.number_format = number_format
+    path = tmp_path / "one.xlsx"
+    book.save(str(path))
+
+    table = next(b for b in extract_xlsx(path).blocks if b.kind == "table")
+    return table.rows[0][0]
+
+
+class TestNumberFormats:
+    def test_a_percentage_is_shifted_and_marked(self, tmp_path):
+        assert _one_cell(tmp_path, 0.279613264457963, "0.00%") == "27.9613264457963%"
+
+    def test_the_percentage_format_does_not_round(self, tmp_path):
+        """A spreadsheet shows ``-72.0%``; that drops eleven digits the file has."""
+        assert _one_cell(tmp_path, -0.720386735542037, "0.0%") == "-72.0386735542037%"
+
+    def test_the_shift_is_exact_not_arithmetic(self, tmp_path):
+        """``0.07 * 100`` is ``7.000000000000001``. Binary float multiplication
+        is not a decimal shift, and inventing digits is the tampering this rule
+        forbids — while passing any test that only looked for a ``%``."""
+        assert _one_cell(tmp_path, 0.07, "0%") == "7%"
+
+    def test_a_currency_symbol_survives(self, tmp_path):
+        assert _one_cell(tmp_path, -141270, '"NT$"#,##0') == "NT$-141270"
+
+    def test_thousands_separators_are_not_applied(self, tmp_path):
+        """Lossless, but zero semantic, and they break downstream parsing."""
+        assert _one_cell(tmp_path, 1234567, "#,##0") == "1234567"
+
+    def test_decimal_rounding_is_never_applied(self, tmp_path):
+        assert _one_cell(tmp_path, 3.14159265, "0.00") == "3.14159265"

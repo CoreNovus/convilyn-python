@@ -42,7 +42,11 @@ class TestRouteLogic:
         demand the route table lie about the second kind.
         """
         routes = build_routes(probe=lambda _n: True, find=lambda _t: Path("/usr/bin/stub"))
-        documents = [r for r in routes if r.engine != "image"]
+        # Named engines, not "everything except image". The negative form was
+        # equivalent while there were two families and silently swallowed the
+        # third: media routes joined "documents" the moment they existed, and
+        # the guard below went on reporting a healthy filter.
+        documents = [r for r in routes if r.engine in {"structured", "office-suite", "ebook"}]
 
         assert documents, "no document routes — the filter outlived the engines"
         assert [r.source_format for r in documents if not r.available] == []
@@ -138,7 +142,7 @@ class TestCapabilitiesShape:
         caps = _caps(installed=False)
 
         assert {r.name for r in caps.packages} >= {"pdfplumber", "PIL", "openpyxl"}
-        assert {r.name for r in caps.tools} == {"libreoffice", "calibre"}
+        assert {r.name for r in caps.tools} == {"libreoffice", "calibre", "ffmpeg"}
 
     def test_routes_are_sorted_by_source_format(self) -> None:
         """Stable output — a CLI table that reorders between runs is unreadable."""

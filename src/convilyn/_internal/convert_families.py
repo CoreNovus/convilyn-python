@@ -49,6 +49,17 @@ from convilyn._internal.convert_formats import (
     MEDIA_FORMATS,
 )
 
+# The offline namespace already owns the name for "there is no conversion from A
+# to B", and this is the same question asked of the hosted lane, so it is reused
+# rather than duplicated under a second name.
+#
+# It reaches `convilyn.local`, which `convilyn/__init__` deliberately does not
+# import — measured before taking it: +6 ms and +21 modules on top of
+# `import convilyn`. The engine's parsers are all imported lazily inside their
+# functions, so what arrives here is the small hand-written layer, not Pillow or
+# pdfplumber. Worth that to keep one name for one concept.
+from convilyn.local.errors import UnsupportedRouteError
+
 #: Spellings the backend enums do not carry, resolved before anything looks a
 #: format up. Every entry needs its own reason, or it is just a hole — the same
 #: discipline the backend's own hand-written MIME widenings are held to.
@@ -163,13 +174,20 @@ def resolve_family(source_format: str, target_format: str) -> ConversionFamily:
     """The family that speaks both formats.
 
     Raises:
-        ValueError: the pair names no family, names two, or is not a
-            conversion at all.
+        UnsupportedRouteError: the pair names no family, names two, or is not a
+            conversion at all. A ``ConvilynError``, because "this conversion is
+            not one we perform" is a domain answer and the documented promise is
+            that one ``except ConvilynError`` covers the flow. Argument mistakes
+            in this module stay ``ValueError`` — see the note at ``build_payload``.
     """
     if source_format == target_format:
-        raise ValueError(
-            f"source and target are both {source_format!r} — that is not a conversion. "
-            "Pass a different target format."
+        raise UnsupportedRouteError(
+            source_format=source_format,
+            target_format=target_format,
+            reason=(
+                f"source and target are both {source_format!r} — that is not a conversion. "
+                "Pass a different target format."
+            ),
         )
 
     matches = [
@@ -180,12 +198,20 @@ def resolve_family(source_format: str, target_format: str) -> ConversionFamily:
     if len(matches) == 1:
         return matches[0]
     if matches:
-        raise ValueError(
-            f"{source_format!r} → {target_format!r} is claimed by more than one conversion "
-            f"family ({', '.join(f.name for f in matches)}). The projected format tables were "
-            "supposed to make that impossible; re-run scripts/oss/project_convert_formats.py."
+        raise UnsupportedRouteError(
+            source_format=source_format,
+            target_format=target_format,
+            reason=(
+                f"{source_format!r} → {target_format!r} is claimed by more than one conversion "
+                f"family ({', '.join(f.name for f in matches)}). The projected format tables were "
+                "supposed to make that impossible; re-run scripts/oss/project_convert_formats.py."
+            ),
         )
-    raise ValueError(_no_family_message(source_format, target_format))
+    raise UnsupportedRouteError(
+        source_format=source_format,
+        target_format=target_format,
+        reason=_no_family_message(source_format, target_format),
+    )
 
 
 def _no_family_message(source_format: str, target_format: str) -> str:

@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 
 from convilyn._internal import convert_families as families
+from convilyn.local import UnsupportedRouteError
 
 # ── 1. Logic — the three families are reachable, and by the pair ─────
 
@@ -102,25 +103,25 @@ class TestTheRuleStaysUnambiguous:
 
 class TestRefusals:
     def test_formats_from_different_families_name_both(self) -> None:
-        with pytest.raises(ValueError, match="different conversion families"):
+        with pytest.raises(UnsupportedRouteError, match="different conversion families"):
             families.resolve_family("docx", "mp4")
 
     def test_an_unknown_format_is_named(self) -> None:
-        with pytest.raises(ValueError, match="'weirdext' does not name a format"):
+        with pytest.raises(UnsupportedRouteError, match="'weirdext' does not name a format"):
             families.resolve_family("weirdext", "pdf")
 
     def test_an_unknown_source_suggests_source_format(self) -> None:
-        with pytest.raises(ValueError, match="pass source_format"):
+        with pytest.raises(UnsupportedRouteError, match="pass source_format"):
             families.resolve_family("weirdext", "pdf")
 
     def test_an_unknown_target_does_not_suggest_source_format(self) -> None:
         # The hint would be noise: the source resolved fine.
-        with pytest.raises(ValueError, match="does not name a format") as caught:
+        with pytest.raises(UnsupportedRouteError, match="does not name a format") as caught:
             families.resolve_family("pdf", "weirdext")
         assert "pass source_format" not in str(caught.value)
 
     def test_converting_a_format_to_itself_is_refused(self) -> None:
-        with pytest.raises(ValueError, match="not a conversion"):
+        with pytest.raises(UnsupportedRouteError, match="not a conversion"):
             families.resolve_family("pdf", "pdf")
 
     def test_page_range_outside_document_conversion_is_refused(self) -> None:

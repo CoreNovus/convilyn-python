@@ -37,6 +37,7 @@ from convilyn.cli._exit_codes import (
     EXIT_USAGE,
 )
 from convilyn.cli._output import OutputRenderer, make_renderer
+from convilyn.local.errors import UnsupportedRouteError
 
 #: Stands in for the file id `--dry-run` has not obtained, so the preview can
 #: run the SAME payload builder the live path runs. A dry run that assembled
@@ -106,6 +107,11 @@ _PENDING_UPLOAD = "<pending upload>"
     is_flag=True,
     help="Show what would happen without making any API calls.",
 )
+# Same name and same wording as `convilyn local convert --overwrite`, because it
+# is the same question. It arrives with the SDK change that made `download_to`
+# refuse an existing destination: without a flag, a second run of the same
+# command would have no way to finish.
+@click.option("--overwrite", is_flag=True, help="Replace an existing output file.")
 def convert_command(
     input_file: Path,
     target_format: str,
@@ -114,6 +120,7 @@ def convert_command(
     quality: str | None,
     json_output: bool,
     dry_run: bool,
+    overwrite: bool,
 ) -> None:
     """Convert ``INPUT_FILE`` to ``--to`` format."""
     renderer = make_renderer(json_output=json_output)
@@ -155,6 +162,7 @@ def convert_command(
         target_format=target_format,
         quality=quality,
         output_path=resolved_output,
+        overwrite=overwrite,
     )
 
 
@@ -237,11 +245,23 @@ def _payload_or_exit(
     quality: str | None,
     page_range: str | None,
 ) -> dict[str, Any]:
-    """`build_payload`, with its `ValueError` turned into a one-line usage exit.
+    """`build_payload`'s refusals, turned into a one-line usage exit.
 
     A pair that names no conversion is the caller's arguments being wrong, not
     a transport failure, so it exits ``EXIT_USAGE`` rather than raising a
     traceback at somebody reading a shell.
+
+    **Two types, because they answer different questions.**
+    ``UnsupportedRouteError`` means the conversion is not one this platform
+    performs; ``ValueError`` means an argument does not fit the family that was
+    selected — a ``page_range`` on an image, a non-numeric quality. Both are the
+    caller's problem and both exit the same way here, so the distinction costs
+    the shell nothing; it exists for callers of the library, where one is
+    catchable as ``ConvilynError`` and the other is a plain mistake.
+
+    The tuple is not belt-and-braces: ``UnsupportedRouteError`` is **not** a
+    ``ValueError``, so listing only the latter would have turned the refusal this
+    function exists to format into an unhandled traceback.
     """
     try:
         return build_payload(
@@ -251,7 +271,7 @@ def _payload_or_exit(
             quality=quality,
             page_range=page_range,
         )
-    except ValueError as exc:
+    except (UnsupportedRouteError, ValueError) as exc:
         raise SystemExit(EXIT_USAGE) from _print_error(exc, "Cannot convert")
 
 
@@ -264,6 +284,7 @@ def _run_conversion(
     target_format: str,
     quality: str | None,
     output_path: Path,
+    overwrite: bool,
 ) -> None:
     """Real path — upload, convert, download. Translates SDK exceptions
     into the documented exit codes.
@@ -291,7 +312,7 @@ def _run_conversion(
         renderer.event("wait", progress=job.progress)
 
         renderer.event("download", path=str(output_path))
-        written_path = client.convert.download_to(job, to=output_path)
+        written_path = client.convert.download_to(job, to=output_path, overwrite=overwrite)
         elapsed = time.monotonic() - started_at
         output_size = written_path.stat().st_size
 

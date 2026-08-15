@@ -33,7 +33,82 @@ def _payload(output: str) -> dict:
     return json.loads(output.strip().splitlines()[-1])
 
 
+@pytest.fixture
+def long_csv(tmp_path: Path) -> Path:
+    path = tmp_path / "transactions.csv"
+    path.write_text("id,amount\n" + "".join(f"tx{i},{i}\n" for i in range(60)), encoding="utf-8")
+    return path
+
+
+def _data_rows(markdown: Path) -> int:
+    """Body rows of the one table, less its header and delimiter lines."""
+    lines = markdown.read_text(encoding="utf-8").splitlines()
+    return len([line for line in lines if line[:1] == "|"]) - 2
+
+
 # ── 1. Logic — happy path ────────────────────────────────────────────
+
+
+class TestMaxRows:
+    """``--max-rows`` (#3997) — the CLI half, without which a CLI user cannot say
+    it at all. The Python API test covers the semantics; these cover reaching them
+    from the command line, and the exit codes the two refusals earn."""
+
+    def test_the_flag_reaches_the_conversion(self, runner: CliRunner, long_csv: Path) -> None:
+        result = runner.invoke(
+            local_command, ["convert", str(long_csv), "--to", "md", "--max-rows", "10"]
+        )
+
+        assert result.exit_code == EXIT_OK
+        assert _data_rows(long_csv.with_suffix(".md")) == 10
+
+    def test_zero_reads_the_whole_file(self, runner: CliRunner, long_csv: Path) -> None:
+        result = runner.invoke(
+            local_command, ["convert", str(long_csv), "--to", "md", "--max-rows", "0"]
+        )
+
+        assert result.exit_code == EXIT_OK
+        assert _data_rows(long_csv.with_suffix(".md")) == 60
+
+    def test_batch_takes_it_too(self, runner: CliRunner, long_csv: Path, tmp_path: Path) -> None:
+        """A cap useful on one file is useful on a directory of them, which is
+        the shape the reported case actually had."""
+        out = tmp_path / "out"
+
+        result = runner.invoke(
+            local_command,
+            ["batch", str(long_csv), "--to", "md", "--out-dir", str(out), "--max-rows", "10"],
+        )
+
+        assert result.exit_code == EXIT_OK
+        assert _data_rows(out / "transactions.md") == 10
+
+    def test_a_source_with_no_rows_exits_usage_not_job_failed(
+        self, runner: CliRunner, sample: Path
+    ) -> None:
+        """Arguments, not conversion — and one line, not a traceback. An
+        unhandled refusal here would print a stack trace where every other
+        refusal in this command prints a sentence.
+        """
+        result = runner.invoke(
+            local_command, ["convert", str(sample), "--to", "md", "--max-rows", "10"]
+        )
+
+        assert result.exit_code == EXIT_USAGE
+        assert result.exception is None or isinstance(result.exception, SystemExit)
+        assert "no rows to cap" in result.output
+
+    def test_a_negative_cap_is_refused_before_anything_is_read(
+        self, runner: CliRunner, long_csv: Path
+    ) -> None:
+        """Click's own range check, so a mistyped flag is a usage error rather
+        than a job that starts and then dies inside the engine."""
+        result = runner.invoke(
+            local_command, ["convert", str(long_csv), "--to", "md", "--max-rows", "-5"]
+        )
+
+        assert result.exit_code != EXIT_OK
+        assert not long_csv.with_suffix(".md").exists()
 
 
 class TestConvertLogic:
@@ -98,6 +173,46 @@ class TestBoundary:
         result = runner.invoke(local_command, ["formats", "--available-only", "--json"])
 
         assert all(r["available"] for r in _payload(result.output)["routes"])
+
+    def test_a_partly_available_source_still_says_why_the_rest_is_blocked(
+        self, runner: CliRunner
+    ) -> None:
+        """``gif`` is read by two engines, and the grouping used to hide one.
+
+        With Pillow present and FFmpeg absent, gif has available image targets,
+        so the row printed ``ok`` and the media reason never appeared — on the
+        one command whose job is to answer "why can't I do gif to mp4".
+        """
+        from convilyn.cli.local import _grouped_lines
+        from convilyn.local.types import Route
+
+        lines = _grouped_lines(
+            (
+                Route(source_format="gif", target_format="png", engine="image", available=True),
+                Route(
+                    source_format="gif",
+                    target_format="mp4",
+                    engine="media",
+                    available=False,
+                    unavailable_kind="missing_requirement",
+                    unavailable_reason="Converting media needs FFmpeg.",
+                ),
+            )
+        )
+
+        assert any("FFmpeg" in line.message for line in lines)
+
+    def test_a_fully_available_source_gains_no_extra_line(self, runner: CliRunner) -> None:
+        """The blocked-target lines are additive: a source with nothing blocked
+        prints exactly what it printed before."""
+        from convilyn.cli.local import _grouped_lines
+        from convilyn.local.types import Route
+
+        lines = _grouped_lines(
+            (Route(source_format="docx", target_format="md", engine="structured", available=True),)
+        )
+
+        assert len(lines) == 1
 
     def test_an_existing_output_is_not_replaced_without_the_flag(
         self, runner: CliRunner, sample: Path
@@ -218,7 +333,7 @@ class TestObjectState:
         payload = _payload(result.output)
 
         assert {p["name"] for p in payload["packages"]} >= {"pdfplumber", "PIL"}
-        assert {t["name"] for t in payload["tools"]} == {"libreoffice", "calibre"}
+        assert {t["name"] for t in payload["tools"]} == {"libreoffice", "calibre", "ffmpeg"}
 
     def test_doctor_marks_the_optional_package_as_optional(self, runner: CliRunner) -> None:
         result = runner.invoke(local_command, ["doctor", "--json"])

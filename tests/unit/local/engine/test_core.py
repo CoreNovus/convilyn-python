@@ -334,6 +334,22 @@ class TestCsvExtractor:
 
         assert any("truncated" in w for w in extract_csv(source).warnings)
 
+    def test_the_default_cap_converts_that_many_data_rows(self, tmp_path):
+        """#3997, as the reporter met it: the DEFAULT cap, with no argument.
+
+        The published engine converted 4,999 rows under a warning naming 5,000,
+        because the header was charged to the cap. Pinned here as well as at the
+        API level because this is the path a caller who never passes ``max_rows``
+        takes — which is nearly all of them.
+        """
+        source = tmp_path / "a.csv"
+        source.write_text("h\n" + "".join(f"{i}\n" for i in range(MAX_ROWS + 50)), encoding="utf-8")
+
+        doc = extract_csv(source)
+
+        assert len(doc.blocks[0].rows) - 1 == MAX_ROWS
+        assert any(f"first {MAX_ROWS} data rows" in w for w in doc.warnings)
+
     @pytest.mark.parametrize("cell", ["a|b", "a\nb"])
     def test_hostile_cells_survive_a_full_round_trip(self, tmp_path, cell):
         """Extract -> render must not emit a table that breaks its own grammar.

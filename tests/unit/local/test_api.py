@@ -88,6 +88,82 @@ class TestConvertManyLogic:
         assert seen == ["start", "done"]
 
 
+# ── 1b. The row cap (#3997) ──────────────────────────────────────────
+#
+# The cap existed as a module constant no caller could reach, so "give me the
+# first 200 rows of this 500,000-row export" and "give me all of it" were both
+# unsayable. These pin the option end to end — through the projected engine, not
+# against it — and pin the refusal, which is the half that keeps the option
+# honest on a source it cannot apply to.
+
+
+@pytest.fixture
+def long_csv(tmp_path: Path) -> Path:
+    path = tmp_path / "transactions.csv"
+    path.write_text("id,amount\n" + "".join(f"tx{i},{i}\n" for i in range(60)), encoding="utf-8")
+    return path
+
+
+def _data_rows(markdown: Path) -> int:
+    """Body rows of the one table, less its header and delimiter lines."""
+    lines = markdown.read_text(encoding="utf-8").splitlines()
+    return len([line for line in lines if line[:1] == "|"]) - 2
+
+
+class TestRowCap:
+    def test_the_option_is_worth_having(self) -> None:
+        """Non-vacuity. Every refusal test below passes on an empty table — with
+        nothing admitted, everything is refused — so this runs first and fails
+        loudly rather than letting the suite go quietly green on a dead option.
+        """
+        from convilyn.local._runners import ROW_CAPPED_EXTRACTORS
+
+        assert ROW_CAPPED_EXTRACTORS
+
+    def test_a_cap_limits_the_rows_converted(self, long_csv: Path) -> None:
+        local.convert(long_csv, to="md", max_rows=10)
+
+        assert _data_rows(long_csv.with_suffix(".md")) == 10
+
+    def test_the_header_is_not_charged_to_the_cap(self, long_csv: Path) -> None:
+        """The reported defect, from the public side: asking for 10 gave 9."""
+        result = local.convert(long_csv, to="md", max_rows=10)
+        converted = _data_rows(long_csv.with_suffix(".md"))
+
+        assert any(f"first {converted} data rows" in w for w in result.warnings)
+
+    def test_zero_reads_the_whole_file(self, long_csv: Path) -> None:
+        """The other unsayable intent: a cap the caller cannot lift is a ceiling."""
+        result = local.convert(long_csv, to="md", max_rows=0)
+
+        assert _data_rows(long_csv.with_suffix(".md")) == 60
+        assert not any("truncated" in w for w in result.warnings)
+
+    def test_a_source_with_no_rows_is_refused(self, sample_txt: Path) -> None:
+        """Refused, not ignored. Silently dropping the cap here would rebuild the
+        invisibility this option exists to remove, one layer further up.
+        """
+        with pytest.raises(ValueError, match="no rows to cap"):
+            local.convert(sample_txt, to="md", max_rows=10)
+
+    def test_the_refusal_names_the_sources_that_do_honour_it(self, sample_txt: Path) -> None:
+        """An error naming only what is wrong leaves the reader to guess the fix."""
+        with pytest.raises(ValueError, match="csv"):
+            local.convert(sample_txt, to="md", max_rows=10)
+
+    def test_in_a_batch_the_refusal_is_one_result_not_a_stopped_run(
+        self, sample_txt: Path, long_csv: Path, tmp_path: Path
+    ) -> None:
+        """A mixed batch converts what it can and reports what it could not —
+        which is what `convert_many` promises for every other per-file failure.
+        """
+        results = local.convert_many(
+            [long_csv, sample_txt], to="md", out_dir=tmp_path / "o", max_rows=5
+        )
+
+        assert [r.ok for r in results] == [True, False]
+
+
 # ── 2. Boundary — argument resolution and pre-flight refusals ────────
 
 

@@ -283,18 +283,34 @@ class TestExceptionDispatch:
 
     @pytest.mark.asyncio
     @respx.mock
-    async def test_error_envelope_normalisation_handles_error_wrapper(
+    async def test_an_unrecognised_envelope_degrades_to_the_status_code(
         self, client: AsyncConvilyn
     ) -> None:
-        """Some endpoints use ``{"error": {...}}`` instead of ``{"detail": ...}``."""
+        """The falsifiable half of dropping the ``{"error": {...}}`` branch.
+
+        The flattener carried a third branch that unwrapped a top-level
+        ``error`` dict, documented as "older endpoints". Nothing produces that
+        shape: across ``docs/contracts/**`` every declared error body is flat
+        or ``detail``-wrapped, and the only object-valued ``error`` keys are
+        ``ConvertJobResponse.error`` / ``JobResponse.error`` — fields on **200**
+        job-status bodies, which this path never sees because it runs only on
+        non-2xx.
+
+        What the removal must not do is crash. An envelope the SDK does not
+        recognise is reported with the status-derived code, so a caller still
+        gets a typed error carrying the HTTP status rather than a ``KeyError``
+        or a code invented from an arbitrary sub-dict.
+        """
         respx.post(f"{API_BASE}/api/v1/workflows/cost-preview").mock(
             return_value=httpx.Response(
                 402,
                 json={"error": {"code": "QUOTA_EXCEEDED", "message": "."}},
             )
         )
-        with pytest.raises(QuotaExceededError):
+        with pytest.raises(APIError) as exc_info:
             await client.account.get_quota()
+
+        assert exc_info.value.code == "HTTP_402"
 
 
 # ── 4. Object-state — model round-trips, sync facade, extra="allow" ──

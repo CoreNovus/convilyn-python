@@ -734,6 +734,27 @@ class TestIdleTimeout:
 # ── Output artifacts (list / presign / download-to-disk) ────────────
 
 
+def _mock_presign(mock: respx.Router, url: str, *, file_name: str = "summary.xlsx") -> None:
+    """Stub the presigned-URL hop every artifact download starts with.
+
+    Five tests carried a byte-identical nine-line copy of this. None asserts on
+    the size or the mime type, so those stay fixed here; the two fields a test
+    does look at are arguments.
+    """
+    mock.get(f"{API_BASE}/api/v1/jobs/goal/job_test/artifacts/art_1/download").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "downloadUrl": url,
+                "fileName": file_name,
+                "sizeBytes": 2048,
+                "mimeType": "application/octet-stream",
+                "expiresAt": "2026-07-11T13:00:00Z",
+            },
+        )
+    )
+
+
 def _artifact_payload(**overrides: Any) -> dict:
     base = {
         "artifactId": "art_1",
@@ -792,18 +813,7 @@ class TestArtifacts:
     @pytest.mark.asyncio
     async def test_download_artifact_url_returns_presign_info(self) -> None:
         async with respx.mock(assert_all_called=True) as mock:
-            mock.get(f"{API_BASE}/api/v1/jobs/goal/job_test/artifacts/art_1/download").mock(
-                return_value=httpx.Response(
-                    200,
-                    json={
-                        "downloadUrl": "https://storage.example.com/bucket/summary.xlsx?sig=xyz",
-                        "fileName": "summary.xlsx",
-                        "sizeBytes": 2048,
-                        "mimeType": "application/octet-stream",
-                        "expiresAt": "2026-07-11T13:00:00Z",
-                    },
-                )
-            )
+            _mock_presign(mock, "https://storage.example.com/bucket/summary.xlsx?sig=xyz")
             async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
                 info = await client.goals.download_artifact_url("job_test", "art_1")
 
@@ -814,18 +824,7 @@ class TestArtifacts:
     async def test_download_artifact_to_streams_to_disk(self, tmp_path) -> None:
         storage_url = "https://storage.example.com/bucket/summary.xlsx?sig=xyz"
         async with respx.mock(assert_all_called=True) as mock:
-            mock.get(f"{API_BASE}/api/v1/jobs/goal/job_test/artifacts/art_1/download").mock(
-                return_value=httpx.Response(
-                    200,
-                    json={
-                        "downloadUrl": storage_url,
-                        "fileName": "summary.xlsx",
-                        "sizeBytes": 9,
-                        "mimeType": "application/octet-stream",
-                        "expiresAt": "2026-07-11T13:00:00Z",
-                    },
-                )
-            )
+            _mock_presign(mock, storage_url)
             mock.get(storage_url).mock(return_value=httpx.Response(200, content=b"PK\x03\x04zip"))
             async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
                 target = tmp_path / "out.xlsx"
@@ -835,6 +834,39 @@ class TestArtifacts:
         assert target.read_bytes().startswith(b"PK")
 
     @pytest.mark.asyncio
+    async def test_download_artifact_to_refuses_an_existing_file(self, tmp_path) -> None:
+        """#4005 was filed against ``convert.download_to``; this method shares the
+        same writer and its docstring promises identical behaviour, so it moved with
+        it. Fixing one and not the other would have re-created the inconsistency the
+        ticket is about, one resource over."""
+        target = tmp_path / "out.xlsx"
+        target.write_bytes(b"the artifact the user already had")
+
+        async with respx.mock() as mock:
+            _mock_presign(mock, "https://storage.example.com/x?sig=1", file_name="out.xlsx")
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                with pytest.raises(FileExistsError):
+                    await client.goals.download_artifact_to("job_test", "art_1", to=target)
+
+        assert target.read_bytes() == b"the artifact the user already had"
+
+    @pytest.mark.asyncio
+    async def test_download_artifact_to_overwrite_true_replaces_it(self, tmp_path) -> None:
+        storage_url = "https://storage.example.com/bucket/summary.xlsx?sig=xyz"
+        target = tmp_path / "out.xlsx"
+        target.write_bytes(b"stale")
+
+        async with respx.mock(assert_all_called=True) as mock:
+            _mock_presign(mock, storage_url)
+            mock.get(storage_url).mock(return_value=httpx.Response(200, content=b"PK\x03\x04new"))
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                await client.goals.download_artifact_to(
+                    "job_test", "art_1", to=target, overwrite=True
+                )
+
+        assert target.read_bytes() == b"PK\x03\x04new"
+
+    @pytest.mark.asyncio
     async def test_download_artifact_to_refuses_symlink_target(self, tmp_path) -> None:
         link = tmp_path / "out.xlsx"
         try:
@@ -842,18 +874,7 @@ class TestArtifacts:
         except OSError as exc:  # Windows without symlink privilege / Developer Mode
             pytest.skip(f"symlink creation not permitted on this platform: {exc}")
         async with respx.mock() as mock:
-            mock.get(f"{API_BASE}/api/v1/jobs/goal/job_test/artifacts/art_1/download").mock(
-                return_value=httpx.Response(
-                    200,
-                    json={
-                        "downloadUrl": "https://storage.example.com/x?sig=1",
-                        "fileName": "out.xlsx",
-                        "sizeBytes": 1,
-                        "mimeType": "application/octet-stream",
-                        "expiresAt": "2026-07-11T13:00:00Z",
-                    },
-                )
-            )
+            _mock_presign(mock, "https://storage.example.com/x?sig=1", file_name="out.xlsx")
             async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
                 with pytest.raises(ValueError, match="symlink"):
                     await client.goals.download_artifact_to("job_test", "art_1", to=link)

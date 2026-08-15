@@ -61,10 +61,24 @@ class TestEveryEngineHasARunner:
 
     @pytest.mark.parametrize("engine", sorted(_ENGINES))
     def test_every_row_is_callable_with_the_runner_signature(self, engine: str) -> None:
+        """One call shape for every family, including the arguments some ignore.
+
+        ``asset_namespace`` is used only by the document family — the other two
+        write a single file and have no companions to place. ``max_rows`` is the
+        same again: only a row-based source can act on a row cap. Both are still
+        on every row, because the alternative is for the caller to decide who
+        wants which, and that branch is what this table exists to remove.
+        """
         runner = RUNNERS[engine]  # type: ignore[index]
 
         assert callable(runner)
-        assert list(inspect.signature(runner).parameters) == ["source", "route", "output"]
+        assert list(inspect.signature(runner).parameters) == [
+            "source",
+            "route",
+            "output",
+            "asset_namespace",
+            "max_rows",
+        ]
 
     @pytest.mark.parametrize("engine", ["structured", "office-suite", "ebook"])
     def test_the_three_document_engines_share_one_family(self, engine: str) -> None:

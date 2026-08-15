@@ -36,6 +36,24 @@ _JSON_OPTION = click.option(
     help="Emit a single JSON object on stdout (silences progress lines).",
 )
 
+#: Shared by `convert` and `batch`, because a cap useful on one file is useful on
+#: two hundred — and the reported case was a directory of exports.
+#:
+#: `IntRange(min=0)` is the front door for a rule the engine also enforces: it
+#: raises on a negative cap either way, but reaching it through a conversion turns
+#: a mistyped flag into a job failure. Click refuses it as the usage error it is,
+#: before any file is opened.
+_MAX_ROWS_OPTION = click.option(
+    "--max-rows",
+    "max_rows",
+    type=click.IntRange(min=0),
+    default=None,
+    help=(
+        "Row-based sources (csv) only: how many DATA rows to read, header excluded. "
+        "0 reads the whole file. Other sources are refused rather than silently uncapped."
+    ),
+)
+
 
 @click.group(help="Convert files on this machine. No API key required.")
 def local_command() -> None:
@@ -61,6 +79,17 @@ def local_command() -> None:
     type=click.Path(dir_okay=False, path_type=Path),
     help="Write here instead of beside the input.",
 )
+# `batch` has taken `--out-dir` since it existed, and reaching for it here was the
+# reported mistake. The two are not rival spellings of one idea — `--out` names a
+# file and `--out-dir` names a directory — so this is not a second way to say the
+# same thing; it is the way `batch` already says it, made available where it also
+# makes sense. Same type and same help text, so the vocabulary is one vocabulary.
+@click.option(
+    "--out-dir",
+    "out_dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    help="Directory to write into; created if absent. Keeps the source's name.",
+)
 @click.option("--overwrite", is_flag=True, help="Replace an existing output file.")
 @click.option(
     "--dry-run",
@@ -68,23 +97,63 @@ def local_command() -> None:
     is_flag=True,
     help="Show the route that would run, and write nothing.",
 )
+@_MAX_ROWS_OPTION
 @_JSON_OPTION
 def convert_command(
     input_file: Path,
     target_format: str | None,
     output_path: Path | None,
+    out_dir: Path | None,
     overwrite: bool,
     dry_run: bool,
+    max_rows: int | None,
     json_output: bool,
 ) -> None:
     from convilyn import local
 
     renderer = make_renderer(json_output=json_output)
 
+    # Refused rather than ranked. Both name a destination, and picking a winner
+    # would mean one of them silently does nothing — which is how a converter
+    # writes somewhere the user did not intend.
+    if output_path is not None and out_dir is not None:
+        raise SystemExit(EXIT_USAGE) from _fail(
+            renderer,
+            "Cannot use both",
+            ValueError("--out names a file and --out-dir names a directory; pass one"),
+        )
+
+    # `--out report.pdf` names the target format as surely as `--to pdf` does, and
+    # the library has always documented it that way. This used to pass `to="md"`
+    # whenever `--to` was absent, so the command planned a conversion to Markdown
+    # and then converted to the suffix — and when the plan failed it reported the
+    # route it had not been asked for: `No route from svg to md` for somebody who
+    # typed `--out logo.png`. `plan` takes `out` now, so both halves ask one thing.
+    #
+    # ValueError is caught alongside the route failure because `--out` with no
+    # suffix reaches the same decision from the other side: nothing named a format.
     try:
-        route = local.plan(input_file, to=target_format or "md")
+        route = local.plan(input_file, to=target_format, out=output_path)
     except local.UnsupportedRouteError as exc:
         raise SystemExit(EXIT_USAGE) from _fail(renderer, "Unsupported conversion", exc)
+    except ValueError:
+        # Not the library's message. `_resolve_target` says "pass `to=`", which is
+        # the right sentence for a Python caller and the wrong one for somebody who
+        # typed a flag — and this whole ticket is about the CLI sending people
+        # after the wrong thing. The command names the flag it actually takes.
+        raise SystemExit(EXIT_USAGE) from _fail(
+            renderer,
+            "Cannot tell what to convert to",
+            ValueError(
+                f"{output_path} has no extension to read a format from; "
+                f"add --to, or give --out a name like out.pdf"
+            ),
+        )
+
+    # Resolved after planning, because the name needs the target format the route
+    # settled on — which `--out-dir` cannot carry and `--to` may not have supplied.
+    if out_dir is not None:
+        output_path = out_dir / f"{input_file.stem}.{route.target_format}"
 
     if dry_run:
         _emit_dry_run(renderer, input_file, route, output_path)
@@ -111,7 +180,14 @@ def convert_command(
             to=None if output_path else route.target_format,
             out=output_path,
             overwrite=overwrite,
+            max_rows=max_rows,
         )
+    except ValueError as exc:
+        # An option this route cannot honour — `--max-rows` on a source with no
+        # rows. Arguments, not conversion: `EXIT_USAGE`, and one line rather than
+        # the traceback an unhandled refusal prints (the defect the comment above
+        # `route.available` records, one option later).
+        raise SystemExit(EXIT_USAGE) from _fail(renderer, "Unusable option", exc)
     except (local.ConversionFailedError, OSError) as exc:
         raise SystemExit(EXIT_JOB_FAILED) from _fail(renderer, "Conversion failed", exc)
 
@@ -160,6 +236,7 @@ def convert_command(
     is_flag=True,
     help="Abort on the first failure instead of converting the rest.",
 )
+@_MAX_ROWS_OPTION
 @_JSON_OPTION
 def batch_command(
     inputs: tuple[Path, ...],
@@ -167,6 +244,7 @@ def batch_command(
     out_dir: Path,
     overwrite: bool,
     stop_on_error: bool,
+    max_rows: int | None,
     json_output: bool,
 ) -> None:
     from convilyn import local
@@ -187,6 +265,7 @@ def batch_command(
             overwrite=overwrite,
             on_progress=report,
             raise_on_error=stop_on_error,
+            max_rows=max_rows,
         )
     except ValueError as exc:
         # A bad batch, rejected before anything was written — two inputs whose
@@ -238,6 +317,16 @@ def _grouped_lines(routes: Sequence[Route]) -> list[_Line]:
     it fails for the same cause, so repeating that cause once per target buries
     the one sentence that would fix it. The machine-readable payload stays flat,
     because a program wants the matrix rather than a summary of it.
+
+    **A source can be PARTLY available, and this used to hide the other half.**
+    The grouping asked one question — "are there any available targets?" — and
+    on ``yes`` printed them and moved on. That was complete while every source
+    belonged to one engine. It stopped being complete when media conversion
+    arrived: ``gif`` is readable by both the image engine and the media engine,
+    so with Pillow installed and FFmpeg missing it has available targets, prints
+    ``ok``, and never mentions why ``gif → mp4`` is not among them — on the one
+    command whose entire job is to answer that. Blocked targets now get their
+    own line, grouped by reason so one missing program is still one sentence.
     """
     by_source: dict[str, list[Route]] = {}
     for route in routes:
@@ -246,12 +335,30 @@ def _grouped_lines(routes: Sequence[Route]) -> list[_Line]:
     lines: list[_Line] = []
     for source, group in sorted(by_source.items()):
         targets = sorted({r.target_format for r in group if r.available})
-        if targets:
-            lines.append(_Line("ok", f"{source:>5} → {', '.join(targets)}"))
+        if not targets:
+            reason = next((r.unavailable_reason for r in group if r.unavailable_reason), "")
+            lines.append(_Line("warn", f"{source:>5} → unavailable. {reason}"))
             continue
-        reason = next((r.unavailable_reason for r in group if r.unavailable_reason), "")
-        lines.append(_Line("warn", f"{source:>5} → unavailable. {reason}"))
+
+        lines.append(_Line("ok", f"{source:>5} → {', '.join(targets)}"))
+        for reason, blocked in sorted(_blocked_by_reason(group).items()):
+            lines.append(_Line("warn", f"{'':>5}   {', '.join(blocked)} unavailable. {reason}"))
     return lines
+
+
+def _blocked_by_reason(group: Sequence[Route]) -> dict[str, list[str]]:
+    """``reason -> sorted target formats`` for the unavailable half of a source.
+
+    Keyed by the reason rather than by the target, because one missing program
+    blocks many targets and a line each would bury the sentence that fixes them
+    all — the same argument the fully-unavailable branch above makes.
+    """
+    blocked: dict[str, set[str]] = {}
+    for route in group:
+        if route.available or not route.unavailable_reason:
+            continue
+        blocked.setdefault(route.unavailable_reason, set()).add(route.target_format)
+    return {reason: sorted(targets) for reason, targets in blocked.items()}
 
 
 @click.command("formats", help="List every conversion this engine knows, and its status.")

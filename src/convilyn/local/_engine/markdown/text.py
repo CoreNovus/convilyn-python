@@ -17,14 +17,22 @@ from convilyn.local._engine.markdown.model import Block, MarkdownDoc
 
 
 def read_text_file(path: Path) -> str:
-    """Read a text file, tolerating bytes that are not valid UTF-8.
+    """Read a text file, stripping a byte-order mark and tolerating bytes that are not
+    valid UTF-8.
+
+    Decoded as ``utf-8-sig``, which is identical to ``utf-8`` except that a leading
+    byte-order mark is removed rather than decoded into a ``U+FEFF`` character. That
+    matters because saving a spreadsheet as UTF-8-with-BOM is the ordinary way to
+    make Excel read non-Latin text correctly, and a BOM left in place lands in the
+    first cell of the first row: the name renders the same on screen and no longer
+    matches when compared.
 
     Falls back to latin-1, which cannot fail. A conversion should not stop because a
     document was saved in a legacy codepage; the worst outcome is a few mangled
     accented characters, which beats no output at all.
     """
     try:
-        return path.read_text(encoding="utf-8")
+        return path.read_text(encoding="utf-8-sig")
     except UnicodeDecodeError:
         return path.read_text(encoding="latin-1")
 

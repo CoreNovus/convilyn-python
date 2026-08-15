@@ -18,13 +18,24 @@ import subprocess
 from functools import cache
 from pathlib import Path
 
-from convilyn.local._tools import CALIBRE, LIBREOFFICE, find_tool, install_hint
+from convilyn.local._engine.media.hardening import harden_ffmpeg_args
+from convilyn.local._tools import CALIBRE, FFMPEG, LIBREOFFICE, find_tool, install_hint
 
 #: How long one office-suite or ebook conversion may take before it is killed.
 #:
 #: Generous on purpose. A large presentation on a laptop is genuinely slow, and
 #: a conversion killed halfway is a worse outcome than one that took a minute.
 CONVERSION_TIMEOUT_SECONDS = 300
+
+#: How long one media conversion may take before it is killed.
+#:
+#: Its own constant rather than the one above, because the two bound different
+#: things. A document conversion is bounded by the size of a file somebody
+#: authored; a re-encode is bounded by the *duration* of the media, and an hour
+#: of video legitimately takes many minutes on a laptop with no hardware
+#: encoder. Reusing the 5-minute office timeout would kill ordinary work and
+#: report it as a failure, which is a worse answer than waiting.
+MEDIA_TIMEOUT_SECONDS = 3600
 
 
 class ToolNotInstalledError(RuntimeError):
@@ -154,9 +165,41 @@ def run_calibre(
     return _run([str(ebook_convert), input_path, output_path], timeout=timeout)
 
 
+def run_ffmpeg(args: list[str], timeout: int = MEDIA_TIMEOUT_SECONDS) -> tuple[int, str, str]:
+    """Run one ffmpeg conversion.
+
+    ``args`` is what the engine decided — inputs, encoder options, output. Two
+    things are added here rather than there, and both belong to the invocation:
+
+    * ``-y``. The output path is one the caller resolved and may already exist;
+      without this ffmpeg declines to overwrite it, writes a line to stderr, and
+      **still exits 0**. A caller trusting the exit status would then report an
+      untouched file as a converted one.
+    * the input-protocol restriction. Media files can name further inputs
+      *inside themselves* — a playlist, a concat list, a reference box — and
+      ffmpeg will happily open an ``http://`` one. Restricting inputs to the
+      local filesystem is free here, because every input is a file the user
+      named.
+
+    Unlike LibreOffice, ffmpeg keeps no user profile, so there is no private
+    profile to isolate and two conversions may run at once.
+
+    Raises:
+        ToolNotInstalledError: ffmpeg is not on this machine.
+        subprocess.TimeoutExpired: the conversion exceeded ``timeout``.
+    """
+    ffmpeg = find_tool(FFMPEG)
+    if ffmpeg is None:
+        raise ToolNotInstalledError(install_hint(FFMPEG))
+
+    return _run([str(ffmpeg), "-y", *harden_ffmpeg_args(args)], timeout=timeout)
+
+
 __all__ = [
     "CONVERSION_TIMEOUT_SECONDS",
+    "MEDIA_TIMEOUT_SECONDS",
     "ToolNotInstalledError",
     "run_calibre",
+    "run_ffmpeg",
     "run_libreoffice",
 ]

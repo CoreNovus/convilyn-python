@@ -7,6 +7,7 @@ orchestration can evolve without test churn.
 
 from __future__ import annotations
 
+import inspect
 import json
 from typing import Any
 from unittest.mock import patch
@@ -24,6 +25,8 @@ from convilyn import (
     JobFailedError,
     JobTimeoutError,
 )
+from convilyn.local import UnsupportedRouteError
+from convilyn.resources import AsyncConvert
 
 API_BASE = "https://api.convilyn.corenovus.com"
 S3_DOWNLOAD_URL = "https://example-bucket.s3.amazonaws.com/output.pdf?signature=xyz"
@@ -170,6 +173,77 @@ class TestConvertLogic:
         assert target.read_bytes().startswith(b"%PDF-1.4")
 
     @pytest.mark.asyncio
+    async def test_download_to_refuses_an_existing_file(self, file_obj, tmp_path) -> None:
+        """It used to overwrite silently, which `convilyn.local.convert` refuses to
+        do and says why. One package cannot hold both positions."""
+        target = tmp_path / "out.pdf"
+        target.write_bytes(b"the file the user already had")
+
+        async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+            completed = ConvertJob.model_validate(_completed_job())
+            with pytest.raises(FileExistsError):
+                await client.convert.download_to(completed, to=target)
+
+    @pytest.mark.asyncio
+    async def test_the_refused_file_is_left_untouched(self, file_obj, tmp_path) -> None:
+        """Refusing after truncating would be the same data loss with an
+        exception on top, so the bytes are read back rather than assumed."""
+        target = tmp_path / "out.pdf"
+        target.write_bytes(b"the file the user already had")
+
+        async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+            completed = ConvertJob.model_validate(_completed_job())
+            with pytest.raises(FileExistsError):
+                await client.convert.download_to(completed, to=target)
+
+        assert target.read_bytes() == b"the file the user already had"
+
+    @pytest.mark.asyncio
+    async def test_the_message_names_the_way_out(self, file_obj, tmp_path) -> None:
+        """Same wording as the offline half, so the SDK says one thing."""
+        target = tmp_path / "out.pdf"
+        target.write_bytes(b"x")
+
+        async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+            completed = ConvertJob.model_validate(_completed_job())
+            with pytest.raises(FileExistsError, match="pass overwrite=True to replace it"):
+                await client.convert.download_to(completed, to=target)
+
+    @pytest.mark.asyncio
+    async def test_overwrite_true_replaces_it(self, file_obj, tmp_path) -> None:
+        async with respx.mock(assert_all_called=True) as mock:
+            mock.get(S3_DOWNLOAD_URL).mock(
+                return_value=httpx.Response(200, content=b"%PDF-1.4 fresh")
+            )
+
+            target = tmp_path / "out.pdf"
+            target.write_bytes(b"stale")
+
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                completed = ConvertJob.model_validate(_completed_job())
+                await client.convert.download_to(completed, to=target, overwrite=True)
+
+        assert target.read_bytes() == b"%PDF-1.4 fresh"
+
+    @pytest.mark.asyncio
+    async def test_a_symlink_is_still_refused_as_a_symlink(self, file_obj, tmp_path) -> None:
+        """Order matters: a symlink is not merely "a file in the way", and
+        ``overwrite=True`` must not turn it into one — following it would write
+        the bytes wherever it points."""
+        link = tmp_path / "out.pdf"
+        real = tmp_path / "elsewhere.pdf"
+        real.write_bytes(b"somewhere else entirely")
+        try:
+            link.symlink_to(real)
+        except OSError as exc:  # Windows without symlink privilege / Developer Mode
+            pytest.skip(f"symlink creation not permitted on this platform: {exc}")
+
+        async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+            completed = ConvertJob.model_validate(_completed_job())
+            with pytest.raises(ValueError, match="symlink"):
+                await client.convert.download_to(completed, to=link, overwrite=True)
+
+    @pytest.mark.asyncio
     async def test_download_to_refuses_symlink_target(self, file_obj, tmp_path) -> None:
         # A pre-placed symlink at the destination must NOT be written through.
         link = tmp_path / "out.pdf"
@@ -220,8 +294,12 @@ class TestConvertBoundary:
                 "createdAt": "2026-05-20T12:00:00Z",
             }
         )
+        # `UnsupportedRouteError`, not `ValueError`: an extension no family speaks
+        # reaches the same refusal as any other unroutable pair, so it moved with
+        # it. The message is unchanged — only the type, which is now catchable as
+        # `ConvilynError` the way the docs have always said it would be.
         async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
-            with pytest.raises(ValueError, match="pass source_format"):
+            with pytest.raises(UnsupportedRouteError, match="pass source_format"):
                 await client.convert.create(file=weird_file, target_format="pdf")
 
     @pytest.mark.asyncio
@@ -376,3 +454,22 @@ class TestConvertObjectState:
 
         assert isinstance(job, ConvertJob)
         assert job.is_terminal
+
+    def test_convert_takes_only_the_transport(self) -> None:
+        """The constructor is the surface this resource actually needs.
+
+        It also accepted a ``files`` resource for a while. Nothing else pins
+        this: ``tests/contract/test_public_surface.py`` pins the *method* set,
+        so a second constructor argument can reappear with every gate green.
+        """
+        assert list(inspect.signature(AsyncConvert.__init__).parameters) == ["self", "http"]
+
+    @pytest.mark.asyncio
+    async def test_convert_holds_no_files_resource(self) -> None:
+        """The dead dependency was *stored* and never read — pin its absence.
+
+        A signature check alone would pass on an argument that is accepted and
+        dropped, which is the same defect one step later.
+        """
+        async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+            assert not hasattr(client.convert, "_files")

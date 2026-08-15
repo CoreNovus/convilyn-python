@@ -42,9 +42,10 @@ from convilyn.local._engine.formats import (
     DocumentFormat,
     ImageFormat,
 )
+from convilyn.local._engine.media.formats import MediaFormat
 from convilyn.local._routes import MARKDOWN, build_capabilities
 from convilyn.local._run import ToolNotInstalledError
-from convilyn.local._runners import RUNNERS
+from convilyn.local._runners import ROW_CAPPED_EXTRACTORS, RUNNERS
 from convilyn.local.errors import (
     ConversionFailedError,
     MissingDependencyError,
@@ -61,6 +62,12 @@ from convilyn.local.types import (
 
 #: Called once per file in a batch, three times per file.
 ProgressCallback = Callable[[ProgressEvent], None]
+
+#: Source formats ``max_rows`` means something for, as spellings.
+#:
+#: Derived from the table that APPLIES the cap rather than restated beside it, so
+#: this cannot come to admit a format nothing knows how to cap.
+_ROW_CAPPED_SOURCES: frozenset[str] = frozenset(f.value for f in ROW_CAPPED_EXTRACTORS)
 
 
 # ── Introspection — never raises ─────────────────────────────────────
@@ -105,7 +112,13 @@ def detect_format(source: str | Path) -> str | None:
     if alias is not None:
         return alias.value
 
-    for enum in (DocumentFormat, ImageFormat):
+    # Order is not a priority list, because it cannot be: this returns the
+    # *spelling*, and the one extension in two enums — `gif` — has the same
+    # value in both. Which family actually runs is decided later, by looking up
+    # the (source, target) PAIR in the route table: `gif`→`png` finds an image
+    # route and `gif`→`mp4` finds a media one. A single-format answer could not
+    # express that, and does not have to.
+    for enum in (DocumentFormat, ImageFormat, MediaFormat):
         try:
             return enum(suffix).value
         except ValueError:
@@ -113,14 +126,40 @@ def detect_format(source: str | Path) -> str | None:
     return None
 
 
-def plan(source: str | Path, *, to: str = MARKDOWN, source_format: str | None = None) -> Route:
+def plan(
+    source: str | Path,
+    *,
+    to: str | None = None,
+    out: str | Path | None = None,
+    source_format: str | None = None,
+) -> Route:
     """The route ``convert`` would take, without taking it.
+
+    Names the target the two ways ``convert`` does — ``to`` is the format, ``out``
+    is the path and the format comes from its suffix — because otherwise this
+    cannot answer the question it claims to. It took only ``to``, so a caller
+    holding a destination path had to guess a format before asking, and the CLI
+    guessed ``md``: it planned a conversion to Markdown, then converted to the
+    suffix, and reported the failure of the plan it had not run.
+
+    Passing neither still means Markdown, which is what it has always meant.
+    Passing both lets ``to`` win, the same precedence ``convert`` uses, so the
+    two can never disagree about a call that named the target twice.
 
     Raises:
         UnsupportedRouteError: this engine has no such route. That is not a
             machine fact — no installation makes it work — so it is the one
             question here that answers with an exception.
+        ValueError: ``out`` has no suffix to read a format from, and no ``to``
+            was given to supply one.
     """
+    # `to or MARKDOWN` would be wrong: it discards a caller who named the target
+    # only through `out`, which is the whole defect this parameter fixes.
+    if to is None and out is None:
+        to = MARKDOWN
+    else:
+        to, _ = _resolve_target(Path(source), to=to, out=out)
+
     resolved = source_format or detect_format(source)
     caps = capabilities()
 
@@ -150,6 +189,7 @@ def convert(
     out: str | Path | None = None,
     source_format: str | None = None,
     overwrite: bool = False,
+    max_rows: int | None = None,
 ) -> ConversionResult:
     """Convert one file and return where it landed.
 
@@ -159,6 +199,12 @@ def convert(
     default, because guessing what somebody wanted is how a converter overwrites
     the wrong file.
 
+    Args:
+        max_rows: For a row-based source (``csv``), how many DATA rows to read —
+            the header is not charged to it. ``None`` uses the engine's default
+            cap, ``0`` reads the whole file. Passing it for a source with no rows
+            is an error rather than a no-op; see :func:`_reject_inapplicable_cap`.
+
     Raises:
         UnsupportedRouteError: no such route in this engine.
         MissingDependencyError: the route exists but something it needs is not
@@ -166,10 +212,44 @@ def convert(
         ConversionFailedError: the route ran and could not produce output.
         FileNotFoundError: ``source`` does not exist.
         FileExistsError: the output exists and ``overwrite`` is false.
+        ValueError: ``max_rows`` was given for a source that has no rows.
     """
     source_path = Path(source)
     target_format, output_path = _resolve_target(source_path, to=to, out=out)
+    # No asset namespace: a single conversion shares its output directory with
+    # nothing this call knows about, and its layout is already correct. See
+    # `_convert_one`.
+    return _convert_one(
+        source_path,
+        target_format=target_format,
+        output_path=output_path,
+        source_format=source_format,
+        overwrite=overwrite,
+        asset_namespace="",
+        max_rows=max_rows,
+    )
+
+
+def _convert_one(
+    source_path: Path,
+    *,
+    target_format: str,
+    output_path: Path,
+    source_format: str | None,
+    overwrite: bool,
+    asset_namespace: str,
+    max_rows: int | None,
+) -> ConversionResult:
+    """One conversion, once the target has been resolved.
+
+    Extracted so ``convert_many`` can supply an ``asset_namespace`` without that
+    argument appearing on ``convert``. The two callers genuinely differ on it —
+    a batch shares one directory between every document it writes, a single
+    conversion does not — and it is not a knob anybody asked to turn, so it stays
+    off the public signature until somebody has a use for it.
+    """
     route = plan(source_path, to=target_format, source_format=source_format)
+    _reject_inapplicable_cap(route.source_format, max_rows)
 
     if not source_path.is_file():
         raise FileNotFoundError(f"no such file: {source_path}")
@@ -198,7 +278,7 @@ def convert(
 
     started = time.monotonic()
     try:
-        warnings, written = _run(source_path, route, output_path)
+        warnings, written = _run(source_path, route, output_path, asset_namespace, max_rows)
     except ToolNotInstalledError as exc:
         # `capabilities()` said the program was there and it was gone by the
         # time we ran it. Rare, but it is a missing dependency rather than a
@@ -228,12 +308,31 @@ def convert_many(
     overwrite: bool = False,
     on_progress: ProgressCallback | None = None,
     raise_on_error: bool = False,
+    max_rows: int | None = None,
 ) -> tuple[ConversionResult, ...]:
     """Convert many files into ``out_dir``, one result per input.
 
     Failures are results, not exceptions, unless ``raise_on_error`` is set. The
     caller gets the whole picture in one pass and decides what to do about the
     three files that did not work.
+
+    ``max_rows`` means what it means on :func:`convert`, and a mixed batch is
+    where that matters: an input with no rows to cap becomes a failed *result*
+    naming the reason, not a silently uncapped conversion sitting among capped
+    ones. Which of the two a caller wants is theirs to decide — but they can only
+    decide it if the run says which files it happened to.
+
+    **Companion files go under ``assets/<source stem>/``**, one directory per
+    input, because every document here writes into the same ``out_dir`` and the
+    engine names assets per document. Flat, the second document to carry an
+    ``img-0001.png`` overwrote the first and left its Markdown linking to a file
+    that exists and is the wrong picture — an error nothing downstream can see.
+    A single :func:`convert` keeps the flat layout; it shares the directory with
+    nobody, and its paths were never wrong.
+
+    The stem is safe as a directory name for the same reason it is safe as the
+    output name: :func:`_reject_output_collisions` has already refused the batch if
+    two inputs share one, so the namespaces are distinct before any file is written.
     """
     paths = [Path(s) for s in sources]
     destination = Path(out_dir)
@@ -245,11 +344,14 @@ def convert_many(
     for index, path in enumerate(paths):
         _emit(on_progress, index, len(paths), path, "start")
         try:
-            result = convert(
+            result = _convert_one(
                 path,
-                out=outputs[path],
+                target_format=to,
+                output_path=outputs[path],
                 source_format=source_format,
                 overwrite=overwrite,
+                asset_namespace=path.stem,
+                max_rows=max_rows,
             )
         except Exception as exc:  # noqa: BLE001 — recorded, not swallowed
             if raise_on_error:
@@ -319,14 +421,44 @@ def _reject_output_collisions(outputs: dict[Path, Path]) -> None:
         )
 
 
-def _run(source: Path, route: Route, output: Path) -> tuple[tuple[str, ...], Path]:
+def _reject_inapplicable_cap(source_format: str, max_rows: int | None) -> None:
+    """Refuse a row cap on a source that has no rows.
+
+    Ignoring it would be the cheaper option and is the wrong one. This whole
+    parameter exists because a cap the caller could not reach was a ceiling
+    they could not see; honouring the request on a CSV and dropping it on a PDF
+    — with the same call, the same exit status, and no mention either way —
+    rebuilds that invisibility one layer up. A caller who passes ``max_rows=200``
+    and gets 40 pages of PDF has been told nothing was capped only by counting.
+
+    In a batch this surfaces as that file's ``ok=False`` result rather than as a
+    stopped run, which is what :func:`convert_many` promises for anything that
+    goes wrong with one input.
+    """
+    if max_rows is None or source_format in _ROW_CAPPED_SOURCES:
+        return
+    honoured = ", ".join(sorted(_ROW_CAPPED_SOURCES))
+    raise ValueError(
+        f"max_rows caps rows and {source_format} has no rows to cap; it applies to: {honoured}"
+    )
+
+
+def _run(
+    source: Path, route: Route, output: Path, asset_namespace: str, max_rows: int | None
+) -> tuple[tuple[str, ...], Path]:
     """Hand the conversion to the family that performs it.
 
     A lookup, not a branch. Each family — and what running one involves, including
     rendering and writing assets — lives in :mod:`convilyn.local._runners`; adding
     one is a row in its table, with nothing to change here.
+
+    ``asset_namespace`` and ``max_rows`` are passed to every family rather than to
+    the one that uses each, which keeps this a lookup. Deciding here who wants what
+    would be the branch the table removed, one argument later.
     """
-    return RUNNERS[route.engine](source, route, output)
+    return RUNNERS[route.engine](
+        source, route, output, asset_namespace=asset_namespace, max_rows=max_rows
+    )
 
 
 def _failure(source: Path, target_format: str, exc: Exception) -> ConversionResult:

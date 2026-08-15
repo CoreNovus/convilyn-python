@@ -24,8 +24,16 @@ from dataclasses import dataclass
 
 from convilyn.local._engine.formats import DocumentFormat, ImageFormat
 from convilyn.local._engine.markdown.registry import bridge_for, can_read, extractor_for
+from convilyn.local._engine.media.convert_core import transcode_pairs
 from convilyn.local._probe import PackageProbe, package_available
-from convilyn.local._tools import TOOLS, ExternalTool, ToolProbe, find_tool, install_hint
+from convilyn.local._tools import (
+    FFMPEG,
+    TOOLS,
+    ExternalTool,
+    ToolProbe,
+    find_tool,
+    install_hint,
+)
 from convilyn.local.types import Capabilities, Engine, Requirement, Route, UnavailableKind
 
 #: The target the document engine produces. **It produces exactly one**, and the
@@ -350,6 +358,60 @@ _CODEC_PLUGINS: dict[ImageFormat, tuple[str, str]] = {
 }
 
 
+def _media_routes(*, find: ToolProbe) -> list[Route]:
+    """Media conversions, from the pairs the shared engine says are producible.
+
+    **Declared, not measured** — the opposite of :func:`_image_routes`, and the
+    difference is real rather than an inconsistency. Pillow's codec set varies
+    per install, so the image matrix has to be probed. An ffmpeg build's does
+    too, in principle, but discovering it means running the program once per
+    pair, and the pairs here are named by codecs (H.264, VP9, AAC, FLAC…) that
+    every general-purpose ffmpeg ships. Paying a subprocess per pair to confirm
+    what is effectively always true is a cost the caller would feel on every
+    ``capabilities()`` call.
+
+    So a route here is unavailable for exactly one reason — the program is not
+    installed — which is why the kind below is unconditional. If a build without
+    some encoder ever turns up in practice, that becomes a `missing_plugin`
+    answer measured the way the image engine measures its own, and the reason
+    text is what changes.
+    """
+    ffmpeg = _tool_requirement(FFMPEG, find=find)
+    reason = None if ffmpeg.available else _media_reason(ffmpeg)
+
+    return [
+        Route(
+            source_format=source.value,
+            target_format=target.value,
+            engine="media",
+            available=ffmpeg.available,
+            requirements=(ffmpeg,),
+            unavailable_kind=None if ffmpeg.available else "missing_requirement",
+            unavailable_reason=reason,
+        )
+        for source, target in transcode_pairs()
+    ]
+
+
+def _media_reason(ffmpeg: Requirement) -> str:
+    """The sentence shown when ffmpeg is missing.
+
+    No "formats that need no external program" tail, unlike :func:`_reason`.
+    That tail exists to offer a document user something they can do right now,
+    and there is no such alternative here: every media conversion needs this one
+    program, so listing what else the machine can do would be changing the
+    subject.
+
+    It also does not say "or in the standard install location for this
+    platform", because for this tool there is none — see
+    :func:`convilyn.local._tools._candidates`.
+    """
+    return (
+        f"Converting media needs {TOOLS[ffmpeg.name].display_name}, which was not found "
+        f"on PATH. {ffmpeg.install_hint}"
+    )
+
+
 def build_routes(
     *,
     probe: PackageProbe = package_available,
@@ -385,6 +447,7 @@ def build_routes(
         )
 
     routes += _image_routes(probe=probe)
+    routes += _media_routes(find=find)
     return tuple(sorted(routes, key=lambda r: (r.source_format, r.target_format)))
 
 

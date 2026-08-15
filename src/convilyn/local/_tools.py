@@ -55,8 +55,15 @@ CALIBRE = ExternalTool(
     download_url="https://calibre-ebook.com/download",
 )
 
+FFMPEG = ExternalTool(
+    key="ffmpeg",
+    display_name="FFmpeg",
+    command="ffmpeg",
+    download_url="https://ffmpeg.org/download.html",
+)
+
 #: Every tool this namespace knows about, keyed as it appears in a requirement.
-TOOLS: dict[str, ExternalTool] = {tool.key: tool for tool in (LIBREOFFICE, CALIBRE)}
+TOOLS: dict[str, ExternalTool] = {tool.key: tool for tool in (LIBREOFFICE, CALIBRE, FFMPEG)}
 
 _WINDOWS_CANDIDATES: dict[str, tuple[str, ...]] = {
     "libreoffice": (
@@ -76,7 +83,16 @@ _MACOS_CANDIDATES: dict[str, tuple[str, ...]] = {
 
 
 def _candidates(tool: ExternalTool) -> tuple[Path, ...]:
-    """Install locations to try after PATH, for the running platform only."""
+    """Install locations to try after PATH, for the running platform only.
+
+    ``ffmpeg`` deliberately has no entry in either table. It ships as a bare
+    archive rather than an installer, so there is no location an *official*
+    install uses — every route onto a machine (winget, Chocolatey, Scoop,
+    Homebrew, a distribution package, an unzipped folder the user chose) either
+    puts it on ``PATH`` or leaves the location to the person. Guessing at
+    ``C:\\ffmpeg\\bin`` would be guessing at somebody's habit, which is exactly
+    what the module docstring says not to do.
+    """
     if sys.platform == "win32":
         table = _WINDOWS_CANDIDATES
     elif sys.platform == "darwin":
@@ -119,6 +135,7 @@ def install_hint(tool: ExternalTool) -> str:
 
 __all__ = [
     "CALIBRE",
+    "FFMPEG",
     "LIBREOFFICE",
     "TOOLS",
     "ExternalTool",

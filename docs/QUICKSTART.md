@@ -33,12 +33,13 @@ and it needs one optional dependency per file format. Install only what you use:
 **Plain text, CSV and Markdown rendering need nothing at all** — they work on
 the bare install above.
 
-Two format families need a desktop application rather than a package: legacy and
+Three format families need a program rather than a package: legacy and
 OpenDocument office files (`.doc`, `.odt`, `.rtf`, `.xls`, `.ods`, `.ppt`,
-`.odp`) go through **LibreOffice**, and ebooks (`.epub`, `.mobi`, `.azw3`)
-through **Calibre**. Neither can come from PyPI, so neither is an extra. Install
-either one and its formats become available with no further configuration —
-`convilyn local doctor` reports which are present and where to get the rest.
+`.odp`) go through **LibreOffice**, ebooks (`.epub`, `.mobi`, `.azw3`) through
+**Calibre**, and video and audio through **FFmpeg**. None can come from PyPI, so
+none is an extra. Install one and its formats become available with no further
+configuration — `convilyn local doctor` reports which are present and where to
+get the rest.
 
 Those ten are converted once into the modern sibling this engine already reads
 (`.odt` → `.docx`, `.ods` → `.xlsx`, and so on) and then read from there, so
@@ -95,10 +96,23 @@ account:
 ```bash
 convilyn local convert report.docx --to md      # → report.md
 convilyn local convert photo.png --to webp      # → photo.webp
+convilyn local convert clip.mov --to mp4        # → clip.mp4 (needs FFmpeg)
 convilyn local batch 'docs/*.pdf' --to md --out-dir build/
 convilyn local formats                          # what this machine can do
 convilyn local doctor                           # …and how to extend it
 ```
+
+Name the target either way — `--to` gives the format, `--out` gives the path and
+the format is read from its suffix. `--out-dir` writes into a directory and keeps
+the source's name, on `convert` as well as `batch`:
+
+```bash
+convilyn local convert logo.svg --out logo.png            # png, from the suffix
+convilyn local convert report.docx --to md --out-dir build/   # → build/report.md
+```
+
+`--out` and `--out-dir` are mutually exclusive: one names a file, the other a
+directory, and accepting both would mean silently ignoring one of them.
 
 ```python
 from convilyn import local
@@ -110,10 +124,87 @@ print(result.warnings)  # anything the extractor had to guess
 local.convert("photo.png", to="jpg")  # images too — see §1b, Images
 ```
 
+#### Choosing where the output goes: `to=` or `out=`, never both
+
+`to=` names the **format**, and the output lands beside the input. `out=` names
+the **path**, and the format is read from its suffix:
+
+```python
+local.convert("report.docx", to="md")                  # → report.md
+local.convert("report.docx", out="build/report.md")    # → build/report.md
+local.convert("logo.svg", out="logo.png")              # png, from the suffix
+```
+
+The keyword is `out=`, not `output=`, and **exactly one of the two is required** —
+passing neither raises rather than defaulting, because guessing what you meant is
+how a converter writes over the wrong file:
+
+```python
+local.convert("report.docx")
+# ValueError: pass `to=` to name the target format, or `out=` to name the file
+```
+
+`plan()` takes the same pair, so you can ask what a conversion *would* do before
+doing it:
+
+```python
+route = local.plan("logo.svg", out="logo.png")
+route.target_format   # 'png'
+route.available       # False here — and route.unavailable_reason says what to install
+```
+
+#### Re-running: `overwrite=`
+
+Conversion refuses to replace an existing output. A script run twice raises the
+second time:
+
+```python
+local.convert("report.docx", to="md")
+local.convert("report.docx", to="md")
+# FileExistsError: report.md exists; pass overwrite=True to replace it
+```
+
+That is the same position the whole package takes — see §4 for the cloud half —
+and the way through is one keyword:
+
+```python
+local.convert("report.docx", to="md", overwrite=True)
+local.convert_many(sources, to="md", out_dir="build/", overwrite=True)
+```
+
+On the command line it is `--overwrite`, on `convert` and `batch` alike.
+
 Nothing here opens a connection, reads `CONVILYN_API_KEY`, or consumes quota.
 Structure survives the conversion: headings stay headings, lists stay lists,
 tables become GitHub-Flavoured Markdown tables, and embedded images are written
 to an `assets/` directory beside the Markdown so their links resolve.
+
+#### Where images land
+
+Converting one file puts them straight into `assets/`:
+
+```
+report.md            ![…](assets/img-0001.png)
+assets/img-0001.png
+```
+
+A **batch** gives each document its own directory under `assets/`, named after the
+source file:
+
+```
+build/
+  report.md          ![…](assets/report/img-0001.png)
+  deck.md            ![…](assets/deck/img-0001.png)
+  assets/
+    report/img-0001.png
+    deck/img-0001.png
+```
+
+The extra level is not decoration. Assets are numbered per document, so every
+document in a batch has an `img-0001.png`; flat, they would overwrite one another
+and leave each Markdown file linking to a picture from whichever document was
+converted last. The links are written to match the layout, so a document and its
+images stay a valid pair wherever you move them.
 
 ### Rearranging PDFs
 
@@ -215,10 +306,57 @@ What just happened:
 3. `convert.download_to` fetched the presigned download URL from the
    completed job and wrote the bytes to disk.
 
+### Re-running: downloads do not replace files
+
+`download_to` refuses a destination that already exists, so running the snippet
+above twice raises on the second run:
+
+```
+FileExistsError: report.pdf exists; pass overwrite=True to replace it
+```
+
+That is deliberate, and it is the same answer `convilyn local convert` gives:
+guessing what you wanted is how a converter overwrites the wrong file. To re-run
+over the previous result, say so:
+
+```python
+client.convert.download_to(job, to="report.pdf", overwrite=True)
+```
+
+The same applies to `client.goals.download_artifact_to(...)`, and to the CLI:
+
+```bash
+convilyn convert report.docx --to pdf --overwrite
+```
+
+One thing `overwrite=True` does **not** do: write through a symlink. A symlink at
+the destination is refused either way, because following it would put the bytes
+somewhere you did not name.
+
 If any step fails (auth, transport, conversion error) you get a typed
 exception: `AuthError`, `APIError`, `RetryExhaustedError`,
-`JobFailedError`, `JobTimeoutError`. Catch the base `ConvilynError`
-to handle them all uniformly.
+`JobFailedError`, `JobTimeoutError`, and `UnsupportedRouteError` when the two
+formats name no conversion this platform performs. Catch the base
+`ConvilynError` to handle them all uniformly:
+
+```python
+from convilyn import Convilyn, ConvilynError
+
+try:
+    job = client.convert.create_and_wait(file=f, target_format="mp3")
+except ConvilynError as exc:      # covers every one of the above
+    print("conversion failed:", exc)
+```
+
+Two things it deliberately does **not** cover, because they are not the API's
+answer to anything:
+
+- `FileExistsError` from a download whose destination already exists — the
+  destination's problem, and `overwrite=True` is the fix.
+- `ValueError` / `TypeError` from arguments that do not make sense — `upload()`
+  with neither a path nor content, a `page_range` on an image conversion. Those
+  mean the call is wrong, not that the platform refused it, and Python already
+  has names for them.
 
 ## 5. Convert a file (CLI)
 
@@ -288,6 +426,29 @@ $ echo '{"x": 1}' | convilyn api POST /api/v1/echo --input -
 
 > Pair with `--include` to see status line + headers (curl -i style),
 > or `-o file` to write the body to disk silently.
+
+### Windows: Git Bash rewrites the path before the CLI sees it
+
+On Git Bash / MSYS2, an argument that looks like a Unix path is converted to a
+Windows one **by the shell**, before any program runs:
+
+```console
+$ python -c "import sys; print(sys.argv[1:])" /api/v1/health
+['C:/Program Files/Git/api/v1/health']
+```
+
+So `convilyn api GET /api/v1/health` asks for an endpoint that does not exist and
+gets a **404** — which reads exactly like a broken backend, and has been
+misdiagnosed as one. Turn the rewriting off for the session:
+
+```bash
+export MSYS2_ARG_CONV_EXCL='*'
+```
+
+This is shell behaviour, not an SDK bug: every program invoked that way sees the
+same rewritten argument. It is called out here because `api` is the one command
+whose arguments are always paths, so it is the one that always trips over it.
+PowerShell, `cmd.exe`, WSL, macOS and Linux are unaffected.
 
 ## 7. AI workflows (`client.goals`)
 

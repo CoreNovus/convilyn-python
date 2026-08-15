@@ -7,18 +7,46 @@
 Each sheet becomes a heading followed by a table, so a multi-sheet workbook
 reads as a document rather than as one undifferentiated grid.
 
-Cells are read for their displayed value, not their formula: the point of a
-Markdown rendering is what a person would see in the spreadsheet.
+Cells are read for their stored value, not their formula: a Markdown table of
+``=SUM(B2:B9)`` is useless to every reader.
+
+**A cell's display format is applied only where doing so is lossless and adds
+meaning.** The stored content is authoritative; this converts format, never
+content.
+
+- A **percentage** format is applied: the value is shifted by two decimal places
+  and given a ``%``, so ``-0.720386735542037`` under ``0.0%`` reads
+  ``-72.0386735542037%``. The format's *rounding* is deliberately not applied —
+  a spreadsheet would show ``-72.0%``, which silently discards eleven digits the
+  file contains.
+- A **currency symbol** is applied, because nothing else in the output records
+  which currency a number is in.
+- **Thousands separators are not applied.** They add no meaning and break every
+  downstream attempt to parse the number.
+- **Rounding is never applied**, in any format. A rounded number is a different
+  number.
+
+The shift is exact rather than arithmetic, so no digit appears that was not
+already in the file: ``0.07`` under ``0%`` reads ``7``, not ``7.000000000000001``.
 
 Per-sheet row, column and sheet-count caps keep a pathological workbook from
 producing an unusable wall of Markdown; each one is reported in the returned
 document's warnings when it applies.
+
+A formula whose result has never been computed has nothing to read, and such
+cells are emitted blank. This is the ordinary state of a workbook produced by a
+program rather than by a spreadsheet application, which is why the count of
+those cells is reported in the warnings rather than left for the reader to
+notice: a blank cell in a table looks like an empty cell, so without the count
+the omission is invisible.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from datetime import date, datetime, time
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -31,13 +59,66 @@ MAX_COLS = 100
 MAX_SHEETS = 50
 
 
-def _format(value: Any) -> str:
+_CURRENCY_CHARS = "$€£¥₩₹"
+
+_QUOTED_LITERAL = re.compile(r'"([^"]*)"')
+
+_BRACKET_CURRENCY = re.compile(r"\[\$([^\]-]+)")
+
+_BRACKET_SECTION = re.compile(r"\[[^\]]*\]")
+
+
+def _visible_format(number_format: str) -> str:
+    return _BRACKET_SECTION.sub("", _QUOTED_LITERAL.sub("", number_format))
+
+
+def _currency_symbol(number_format: str) -> str:
+    for bracketed in _BRACKET_CURRENCY.findall(number_format):
+        if any(char in _CURRENCY_CHARS for char in bracketed):
+            return bracketed.strip()
+    for literal in _QUOTED_LITERAL.findall(number_format):
+        if any(char in _CURRENCY_CHARS for char in literal):
+            return literal.strip()
+    for char in _visible_format(number_format):
+        if char in _CURRENCY_CHARS:
+            return char
+    return ""
+
+
+def _plain(value: float | int) -> str:
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value).strip()
+
+
+def _shifted_percent(value: float | int) -> str | None:
+    try:
+        shifted = format(Decimal(repr(value)).scaleb(2), "f")
+    except (InvalidOperation, ValueError, OverflowError):
+        return None
+    if "." in shifted:
+        shifted = shifted.rstrip("0").rstrip(".")
+    return shifted
+
+
+def _number(value: float | int, number_format: str) -> str:
+    if "%" in _visible_format(number_format):
+        shifted = _shifted_percent(value)
+        if shifted is not None:
+            return f"{shifted}%"
+        return _plain(value)
+    return _currency_symbol(number_format) + _plain(value)
+
+
+def _format(value: Any, number_format: str | None = None) -> str:
     if value is None:
         return ""
     if isinstance(value, datetime):
         return value.date().isoformat() if value.time() == time(0, 0) else value.isoformat(" ")
     if isinstance(value, (date, time)):
         return value.isoformat()
+    if number_format and isinstance(value, (int, float)) and not isinstance(value, bool):
+        return _number(value, number_format)
     if isinstance(value, float) and value.is_integer():
         return str(int(value))
     return str(value).strip()
@@ -47,11 +128,11 @@ def _sheet_rows(sheet: Any) -> tuple[tuple[tuple[str, ...], ...], bool]:
     rows: list[tuple[str, ...]] = []
     truncated = False
 
-    for raw in sheet.iter_rows(values_only=True):
+    for raw in sheet.iter_rows():
         if len(rows) >= MAX_ROWS_PER_SHEET:
             truncated = True
             break
-        cells = [_format(v) for v in raw[:MAX_COLS]]
+        cells = [_format(cell.value, cell.number_format) for cell in raw[:MAX_COLS]]
         while cells and not cells[-1]:
             cells.pop()
         rows.append(tuple(cells))
@@ -60,6 +141,40 @@ def _sheet_rows(sheet: Any) -> tuple[tuple[tuple[str, ...], ...], bool]:
         rows.pop()
 
     return tuple(rows), truncated
+
+
+def _uncached_formula_cells(values: Any, path: Path, names: list[str]) -> int:
+    import openpyxl
+
+    formulas = None
+    try:
+        formulas = openpyxl.load_workbook(str(path), read_only=True, data_only=False)
+        total = 0
+        for name in names:
+            value_rows = values[name].iter_rows(
+                values_only=True, max_row=MAX_ROWS_PER_SHEET, max_col=MAX_COLS
+            )
+            formula_rows = formulas[name].iter_rows(
+                values_only=True, max_row=MAX_ROWS_PER_SHEET, max_col=MAX_COLS
+            )
+            for value_row, formula_row in zip(value_rows, formula_rows, strict=False):
+                total += sum(
+                    1
+                    for value, formula in zip(value_row, formula_row, strict=False)
+                    if value is None and isinstance(formula, str) and formula.startswith("=")
+                )
+        return total
+    except Exception as exc:
+        logger.warning(
+            "xlsx formula-cache probe failed (%s) — this conversion cannot report "
+            "how many formula cells were emitted blank, so a workbook with "
+            "uncached formulas will look the same as one without",
+            type(exc).__name__,
+        )
+        return 0
+    finally:
+        if formulas is not None:
+            formulas.close()
 
 
 def extract(path: Path) -> MarkdownDoc:
@@ -74,6 +189,7 @@ def extract(path: Path) -> MarkdownDoc:
     blocks: list[Block] = []
     warnings: list[str] = []
     saw_value = False
+    uncached = 0
 
     try:
         names = workbook.sheetnames
@@ -94,14 +210,19 @@ def extract(path: Path) -> MarkdownDoc:
             blocks.append(Block(kind="table", rows=rows))
             if truncated:
                 warnings.append(f"truncated: sheet {name!r} exceeded {MAX_ROWS_PER_SHEET} rows")
+
+        uncached = _uncached_formula_cells(workbook, path, names[:MAX_SHEETS])
     finally:
         workbook.close()
 
-    if blocks and not saw_value:
+    if uncached:
         warnings.append(
-            "no cell values found — if this workbook is formula-only and has "
-            "never been opened by Excel, it carries no cached results to read"
+            f"best_effort: {uncached} formula cell(s) had no cached value and were "
+            "emitted as blank — this workbook has not been recalculated by a "
+            "spreadsheet application"
         )
+    elif blocks and not saw_value:
+        warnings.append("no cell values found — every cell in this workbook is empty")
 
     return MarkdownDoc(
         blocks=tuple(blocks),

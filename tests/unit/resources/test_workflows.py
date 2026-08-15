@@ -233,16 +233,18 @@ class TestErrors:
             return_value=httpx.Response(
                 402,
                 json={
-                    "error": {
-                        "code": "PRO_TIER_REQUIRED",
-                        "message": "Upgrade to Pro to fork workflows",
-                    }
+                    "code": "PRO_TIER_REQUIRED",
+                    "message": "Upgrade to Pro to fork workflows",
                 },
             )
         )
         with pytest.raises(APIError) as exc_info:
             await client.workflows.fork(source_spec_id="doc_analyzer")
         assert exc_info.value.status_code == 402
+        # The code, not just the status. A `PRO_TIER_REQUIRED` on a 402 is what
+        # routes this to `PlanRequiredError` rather than a bare `APIError`, and
+        # asserting only the status cannot tell those apart.
+        assert exc_info.value.code == "PRO_TIER_REQUIRED"
 
     @pytest.mark.asyncio
     @respx.mock
@@ -250,12 +252,13 @@ class TestErrors:
         respx.get(f"{API_BASE}/api/v1/workflows/uw_missing").mock(
             return_value=httpx.Response(
                 404,
-                json={"error": {"code": "WORKFLOW_NOT_FOUND", "message": "Workflow not found"}},
+                json={"code": "WORKFLOW_NOT_FOUND", "message": "Workflow not found"},
             )
         )
         with pytest.raises(APIError) as exc_info:
             await client.workflows.get("uw_missing")
         assert exc_info.value.status_code == 404
+        assert exc_info.value.code == "WORKFLOW_NOT_FOUND"
 
     @pytest.mark.asyncio
     @respx.mock
@@ -264,16 +267,15 @@ class TestErrors:
             return_value=httpx.Response(
                 409,
                 json={
-                    "error": {
-                        "code": "WORKFLOW_NOT_PUBLIC",
-                        "message": "Only public workflows can be liked",
-                    }
+                    "code": "WORKFLOW_NOT_PUBLIC",
+                    "message": "Only public workflows can be liked",
                 },
             )
         )
         with pytest.raises(APIError) as exc_info:
             await client.workflows.like("uw_priv")
         assert exc_info.value.status_code == 409
+        assert exc_info.value.code == "WORKFLOW_NOT_PUBLIC"
 
     @pytest.mark.asyncio
     @respx.mock
@@ -282,16 +284,15 @@ class TestErrors:
             return_value=httpx.Response(
                 409,
                 json={
-                    "error": {
-                        "code": "ITEM_VERSION_MISMATCH",
-                        "message": "Workflow was modified by a concurrent request",
-                    }
+                    "code": "ITEM_VERSION_MISMATCH",
+                    "message": "Workflow was modified by a concurrent request",
                 },
             )
         )
         with pytest.raises(APIError) as exc_info:
             await client.workflows.publish("uw_abc123", item_version=1)
         assert exc_info.value.status_code == 409
+        assert exc_info.value.code == "ITEM_VERSION_MISMATCH"
 
 
 # ── 4. Object-state — model parsing, stats wire shape, frozen ───────

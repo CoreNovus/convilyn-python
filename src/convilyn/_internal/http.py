@@ -547,12 +547,10 @@ def _maybe_emit_soft_limit(response: httpx.Response) -> None:
 def _decode_error(response: httpx.Response) -> APIError:
     """Translate an httpx response into the appropriate :class:`APIError` subclass.
 
-    Normalises three envelope shapes seen in the wild — the flat
-    ``{code, message, ...}``, FastAPI's default
-    ``{"detail": {code, message, ...}}``, and an older
-    ``{"error": {code, message, ...}}`` used by a few legacy endpoints.
-    Whichever shape arrives, the dispatch logic below sees the same
-    flat dict.
+    Normalises the two envelope shapes the API declares — the flat
+    ``{code, message, ...}`` and FastAPI's default
+    ``{"detail": {code, message, ...}}``. Whichever arrives, the dispatch
+    logic below sees the same flat dict.
 
     Status-aware dispatch:
         * 429 → :class:`RateLimitError`
@@ -608,17 +606,20 @@ def _decode_error(response: httpx.Response) -> APIError:
 
 
 def _flatten_error_envelope(payload: dict[str, Any]) -> dict[str, Any]:
-    """Return the inner error dict regardless of envelope shape.
+    """Unwrap FastAPI's ``{"detail": {...}}``; leave a flat payload alone.
 
-    The API returns tier-gate errors as an HTTP error envelope that
-    serialises to ``{"detail": {...}}``. Older endpoints emit
-    ``{"error": {...}}``. The fallback is the legacy flat shape.
+    Those are the only two shapes the API produces. Enumerated from
+    ``docs/contracts/**``, which is the agreed description of the wire rather
+    than a sample of it: every declared error body is either flat
+    ``{code, message, ...}`` or ``detail``-wrapped.
+
+    An envelope this does not recognise is returned unchanged rather than
+    unwrapped on a guess, so ``code`` misses and :func:`_decode_error` falls
+    back to the status-derived one. For a shape nothing produces, reporting the
+    status is more truthful than inventing a code from an arbitrary sub-dict.
     """
-    for key in ("detail", "error"):
-        nested = payload.get(key)
-        if isinstance(nested, dict):
-            return nested
-    return payload
+    nested = payload.get("detail")
+    return nested if isinstance(nested, dict) else payload
 
 
 def _coerce_int(value: Any) -> int | None:

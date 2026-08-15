@@ -82,11 +82,31 @@ commit.
 |---|---|
 | Remove/rename a public symbol, remove a CLI command/flag, change an exit code, narrow a method signature, change a response model field type | **major** (`X`) |
 | Add a new public symbol, resource method, CLI command/flag, model field, or exception subclass — backward compatible | **minor** (`Y`) |
+| **Refuse an input an existing method used to accept**, where the old behaviour risked destroying the caller's data | **minor** (`Y`), with a `Changed` entry that shows the migration |
 | Bug fix, doc fix, internal refactor with no public-surface change | **patch** (`Z`) |
 
 Adding a new keyword-only argument with a default, or a new exception
 subclass of an existing public base, is a **minor** change: existing
 `except APIError:` / call sites keep working.
+
+**The third row is narrow, and it exists because the second one did not cover a
+real case.** `download_to()` gained `overwrite: bool = False` — by the letter of
+the sentence above, a defaulted keyword-only argument, therefore minor. But that
+sentence earns "minor" with *existing call sites keep working*, and here they
+demonstrably do not: a script that re-downloaded over its previous result
+succeeded before and raises now. Read as "signature unchanged, so minor", the
+rule would have shipped a silent break under a patch.
+
+It is **not** major either, and the distinction is what the row records: what was
+removed is a behaviour that destroyed the caller's file without asking, which this
+package's own documentation already called wrong for the offline half. Charging a
+major version to stop doing that would price the fix out of ever landing.
+
+The bar is deliberately high — *the old behaviour risked destroying the caller's
+data*. A method that merely became stricter about, say, an argument's format does
+not qualify; that is a narrowed signature, and it is major. And a change under this
+row is never quiet: it goes in `Changed`, never `Added`, and the entry has to show
+the one-line migration.
 
 ## Known v1 limitation — goal events are polling-only
 

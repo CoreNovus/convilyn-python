@@ -274,7 +274,7 @@ class TestErrors:
         respx.get(f"{API_BASE}/api/v1/user_workflows/{UW}").mock(
             return_value=httpx.Response(
                 404,
-                json={"error": {"code": "WORKFLOW_NOT_FOUND", "message": "Workflow not found"}},
+                json={"code": "WORKFLOW_NOT_FOUND", "message": "Workflow not found"},
             )
         )
 
@@ -282,6 +282,7 @@ class TestErrors:
             await client.user_workflows.get(UW)
 
         assert info.value.status_code == 404
+        assert info.value.code == "WORKFLOW_NOT_FOUND"
 
     @pytest.mark.asyncio
     @respx.mock
@@ -290,10 +291,8 @@ class TestErrors:
             return_value=httpx.Response(
                 409,
                 json={
-                    "error": {
-                        "code": "WORKFLOW_IS_PUBLIC_USE_ARCHIVE",
-                        "message": "Archive the workflow before deleting.",
-                    }
+                    "code": "WORKFLOW_IS_PUBLIC_USE_ARCHIVE",
+                    "message": "Archive the workflow before deleting.",
                 },
             )
         )
@@ -302,6 +301,7 @@ class TestErrors:
             await client.user_workflows.delete(UW)
 
         assert info.value.status_code == 409
+        assert info.value.code == "WORKFLOW_IS_PUBLIC_USE_ARCHIVE"
 
 
 # ── 4. Object state ──────────────────────────────────────────────────
