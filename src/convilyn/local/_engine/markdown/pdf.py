@@ -27,11 +27,16 @@ record it, and the returned document says so.
 from __future__ import annotations
 
 import logging
+import re
 from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from convilyn.local._engine.markdown.heuristics import looks_like_heading
+from convilyn.local._engine.markdown.heuristics import (
+    SENTENCE_END,
+    has_cjk,
+    looks_like_heading,
+)
 from convilyn.local._engine.markdown.image_collector import ImageCollector
 from convilyn.local._engine.markdown.model import (
     Block,
@@ -50,8 +55,53 @@ _HEADING_TIERS = ((1.6, 2), (1.35, 3), (_HEADING_RATIO, 4))
 _LINE_TOLERANCE = 2.0
 
 
-def _line_key(top: float) -> int:
-    return int(top / _LINE_TOLERANCE)
+_SENTENCE_END = SENTENCE_END + "：:"
+
+_BULLET = re.compile(r"^(?:[-]\s*|[•▪●○◦‧·※∙]\s*|[–—-]\s+)")
+
+
+def _cluster_rows(words: list[dict]) -> list[list[dict]]:
+    rows: list[list[dict]] = []
+    for word in sorted(words, key=lambda w: w["top"]):
+        if rows and word["top"] - rows[-1][0]["top"] <= _LINE_TOLERANCE:
+            rows[-1].append(word)
+        else:
+            rows.append([word])
+    return rows
+
+
+def _join(left: str, right: str) -> str:
+    if not left:
+        return right
+    if not right:
+        return left
+    if has_cjk(left[-1]) or has_cjk(right[0]):
+        return left + right
+    return f"{left} {right}"
+
+
+def _continues(previous: tuple[str, float, bool], size: float, body: float) -> bool:
+    text, previous_size, _ = previous
+    if not text:
+        return False
+    if round(previous_size, 1) != round(size, 1):
+        return False
+    if body > 0 and previous_size >= body * _HEADING_RATIO:
+        return False
+    return text[-1] not in _SENTENCE_END
+
+
+def _merge_wrapped(lines: list[tuple[str, float]], body: float) -> list[tuple[str, float, bool]]:
+    merged: list[tuple[str, float, bool]] = []
+    for text, size in lines:
+        bullet = bool(_BULLET.match(text))
+        content = _BULLET.sub("", text, count=1) if bullet else text
+        if merged and not bullet and _continues(merged[-1], size, body):
+            previous_text, previous_size, previous_bullet = merged[-1]
+            merged[-1] = (_join(previous_text, content), previous_size, previous_bullet)
+        else:
+            merged.append((content, size, bullet))
+    return merged
 
 
 def _lines_with_sizes(page: Any, table_boxes: list[tuple]) -> list[tuple[str, float]]:
@@ -61,15 +111,11 @@ def _lines_with_sizes(page: Any, table_boxes: list[tuple]) -> list[tuple[str, fl
         logger.debug("pdf word extraction failed on a page (%s)", exc)
         return []
 
-    grouped: dict[int, list[dict]] = {}
-    for word in words:
-        if _in_any_box(word, table_boxes):
-            continue
-        grouped.setdefault(_line_key(word["top"]), []).append(word)
+    kept = [w for w in words if not _in_any_box(w, table_boxes)]
 
     lines: list[tuple[str, float]] = []
-    for key in sorted(grouped):
-        row = sorted(grouped[key], key=lambda w: w["x0"])
+    for row in _cluster_rows(kept):
+        row = sorted(row, key=lambda w: w["x0"])
         text = " ".join(w["text"] for w in row).strip()
         if not text:
             continue
@@ -176,7 +222,12 @@ def extract(path: Path) -> MarkdownDoc:
         if index:
             blocks.append(Block(kind="page_break"))
 
-        for text, size in lines:
+        for text, size, bullet in _merge_wrapped(lines, body):
+            if not text:
+                continue
+            if bullet:
+                blocks.append(Block(kind="list_item", text=text))
+                continue
             level = _heading_level(size, body)
             if level is None and looks_like_heading(text):
                 level = 3

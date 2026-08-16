@@ -237,3 +237,66 @@ class TestOutputPlacement:
 
         assert first.is_file()
         assert pdf.page_count(second) == 3
+
+
+# ── 8. The library's own exceptions never reach the caller (#4108) ────
+
+
+class TestEncryptedSourcesStayInTheTaxonomy:
+    """`docs/STABILITY.md` promises this namespace's errors are `LocalError`s.
+
+    Every operation opens the document with `PdfReader` and then touches
+    `.pages`, so an encrypted source raises `pypdf.errors.FileNotDecryptedError`
+    from inside the library — past the engine's own error class and past
+    `ValueError`, which were the only two shapes the five hand-rolled `except`
+    lists knew about. Measured before the fix: 7 of the 8 public operations
+    leaked it. Only `decrypt` was right, because it checks `is_encrypted` first.
+
+    Parametrised over the whole surface rather than the one operation the bug
+    was reported against — the report named `page_count`, and the count was
+    seven.
+    """
+
+    @pytest.fixture
+    def locked(self, document: Path, tmp_path: Path) -> Path:
+        out = tmp_path / "locked.pdf"
+        pdf.encrypt(document, out, password="s3cret")  # pragma: allowlist secret
+        return out
+
+    @pytest.mark.parametrize(
+        "operation",
+        [
+            pytest.param(lambda p, d: pdf.page_count(p), id="page_count"),
+            pytest.param(lambda p, d: pdf.extract_text(p), id="extract_text"),
+            pytest.param(lambda p, d: pdf.select(p, d / "o.pdf", pages="1"), id="select"),
+            pytest.param(lambda p, d: pdf.merge([p], d / "o.pdf"), id="merge"),
+            pytest.param(lambda p, d: pdf.rotate(p, d / "o.pdf"), id="rotate"),
+            pytest.param(lambda p, d: pdf.compress(p, d / "o.pdf"), id="compress"),
+            pytest.param(lambda p, d: pdf.burst(p, d / "b"), id="burst"),
+        ],
+    )
+    def test_an_encrypted_source_raises_this_namespaces_error(
+        self, locked: Path, tmp_path: Path, operation
+    ) -> None:
+        with pytest.raises(PdfOperationError):
+            operation(locked, tmp_path)
+
+    def test_decrypt_with_the_wrong_password_still_reports_that(
+        self, locked: Path, tmp_path: Path
+    ) -> None:
+        """The one operation that was already correct — kept so a fix that
+        routed everything through one guard cannot flatten its message."""
+        with pytest.raises(PdfOperationError, match="Incorrect password"):
+            pdf.decrypt(locked, tmp_path / "out.pdf", password="wrong")  # pragma: allowlist secret
+
+    def test_the_fixture_really_is_encrypted(self, locked: Path) -> None:
+        """Non-vacuity: every assertion above passes trivially if `encrypt`
+        silently produced an unprotected copy, because the operations would
+        simply succeed and never raise at all."""
+        assert PdfReader(locked).is_encrypted
+
+    def test_a_malformed_page_range_is_still_a_local_error(self, document: Path) -> None:
+        """The other shape the shared guard has to keep catching. Two of the
+        five hand-rolled sites had already forgotten this one."""
+        with pytest.raises(LocalError):
+            pdf.extract_text(document, pages="banana")

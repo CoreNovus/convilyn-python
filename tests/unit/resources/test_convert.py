@@ -284,6 +284,24 @@ class TestConvertBoundary:
                 )
 
     @pytest.mark.asyncio
+    async def test_a_path_string_in_file_raises_typeerror(self) -> None:
+        """`file="report.pdf"` used to reach `file.filename` and die with
+        `AttributeError: 'str' object has no attribute 'filename'` — an
+        implementation detail, from the one resource whose other two refusals
+        are careful `TypeError`s (#4108)."""
+        async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+            with pytest.raises(TypeError, match="expects an uploaded File object"):
+                await client.convert.create(file="report.pdf", target_format="md")  # type: ignore[arg-type]
+
+    @pytest.mark.asyncio
+    async def test_the_refusal_names_both_ways_forward(self) -> None:
+        """A refusal that does not say what to do instead is half an answer."""
+        async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+            with pytest.raises(TypeError) as exc:
+                await client.convert.create(file="report.pdf", target_format="md")  # type: ignore[arg-type]
+        assert "file_id=" in str(exc.value) and "files.upload(" in str(exc.value)
+
+    @pytest.mark.asyncio
     async def test_unknown_extension_requires_explicit_source_format(self) -> None:
         weird_file = File.model_validate(
             {

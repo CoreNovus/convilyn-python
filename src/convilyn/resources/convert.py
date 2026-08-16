@@ -219,6 +219,18 @@ class AsyncConvert:
         """
         if file is not None and file_id is not None:
             raise TypeError("create() accepts either `file` or `file_id`, not both")
+        if file is not None and not isinstance(file, File):
+            # A path string is the natural guess for a parameter called `file`,
+            # and the signature is already clear that it is not — but a caller
+            # who does not run a type checker used to learn that from
+            # `AttributeError: 'str' object has no attribute 'filename'`, two
+            # frames down. The two shapes above are already TypeErrors; this is
+            # the third one that was missing, not a new kind of refusal.
+            raise TypeError(
+                "file= expects an uploaded File object; to convert by id use "
+                "file_id=, or upload first with files.upload(path) "
+                f"(got {type(file).__name__})"
+            )
         if file is not None:
             inferred = source_format or self._infer_source_format(file.filename)
             if inferred is None:

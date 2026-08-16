@@ -25,8 +25,10 @@ untouched, so an operation can never consume its own input.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Iterator, Sequence
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 from convilyn.local._probe import package_available
 from convilyn.local.errors import MissingDependencyError, PdfOperationError
@@ -81,16 +83,54 @@ def _translate(error: Exception) -> PdfOperationError:
     return PdfOperationError(str(error))
 
 
+@contextmanager
+def _engine() -> Iterator[Any]:
+    """Yield the PDF engine, translating everything a call into it can raise.
+
+    **Three shapes, not two**, and the third is why this exists as one place
+    rather than an ``except`` list per function:
+
+    * ``operations.PdfOperationError`` — the engine's own refusal.
+    * ``ValueError`` — a malformed page range. Raised by the parser as
+      ``ValueError`` because it is bad input rather than a document problem; a
+      caller of this namespace should still only have to catch ``LocalError``.
+    * ``pypdf.errors.PyPdfError`` — the *library's* own family, which the engine
+      does not wrap. Every operation opens the document with ``PdfReader`` and
+      then touches ``.pages``, so an encrypted source raises
+      ``FileNotDecryptedError`` from inside pypdf and past both clauses above.
+
+    That third shape leaked from **seven of the eight** public operations —
+    ``page_count``, ``extract_text``, ``select``, ``merge``, ``rotate``,
+    ``compress`` and ``burst``. Only :func:`decrypt` was correct, because it
+    checks ``is_encrypted`` itself before reading. The measured symptom is a
+    caller who wrote ``except LocalError`` getting
+    ``pypdf.errors.FileNotDecryptedError: File has not been decrypted``.
+
+    The previous shape was ``_run`` plus four hand-rolled copies, and ``_run``'s
+    own docstring already made this argument — "six copies of the same two
+    ``except`` clauses is six places for one of them to be forgotten". It was
+    right: two of the four copies had already forgotten ``ValueError``, and all
+    five had never had the third clause at all. So the guard now covers getting
+    the engine as well as translating from it, and a new operation cannot be
+    written without it.
+    """
+    operations = _operations()
+    # Safe to import: `_operations` has already refused when pypdf is absent.
+    from pypdf.errors import PyPdfError
+
+    try:
+        yield operations
+    except (operations.PdfOperationError, ValueError, PyPdfError) as exc:
+        raise _translate(exc) from exc
+
+
 # ── Reading ──────────────────────────────────────────────────────────
 
 
 def page_count(source: str | Path) -> int:
     """How many pages the document has."""
-    operations = _operations()
-    try:
+    with _engine() as operations:
         return operations.page_count(Path(source))
-    except operations.PdfOperationError as exc:
-        raise _translate(exc) from exc
 
 
 def extract_text(source: str | Path, *, pages: str | None = None) -> str:
@@ -100,13 +140,8 @@ def extract_text(source: str | Path, *, pages: str | None = None) -> str:
     honest answer and not a failure — recovering glyphs from an image is OCR,
     which this does not attempt and which the platform meters separately.
     """
-    operations = _operations()
-    try:
+    with _engine() as operations:
         return operations.extract_text(Path(source), pages=pages)
-    except operations.PdfOperationError as exc:
-        raise _translate(exc) from exc
-    except ValueError as exc:
-        raise _translate(exc) from exc
 
 
 # ── Rearranging ──────────────────────────────────────────────────────
@@ -127,12 +162,9 @@ def select(source: str | Path, output: str | Path, *, pages: str | None = None) 
 
 def merge(sources: Iterable[str | Path], output: str | Path) -> Path:
     """Concatenate several PDFs into one, in the order given."""
-    operations = _operations()
     paths: Sequence[Path] = [Path(s) for s in sources]
-    try:
+    with _engine() as operations:
         return operations.merge(paths, Path(output))
-    except operations.PdfOperationError as exc:
-        raise _translate(exc) from exc
 
 
 def rotate(
@@ -188,14 +220,11 @@ def burst(source: str | Path, out_dir: str | Path, *, pages: str | None = None) 
     the names here are generated rather than chosen, so a collision means a
     previous burst of the same document, not somebody's unrelated file.
     """
-    operations = _operations()
     directory = Path(out_dir)
-    try:
+    # The guard wraps the engine call ONLY. Everything below writes files, and a
+    # write failure is not an engine refusal to be re-badged as one.
+    with _engine() as operations:
         produced = operations.burst(Path(source), pages=pages)
-    except operations.PdfOperationError as exc:
-        raise _translate(exc) from exc
-    except ValueError as exc:
-        raise _translate(exc) from exc
 
     directory.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
@@ -207,22 +236,16 @@ def burst(source: str | Path, out_dir: str | Path, *, pages: str | None = None) 
 
 
 def _run(name: str, source: Path, output: Path, **kwargs: object) -> Path:
-    """Call one engine operation, translating both refusal shapes it can raise.
+    """Call one engine operation that reads a path and writes a path.
 
     Written once rather than per function: each of these differs only in which
-    name it calls and which keywords it forwards, and six copies of the same
-    two ``except`` clauses is six places for one of them to be forgotten.
+    name it calls and which keywords it forwards. The translation itself lives
+    in :func:`_engine`, which the four operations with a different shape use
+    directly — so there is one list of what a call into the engine can raise,
+    not two that drift apart.
     """
-    operations = _operations()
-    try:
+    with _engine() as operations:
         return getattr(operations, name)(source, output, **kwargs)
-    except operations.PdfOperationError as exc:
-        raise _translate(exc) from exc
-    except ValueError as exc:
-        # A malformed page range. Raised by the parser as ValueError because it
-        # is bad input rather than a document problem; a caller of this
-        # namespace should still only have to catch LocalError.
-        raise _translate(exc) from exc
 
 
 __all__ = [

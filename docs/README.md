@@ -59,7 +59,15 @@ convilyn local doctor
 
 Every route that is unavailable says **why**, and whether installing something
 fixes it — a missing extra, a Pillow plugin we do not ship, or a build that
-simply cannot write that format. No silent fallbacks, no partly-converted files.
+simply cannot write that format. Offline, that means no silent fallbacks and no
+partly-converted files: a route either runs or refuses.
+
+The scope of that sentence is deliberate. It is a property of the engine in this
+package, which is why `convilyn local doctor` can enumerate it. The hosted
+conversion API is a different codebase with its own quality labels — it publishes
+a `qualityMode` per route at `GET /api/v1/{document,image,media}/support`, and a
+`best_effort` route is telling you in advance that something is dropped or
+flattened. Read that field before assuming a hosted conversion is lossless.
 
 ## What runs offline
 

@@ -32,6 +32,10 @@ README = DOCS_DIR / "README.md"
 QUICKSTART = DOCS_DIR / "QUICKSTART.md"
 AGENT = SDK_CLIENT_ROOT / "AGENT.md"
 
+#: The body of a fenced ```python block — the only place in a markdown file
+#: where a line is code a reader would run, rather than prose about code.
+_PYTHON_BLOCK = re.compile(r"^```(?:python|py)\n(.*?)^```", re.MULTILINE | re.DOTALL)
+
 
 # ── 1. Logic — every example parses ─────────────────────────────────
 
@@ -85,6 +89,26 @@ class TestQuickstartImportsAreValid:
 
     @pytest.fixture
     def quickstart_imports(self) -> set[str]:
+        """Names imported in QUICKSTART's **Python code blocks**.
+
+        Scoped to fenced ```python blocks, not the whole file. The scan used to
+        read every line, and prose is where a doc legitimately writes an import
+        down in order to say it does **not** work:
+
+            `from convilyn import UnsupportedRouteError` raises `ImportError`,
+            and that is deliberate rather than an oversight
+
+        That sentence turned this test red while being exactly right, which is
+        the failure `turbo-lane-cost-classes.md` records at length — a text scan
+        tripping over the document's own explanation of itself.
+
+        Narrowing loses nothing this test ever caught. The defect that prompted
+        it (#4108: QUICKSTART listing `UnsupportedRouteError` among the
+        top-level exceptions) lived in a **prose list** and was invisible here
+        from the day it was written. `test_quickstart_exception_list.py` is what
+        catches that; this fixture's job is the imports a reader copies out of a
+        code block, which is what its name says.
+        """
         text = QUICKSTART.read_text(encoding="utf-8")
         # Capture imports like "from convilyn import X, Y, Z" — we only
         # care about top-level convilyn (not convilyn._internal).
@@ -92,10 +116,18 @@ class TestQuickstartImportsAreValid:
         # accidentally pick up follow-on code.
         pattern = re.compile(r"from convilyn import ([\w, ]+)")
         names: set[str] = set()
-        for match in pattern.finditer(text):
-            for raw in match.group(1).split(","):
-                names.add(raw.strip())
+        for block in _PYTHON_BLOCK.findall(text):
+            for match in pattern.finditer(block):
+                for raw in match.group(1).split(","):
+                    names.add(raw.strip())
         return names
+
+    def test_the_extraction_finds_the_documented_imports(
+        self, quickstart_imports: set[str]
+    ) -> None:
+        """Non-vacuity. Narrowing a scanner is how one stops finding anything,
+        and `assert not missing` passes on an empty set."""
+        assert {"Convilyn", "ConvilynError", "AsyncConvilyn"} <= quickstart_imports
 
     @staticmethod
     def _importable(name: str) -> bool:

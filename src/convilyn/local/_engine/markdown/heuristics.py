@@ -19,6 +19,30 @@ _NUMBERED_PREFIX = re.compile(r"^\d+\.")
 
 _HEADING_STARTS = ("Chapter", "Section", "Part", "Introduction", "Conclusion")
 
+SENTENCE_END = "。！？!?.；;…」』】）)》〉"
+
+_UNCASED_SCRIPTS = (
+    (0x2E80, 0x2FFF),
+    (0x3000, 0x303F),
+    (0x3040, 0x30FF),
+    (0x3400, 0x4DBF),
+    (0x4E00, 0x9FFF),
+    (0xAC00, 0xD7AF),
+    (0xF900, 0xFAFF),
+    (0xFF00, 0xFFEF),
+)
+
+
+def has_cjk(text: str) -> bool:
+    """True when the text contains a character from a case-less CJK script.
+
+    Chinese, Japanese and Korean have no upper and lower case. `str.isupper()`
+    skips uncased characters and answers about whatever is left, so a Chinese
+    sentence carrying a single Latin acronym reports as upper case — and any rule
+    using that as a heading signal fires on ordinary prose.
+    """
+    return any(any(low <= ord(char) <= high for low, high in _UNCASED_SCRIPTS) for char in text)
+
 
 def looks_like_heading(text: str) -> bool:
     """True when a line of unstyled text is probably a heading.
@@ -29,10 +53,10 @@ def looks_like_heading(text: str) -> bool:
     if len(text) > _MAX_HEADING_CHARS:
         return False
 
-    if text.isupper() and len(text) > 5:
+    if text.isupper() and len(text) > 5 and not has_cjk(text):
         return True
 
-    if _NUMBERED_PREFIX.match(text):
+    if _NUMBERED_PREFIX.match(text) and text[-1] not in SENTENCE_END:
         return True
 
     return any(text.startswith(word) for word in _HEADING_STARTS)

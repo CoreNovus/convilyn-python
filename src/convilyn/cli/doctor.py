@@ -23,14 +23,30 @@ from convilyn._internal.http import DEFAULT_BASE_URL, ENV_BASE_URL, resolve_base
 from convilyn.cli._exit_codes import EXIT_API_ERROR, EXIT_USAGE
 from convilyn.cli._output import OutputRenderer, make_renderer
 
+# The two statuses that mean "the backend understood the request and refused
+# these credentials", as opposed to "the backend is having a bad time". 401 is a
+# rejected key; 403 is a key that is real but not entitled to this call. Both
+# are answers about the caller's setup, which is what `doctor` reports on.
+_AUTH_REJECTED = frozenset({401, 403})
+
 
 @dataclass(frozen=True)
 class Check:
-    """One diagnostic line — printed by both renderers."""
+    """One diagnostic line — printed by both renderers.
+
+    ``exit_code`` is what a **FAIL** of this particular check means, and it
+    travels with the check because only the check knows. It replaced a line in
+    :func:`doctor_command` that matched on ``c.name == "Backend health"`` — so
+    every other kind of failure was an `EXIT_USAGE`, including a rejected API
+    key, which `_exit_codes` documents as the textbook `EXIT_API_ERROR`
+    ("auth, 4xx, 5xx after retries"). Matching on a display string also means
+    renaming a check silently reclassifies it.
+    """
 
     name: str
-    status: str  # "OK" / "WARN" / "FAIL"
+    status: str  # "OK" / "WARN" / "FAIL" / "SKIP"
     detail: str
+    exit_code: int = EXIT_USAGE
 
 
 @click.command(
@@ -53,13 +69,14 @@ def doctor_command(json_output: bool, ping: bool) -> None:
     checks = _collect_checks(ping=ping)
     _emit_checks(renderer, checks)
 
-    fail_count = sum(1 for c in checks if c.status == "FAIL")
-    if fail_count > 0:
-        # Pick the exit code based on the kind of failures. Auth /
-        # config gaps are usage errors; an unreachable backend is an
-        # API error.
-        api_failures = any(c.status == "FAIL" and c.name == "Backend health" for c in checks)
-        raise SystemExit(EXIT_API_ERROR if api_failures else EXIT_USAGE)
+    failures = [c for c in checks if c.status == "FAIL"]
+    if failures:
+        # Each check carries what its own failure means (see `Check`). An API
+        # failure outranks a config one: if the backend rejected us, that is the
+        # thing to report even when something local is also unset.
+        if any(c.exit_code == EXIT_API_ERROR for c in failures):
+            raise SystemExit(EXIT_API_ERROR)
+        raise SystemExit(EXIT_USAGE)
 
 
 # ── Diagnostic engine (testable) ─────────────────────────────────────
@@ -78,8 +95,8 @@ def _collect_checks(*, ping: bool) -> list[Check]:
         checks.append(_check_backend_health())
         # Tier check only runs once /api/v1/health has confirmed the
         # backend is reachable AND an API key is present — otherwise
-        # the round-trip is guaranteed to fail. Advisory (WARN, never
-        # FAIL): a missing tier signal doesn't break the SDK.
+        # the round-trip is guaranteed to fail. Mostly advisory, with one
+        # exception: see `_check_account_tier` on 401/403.
         if os.environ.get(ENV_API_KEY):
             checks.append(_check_account_tier())
     else:
@@ -143,12 +160,15 @@ def _check_backend_health() -> Check:
     try:
         response = httpx.get(url, timeout=5.0)
     except httpx.HTTPError as exc:
-        return Check("Backend health", "FAIL", f"{type(exc).__name__}: {exc}")
+        return Check(
+            "Backend health", "FAIL", f"{type(exc).__name__}: {exc}", exit_code=EXIT_API_ERROR
+        )
     if response.status_code >= 400:
         return Check(
             "Backend health",
             "FAIL",
             f"HTTP {response.status_code} {response.reason_phrase}",
+            exit_code=EXIT_API_ERROR,
         )
     return Check("Backend health", "OK", f"{response.status_code} {response.reason_phrase}")
 
@@ -156,11 +176,24 @@ def _check_backend_health() -> Check:
 def _check_account_tier() -> Check:
     """Report the caller's current billing tier via ``client.account.get_plan()``.
 
-    Advisory — surfaces the tier so a free user sees what they'll hit
-    when calling Pro-only endpoints (workflow fork / publish). Any
-    error here is non-fatal: the check returns WARN status, never
-    FAIL, because a degraded tier query shouldn't block the doctor
-    diagnostic that already passed every required check.
+    Mostly advisory — it surfaces the tier so a free user sees what they'll hit
+    when calling Pro-only endpoints (workflow fork / publish), and a degraded
+    tier query should not fail a diagnostic whose required checks all passed.
+
+    **401 and 403 are the exception, and they are the whole point of the
+    command.** The original wording — "any error here is non-fatal" — was right
+    about a 5xx and wrong about a rejected key: it classified "the backend
+    hiccuped" and "your credentials are refused" as the same event, so
+    ``doctor --ping`` printed ``All checks passed.`` and exited 0 against a key
+    the API rejects. Verified against both dev and prod, the latter with a
+    fabricated key. ``doctor`` is what people put in the first step of CI, so
+    that answer carries a broken key all the way downstream before it surfaces.
+
+    So the split is on the status code, which is the thing that actually
+    distinguishes the two cases. There is deliberately no ``--strict`` flag:
+    once 401/403 is a failure there is no second reading left for a flag to
+    select, and a flag with one meaning is the speculative configuration
+    ``engineering-principles.md`` P2 refuses.
 
     Imports the SDK lazily so importing the doctor module doesn't pull
     in the entire client surface — keeps the CLI snappy.
@@ -178,6 +211,14 @@ def _check_account_tier() -> Check:
             plan = client.account.get_plan()
         return Check("Account tier", "OK", f"tier={plan.tier}")
     except APIError as exc:
+        if exc.status_code in _AUTH_REJECTED:
+            return Check(
+                "Account tier",
+                "FAIL",
+                f"the API rejected this key: HTTP {exc.status_code} {exc.code} — "
+                f"check {ENV_API_KEY} is a key for {base_url}",
+                exit_code=EXIT_API_ERROR,
+            )
         return Check(
             "Account tier",
             "WARN",
@@ -206,11 +247,18 @@ def _mask_secret(value: str) -> str:
 # ── Rendering ────────────────────────────────────────────────────────
 
 
+#: Check status → the renderer event kind that draws it. A FAIL used to render
+#: through the "warn" kind, so the glyph on a failed check was `!` — the same
+#: one an advisory line gets. `_output._GLYPHS` has carried an "error" kind (✗)
+#: the whole time; nothing was reaching for it.
+_EVENT_KIND = {"OK": "ok", "FAIL": "error"}
+
+
 def _emit_checks(renderer: OutputRenderer, checks: list[Check]) -> None:
     """Drive both renderers from the same check list (DRY across modes)."""
     for check in checks:
         renderer.event(
-            "ok" if check.status == "OK" else "warn",
+            _EVENT_KIND.get(check.status, "warn"),
             message=f"[{check.status}] {check.name}: {check.detail}",
         )
 
@@ -223,7 +271,22 @@ def _emit_checks(renderer: OutputRenderer, checks: list[Check]) -> None:
 
 
 def _doctor_summary(checks: list[Check]) -> str:
-    failures = [c for c in checks if c.status == "FAIL"]
-    if not failures:
+    """The last line, which has to agree with what was printed above it.
+
+    "All checks passed." was emitted whenever nothing had status FAIL — so a run
+    that printed a WARN line ended by saying every check passed, contradicting
+    its own output two lines earlier. Warnings are now counted, and the sentence
+    claiming a clean run is reserved for one.
+    """
+    failed = sum(1 for c in checks if c.status == "FAIL")
+    warned = sum(1 for c in checks if c.status == "WARN")
+    if not failed and not warned:
         return "All checks passed."
-    return f"{len(failures)} of {len(checks)} checks failed."
+    parts = []
+    if failed:
+        parts.append(f"{failed} failed")
+    if warned:
+        parts.append(f"{warned} warned")
+    passed = sum(1 for c in checks if c.status == "OK")
+    parts.append(f"{passed} passed")
+    return ", ".join(parts) + "."

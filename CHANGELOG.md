@@ -3,6 +3,110 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [Semantic Versioning](https://semver.org/).
 
+## [2.1.0] - 2026-08-16
+
+### Fixed
+
+- **PDF → Markdown rebuilds paragraphs instead of emitting one per visual line.**
+  A PDF stores glyph positions, not paragraphs, so a Chinese paragraph wrapping
+  over four lines arrived as four paragraphs — and the font-size pass then
+  promoted some of them to headings.
+
+  Measured on a 4-page Chinese whitepaper and a 12-page PRD, against the same
+  documents' `.docx` originals as the reference:
+
+  | | headings before | headings after | `.docx` reference |
+  | --- | ---: | ---: | ---: |
+  | whitepaper | 17 | **7** | 7 |
+  | PRD | 129 | **32** | 32 |
+
+  List items went from 0 to 7 and 0 to 32; table extraction is unchanged.
+
+  **CJK text is joined with no space**, because Chinese and Japanese put none
+  between words — a line break there carries no character, and inserting one
+  invents data. Latin keeps its space, where the break really is standing in
+  for one.
+
+  Three defects sat behind this:
+
+  - Lines were grouped by `int(top / tolerance)` — a bucket, not a distance. Two
+    words 1.8pt apart landed either together or apart depending on where the
+    line sat on the page, which is how a numbered heading arrived as `#### 摘要`
+    followed by `#### 1.`.
+  - Bullets were invisible. Word emits them from a symbol font as Private Use
+    Area codepoints (U+F0B7), which render as nothing — so a list looked like
+    prose with a leading blank.
+  - `str.isupper()` was used as a heading signal. It skips uncased characters
+    and answers about whatever is left, so a Chinese sentence containing one
+    Latin acronym read as upper case. And a leading `1.` promoted numbered
+    *list items* to headings; a finished sentence now distinguishes them.
+
+- **`convilyn doctor --ping` no longer reports success when the API rejects your
+  key.** A `401` or `403` from the tier probe is now a **FAIL** with exit code
+  `2`, not a `WARN` with exit code `0`.
+
+  It mattered because `doctor` is what people put in the first step of CI. The
+  old classifier could not tell "the backend hiccuped" from "your credentials
+  are refused" — every `APIError` was advisory — so a broken key produced
+  `All checks passed.` and travelled downstream until something else failed for
+  a reason that looked unrelated.
+
+  A 5xx or a transport error stays advisory, deliberately: the required checks
+  did pass, and an unreachable optional signal is not a broken environment.
+
+  Two smaller fixes ride along. The exit code now comes from the check that
+  failed rather than from matching its display name, so an auth failure is an
+  `EXIT_API_ERROR` instead of an `EXIT_USAGE`. And the summary line counts
+  warnings — `All checks passed.` is now reserved for a run with none, rather
+  than printed above a `WARN` line it contradicts.
+
+- **`convilyn.local.pdf` no longer leaks `pypdf`'s exception types.** An
+  encrypted source raised `pypdf.errors.FileNotDecryptedError` out of **seven of
+  the eight** operations — `page_count`, `extract_text`, `select`, `merge`,
+  `rotate`, `compress`, `burst` — past an `except LocalError` that
+  `docs/STABILITY.md` says is enough. All of them now raise
+  `PdfOperationError`.
+
+  The translation had been hand-rolled at five call sites with three different
+  `except` lists; it is now one guard that every operation goes through, so the
+  next one added cannot be written without it.
+
+- **`convert.create(file="report.pdf")` raises `TypeError` with an explanation**
+  instead of `AttributeError: 'str' object has no attribute 'filename'` from two
+  frames down. The message names both ways forward: `file_id=` for an id, or
+  `files.upload(path)` first. The signature was always right and a type checker
+  always caught this; the fix is for callers who do not run one.
+
+### Documentation
+
+- **The typed-exception list in QUICKSTART section 4 is now the exceptions this
+  package exports, and a test keeps it that way.** It had named
+  `UnsupportedRouteError` under a `from convilyn import ...` heading — that name
+  lives in `convilyn.local` and importing it from the top level is an
+  `ImportError` — and listed 6 of the 14 catchable types.
+
+  `UnsupportedRouteError` is deliberately **not** promoted to the top-level
+  namespace: it is the offline engine's answer about what this machine can
+  convert, and the offline engine ships behind extras. The list now has a
+  section per namespace.
+
+  Also noted there: `JobError` is exported and ends in `Error` but is a pydantic
+  model, not an exception. `except JobError` is a `TypeError` at runtime.
+
+- QUICKSTART documents `max_rows` / `--max-rows`, and `goals.understand()` /
+  `goals.to_markdown()` — all three shipped in 2.0.0 with no section to read.
+
+- QUICKSTART says outright that **CSV, XML and plain text get bigger** when
+  rendered to Markdown (measured: +3.1% and +33.2% in tokens), and that the
+  conversion earns its keep on formats whose structure is locked in a binary
+  container. The tool converts them because the route is real; nothing said it
+  costs you tokens rather than saving them.
+
+- `docs/README.md`'s "no silent fallbacks, no partly-converted files" is scoped
+  to the offline engine, which is where it is true and where `convilyn local
+  doctor` can enumerate it. The hosted API publishes a `qualityMode` per route,
+  and the sentence now points at it.
+
 ## [2.0.0] - 2026-08-15
 
 ### Added

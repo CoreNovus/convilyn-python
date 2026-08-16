@@ -179,6 +179,49 @@ Structure survives the conversion: headings stay headings, lists stay lists,
 tables become GitHub-Flavoured Markdown tables, and embedded images are written
 to an `assets/` directory beside the Markdown so their links resolve.
 
+#### When → Markdown is the wrong move
+
+**CSV, XML and plain text are already text, and rendering them as Markdown makes
+them bigger.** Measured on a real corpus:
+
+| source | as-is | → Markdown | change |
+| --- | ---: | ---: | ---: |
+| CSV | 182,588 tokens | 188,335 | **+3.1%** |
+| XML | 1,121 tokens | 1,493 | **+33.2%** |
+
+A Markdown table's `|` and `---` are pure overhead when the source had no
+container to open. If you are feeding a model, read those files directly.
+
+This conversion earns its keep on formats whose structure is *locked inside a
+binary container* — `.docx`, `.pdf`, `.pptx`, `.xlsx` — where getting the text
+and the tables out is the whole job. The tool will happily convert a `.csv`
+because the route is real; it just costs you tokens rather than saving them.
+
+#### Very large CSVs: `max_rows`
+
+Row-based sources are capped by default, so a million-row export does not become
+a million-row Markdown table by accident. The conversion says so in
+`result.warnings` when it truncates:
+
+```
+truncated: only the first 5000 data rows were converted
+```
+
+Raise the cap, or remove it entirely with `0`:
+
+```python
+local.convert("export.csv", to="md", max_rows=50_000)
+local.convert("export.csv", to="md", max_rows=0)      # the whole file
+```
+
+```bash
+convilyn local convert export.csv --to md --max-rows 50000
+```
+
+The count is **data rows** — the header is not charged to it. Passing it for a
+source that has no rows (`max_rows` on a `.docx`) is an error rather than a
+silent no-op, so a cap you believed was applied never quietly wasn't.
+
 #### Where images land
 
 Converting one file puts them straight into `assets/`:
@@ -333,30 +376,78 @@ One thing `overwrite=True` does **not** do: write through a symlink. A symlink a
 the destination is refused either way, because following it would put the bytes
 somewhere you did not name.
 
-If any step fails (auth, transport, conversion error) you get a typed
-exception: `AuthError`, `APIError`, `RetryExhaustedError`,
-`JobFailedError`, `JobTimeoutError`, and `UnsupportedRouteError` when the two
-formats name no conversion this platform performs. Catch the base
-`ConvilynError` to handle them all uniformly:
+If any step fails (auth, transport, conversion error) you get a typed exception.
+Every one of them descends from `ConvilynError`, so one `except` handles them
+all:
 
 ```python
 from convilyn import Convilyn, ConvilynError
 
 try:
     job = client.convert.create_and_wait(file=f, target_format="mp3")
-except ConvilynError as exc:      # covers every one of the above
+except ConvilynError as exc:      # covers every type listed below
     print("conversion failed:", exc)
 ```
 
-Two things it deliberately does **not** cover, because they are not the API's
-answer to anything:
+Catch a specific one when you can actually do something different about it —
+top up on `QuotaExceededError`, back off on `RateLimitError`, fall back to file
+conversion on `UnderstandUnavailableError`.
+
+**Importable from `convilyn`:**
+
+<!-- exceptions:cloud:begin — pinned by tests/integration/test_quickstart_exception_list.py -->
+| | |
+|---|---|
+| `ConvilynError` | the base; every type below is a subclass |
+| `AuthError` | the key is missing, malformed, or rejected |
+| `APIError` | the API answered with an error status |
+| `RateLimitError` | too many requests — back off and retry |
+| `QuotaExceededError` | the plan's allowance for this call is used up |
+| `PlanRequiredError` | the call needs a tier this account is not on |
+| `RetryExhaustedError` | retried to the configured limit and still failing |
+| `S3UploadError` | the upload itself failed, before any job existed |
+| `JobFailedError` | a conversion job finished with `status=failed` |
+| `JobTimeoutError` | `create_and_wait` gave up before the job finished |
+| `GoalJobFailedError` | the workflow-lane equivalent of `JobFailedError` |
+| `GoalJobTimeoutError` | the workflow-lane equivalent of `JobTimeoutError` |
+| `UnderstandUnavailableError` | `goals.understand` / `goals.to_markdown` is not served by the connected platform |
+| `WebSocketError` | the event stream dropped or refused the connection |
+<!-- exceptions:cloud:end -->
+
+**Importable from `convilyn.local`** — the offline engine's own refusals. They
+are still `ConvilynError` subclasses (via `LocalError`), so the `except` above
+catches them too; only the import path differs:
+
+<!-- exceptions:local:begin — pinned by tests/integration/test_quickstart_exception_list.py -->
+| | |
+|---|---|
+| `convilyn.local.LocalError` | the base for this namespace |
+| `convilyn.local.UnsupportedRouteError` | the two formats name no conversion this engine performs |
+| `convilyn.local.MissingDependencyError` | the route works, but an extra or a system tool is not installed |
+| `convilyn.local.ConversionFailedError` | the conversion was attempted and did not produce a usable result |
+| `convilyn.local.PdfOperationError` | a `convilyn.local.pdf` operation was refused |
+<!-- exceptions:local:end -->
+
+`from convilyn import UnsupportedRouteError` raises `ImportError`, and that is
+deliberate rather than an oversight: it is the *offline engine's* answer about
+what this machine can convert, and the offline engine ships behind extras
+(`convilyn[pdf]` and friends). Hoisting it into the top-level namespace would
+put a name there that means nothing on a bare install.
+
+Three things this taxonomy deliberately does **not** cover, because they are not
+the API's answer to anything:
 
 - `FileExistsError` from a download whose destination already exists — the
   destination's problem, and `overwrite=True` is the fix.
 - `ValueError` / `TypeError` from arguments that do not make sense — `upload()`
-  with neither a path nor content, a `page_range` on an image conversion. Those
-  mean the call is wrong, not that the platform refused it, and Python already
-  has names for them.
+  with neither a path nor content, `create(file="report.pdf")` when `file=`
+  wants an uploaded `File`, a `page_range` on an image conversion. Those mean
+  the call is wrong, not that the platform refused it, and Python already has
+  names for them.
+- `JobError` is **not** an exception, despite the name and despite being
+  exported from `convilyn`. It is the model behind `job.error` — a `code` and a
+  `message` read off a failed job. `except JobError` is a `TypeError` at
+  runtime.
 
 ## 5. Convert a file (CLI)
 
@@ -602,6 +693,55 @@ Editing / validating / publishing stay in the web Builder — the SDK is
 a thin data-plane client for the verticals you ship, not a second
 builder UI. Community workflows by *other* authors live under
 `client.workflows` (search / fork / like).
+
+### 7.7 Extraction — `goals.understand()` and `goals.to_markdown()`
+
+These two are for content that has to be **extracted** before it can be read:
+a scanned page with no text layer, a figure that needs describing. That work
+calls per-unit billed third-party services, so unlike `client.convert` it
+**costs credits**.
+
+`understand()` returns data in a shape you specify, and the platform grounds
+every value against the input before returning it:
+
+```python
+result = client.goals.understand(
+    ["file_abc"],
+    schema={                      # a JSON Schema dict — no extra dependency
+        "type": "object",
+        "properties": {
+            "invoice_no": {"type": "string"},
+            "total": {"type": "number"},
+        },
+        "required": ["invoice_no", "total"],
+    },
+    instructions="The total is the figure after tax.",   # optional steer
+)
+```
+
+`to_markdown()` is the unstructured sibling — it returns a Markdown string.
+
+**Before reaching for `to_markdown()`, check you actually need it.** Rendering a
+`.docx` / `.pdf` / `.pptx` / `.xlsx` to Markdown is deterministic file
+conversion, which is free on every plan and is what `client.convert` (or
+`convilyn local convert`) does. `to_markdown()` earns its cost only when the
+content is not there to be read — a scan, an image, a diagram.
+
+Both raise `UnderstandUnavailableError` when the connected platform does not
+serve them yet, and the message names the free alternative. That is the current
+state of the hosted platform, so write the fallback:
+
+```python
+try:
+    md = client.goals.to_markdown(["file_abc"])
+except convilyn.UnderstandUnavailableError:
+    job = client.convert.create_and_wait(file=f, target_format="md")
+```
+
+The error is raised **before** any credit is spent, and it is never substituted
+with a differently-shaped result: an answer the platform did not ground is not
+returned as though it had been. `client.account.get_quota()` (§8.2) prices a run
+before you start it.
 
 ## 8. Check your plan + quota before running (`client.account`)
 
