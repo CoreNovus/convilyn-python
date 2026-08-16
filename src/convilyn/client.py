@@ -9,7 +9,6 @@ accessor: ``client.files``, ``client.convert``, ``client.goals``,
 from __future__ import annotations
 
 import sys
-from collections.abc import Callable
 from types import TracebackType
 
 if sys.version_info >= (3, 11):
@@ -21,7 +20,6 @@ from convilyn._internal.auth import AuthStrategy, resolve_auth
 from convilyn._internal.http import DEFAULT_TIMEOUT, HTTPClient, resolve_base_url
 from convilyn._internal.resilience import ExponentialBackoffRetry, NoRetry, RetryPolicy
 from convilyn._internal.throttle import AutoThrottleArg, resolve_auto_throttle
-from convilyn._internal.ws import WebsocketsTransport, WSTransport
 from convilyn.resources import (
     AsyncAccount,
     AsyncBuilder,
@@ -40,11 +38,6 @@ class AsyncConvilyn:
     natively async. ``convilyn.Convilyn`` is a thin synchronous wrapper
     around an instance of this class.
 
-    The WebSocket URL (``ws_url``) is a separate knob from ``base_url``
-    because production runs the WS API behind a distinct hostname
-    (``wss://ws.convilyn.com``); other environments may use a different host.
-    Falls back to ``CONVILYN_WS_URL`` if unset; ``events()`` raises a
-    clear error if neither source supplied one.
     """
 
     def __init__(
@@ -52,13 +45,11 @@ class AsyncConvilyn:
         *,
         api_key: str | None = None,
         base_url: str | None = None,
-        ws_url: str | None = None,
         timeout: float = DEFAULT_TIMEOUT,
         auth: AuthStrategy | None = None,
         max_retries: int | None = None,
         retry_policy: RetryPolicy | None = None,
         disable_idempotency: bool = False,
-        ws_transport_factory: Callable[[], WSTransport] | None = None,
         auto_throttle: AutoThrottleArg = None,
     ) -> None:
         self._auth: AuthStrategy = auth or resolve_auth(api_key)
@@ -71,22 +62,13 @@ class AsyncConvilyn:
             idempotency_enabled=not disable_idempotency,
             auto_throttle=resolve_auto_throttle(auto_throttle),
         )
-        self._ws_url = ws_url
         self.files = AsyncFiles(self._http)
         self.convert = AsyncConvert(self._http)
-        self.goals = AsyncGoals(
-            self._http,
-            ws_url=ws_url,
-            ws_transport_factory=ws_transport_factory or WebsocketsTransport,
-        )
+        self.goals = AsyncGoals(self._http)
         self.workflows = AsyncWorkflows(self._http)
         self.user_workflows = AsyncUserWorkflows(self._http)
         self.account = AsyncAccount(self._http)
         self.builder = AsyncBuilder(self._http)
-
-    @property
-    def ws_url(self) -> str | None:
-        return self._ws_url
 
     @property
     def base_url(self) -> str:

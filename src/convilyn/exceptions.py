@@ -15,7 +15,14 @@ The SDK never raises a bare ``Exception``; callers can rely on catching
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    # Annotation-only, and deliberately so: `types` imports nothing from this
+    # module today, but a runtime import here would create the edge that makes
+    # a future cycle possible in a PUBLISHED package, where the failure mode is
+    # an ImportError on the user's machine.
+    from convilyn.types import JobErrorDetail
 
 
 class ConvilynError(Exception):
@@ -129,6 +136,19 @@ class JobFailedError(ConvilynError):
     The :pyattr:`code` and :pyattr:`message` mirror the wire-side
     :class:`convilyn.types.JobError`; :pyattr:`job_id` and
     :pyattr:`processor_type` help callers correlate against logs.
+
+    :pyattr:`detail` is present when the server had specifics to hand over —
+    today, a multi-sheet workbook refused for CSV. ``message`` stays the canned
+    sentence for the code, so ``detail`` is what lets you say *why* in your own
+    words and your own locale::
+
+        except JobFailedError as exc:
+            if exc.detail and exc.detail.reason == "MULTI_SHEET_WORKBOOK":
+                print(f"{exc.detail.sheet_count} sheets; try "
+                      f"{' / '.join(exc.detail.faithful_targets or [])}")
+
+    Branch on ``code`` first and treat an unrecognised ``detail.reason`` as
+    absent: the server may know refusals this build does not.
     """
 
     def __init__(
@@ -138,12 +158,35 @@ class JobFailedError(ConvilynError):
         processor_type: str,
         code: str,
         message: str,
+        detail: JobErrorDetail | None = None,
     ) -> None:
         self.job_id = job_id
         self.processor_type = processor_type
         self.code = code
         self.message = message
-        super().__init__(f"Job {job_id} ({processor_type}) failed [{code}]: {message}")
+        self.detail = detail
+        # The prefix is unchanged and stays first. Callers do match on this
+        # string, so the operands are appended rather than interpolated into
+        # the existing sentence.
+        #
+        # Keyed on the REASON, not on "a sheet_count is present". Those are the
+        # same set today and would not stay that way: a future reason carrying
+        # a sheet count for some other purpose would inherit this sentence and
+        # assert something false about CSV. A reason this build does not
+        # recognise gets no sentence — the structured fields are on `detail`
+        # either way, which is the point of sending operands.
+        summary = f"Job {job_id} ({processor_type}) failed [{code}]: {message}"
+        if (
+            detail is not None
+            and detail.reason == "MULTI_SHEET_WORKBOOK"
+            and detail.sheet_count is not None
+        ):
+            targets = ", ".join(detail.faithful_targets or []) or "another format"
+            summary += (
+                f" This workbook has {detail.sheet_count} sheets and CSV holds one table;"
+                f" convert to {targets} to keep every sheet, or upload a single-sheet workbook."
+            )
+        super().__init__(summary)
 
 
 class JobTimeoutError(ConvilynError):
@@ -220,27 +263,6 @@ class GoalJobTimeoutError(ConvilynError):
                 f"GoalJob {job_spec_id} did not reach a terminal status within "
                 f"{timeout}s (elapsed {elapsed:.1f}s)"
             )
-        super().__init__(message)
-
-
-class WebSocketError(ConvilynError):
-    """Raised when the AI workflow event stream cannot proceed.
-
-    Covers four conditions:
-
-    * the SDK has no WebSocket URL to dial (no ``ws_url`` ctor arg, no
-      ``CONVILYN_WS_URL`` env var, no per-call override);
-    * the transport's ``connect`` step raises (DNS, TLS, 4xx upgrade);
-    * a mid-stream message cannot be parsed into a :class:`GoalEvent`
-      (malformed JSON, unknown ``type`` value);
-    * the connection drops mid-stream (server close, network error).
-
-    The original payload — when available — is attached on
-    :pyattr:`payload` so callers can log it for debugging.
-    """
-
-    def __init__(self, message: str, *, payload: str | None = None) -> None:
-        self.payload = payload
         super().__init__(message)
 
 

@@ -1,10 +1,7 @@
 """``convilyn goals`` — logic / boundary / error / object-state.
 
 Mocks the SDK at the :func:`_build_client` factory seam (same pattern
-used by :mod:`tests.test_cli_convert`). For the streaming ``events``
-sub-command we drive a real :class:`AsyncConvilyn` through an injected
-``ws_transport_factory`` — that keeps the test focused on the CLI's
-exit-code / output behaviour without spinning up a real WebSocket.
+used by :mod:`tests.test_cli_convert`).
 """
 
 from __future__ import annotations
@@ -12,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import datetime, timezone
-from io import StringIO
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -21,9 +17,7 @@ from click.testing import CliRunner
 
 from convilyn import (
     APIError,
-    AsyncConvilyn,
     AuthError,
-    GoalEvent,
     GoalJob,
     GoalJobFailedError,
     GoalJobTimeoutError,
@@ -31,22 +25,16 @@ from convilyn import (
 from convilyn.cli import goals as goals_module
 from convilyn.cli._exit_codes import (
     EXIT_API_ERROR,
-    EXIT_INTERRUPTED,
     EXIT_JOB_FAILED,
     EXIT_OK,
-    EXIT_USAGE,
 )
 from convilyn.cli.goals import (
-    _emit_event,
     _parse_file_ids,
     _parse_slot_pairs,
     _parse_slot_value,
-    _stream_events,
-    _summarise_event,
     goals_command,
 )
 from convilyn.cli.main import cli as root_cli
-from tests._fixtures.ws_fakes import FakeWSTransport, make_envelope
 
 # ── Fixtures ─────────────────────────────────────────────────────────
 
@@ -118,7 +106,7 @@ def mock_factory(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
 def test_main_registers_goals_group(runner: CliRunner) -> None:
     result = runner.invoke(root_cli, ["goals", "--help"])
     assert result.exit_code == EXIT_OK
-    for sub in ("start", "status", "events", "fill-slot", "confirm", "cancel", "retry"):
+    for sub in ("start", "status", "fill-slot", "confirm", "cancel", "retry"):
         assert sub in result.output
 
 
@@ -449,170 +437,12 @@ class TestErrorMapping:
         assert result.exit_code == EXIT_API_ERROR
 
 
-# ── 4. Object-state — streaming events ──────────────────────────────
+# ── 4. Object-state — sync client lifecycle ─────────────────────────
 
 
 def _async_run(coro: Any) -> Any:
     """Run a coroutine; tolerate already-active loops (Windows CI quirk)."""
     return asyncio.run(coro)
-
-
-class TestEventsStreaming:
-    def _wire_async_client(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        transport: FakeWSTransport,
-    ) -> Any:
-        """Build a real AsyncConvilyn with the fake transport injected.
-
-        We patch ``_build_client`` to return an object that exposes
-        ``async_client`` (the surface ``_stream_events`` consumes) and
-        ``close()`` — same shape as :class:`convilyn.Convilyn`.
-        """
-
-        async_client = AsyncConvilyn(
-            api_key="ck_test_streaming",  # pragma: allowlist secret
-            ws_url="wss://example.test/ws",
-            ws_transport_factory=lambda: transport,
-        )
-
-        class _FakeSyncClient:
-            def __init__(self) -> None:
-                self.async_client = async_client
-
-            def close(self) -> None:
-                # `aclose` is awaited inside `_stream_events`; sync close
-                # is unused here but mirrors `Convilyn.close()`.
-                pass
-
-        monkeypatch.setattr(goals_module, "_build_client", _FakeSyncClient)
-        return async_client
-
-    def test_terminal_completed_exits_ok_and_emits_ndjson(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        transport = FakeWSTransport(
-            script=[
-                make_envelope("tool_started", seq=1, data={"tool": "extract"}),
-                make_envelope("completed", seq=2),
-            ]
-        )
-        self._wire_async_client(monkeypatch, transport)
-        stdout = StringIO()
-        stderr = StringIO()
-        code = _async_run(
-            _stream_events(
-                job_spec_id="job_test",
-                json_output=True,
-                ws_url=None,
-                stdout=stdout,
-                stderr=stderr,
-            )
-        )
-        assert code == EXIT_OK
-        lines = [line for line in stdout.getvalue().splitlines() if line]
-        assert len(lines) == 2
-        for line in lines:
-            json.loads(line)  # each line is a valid JSON object
-        first = json.loads(lines[0])
-        assert first["type"] == "tool_started"
-        assert first["jobSpecId"] == "job_test"
-
-    def test_terminal_failed_exits_3(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        transport = FakeWSTransport(
-            script=[make_envelope("failed", seq=1, data={"code": "BUDGET"})]
-        )
-        self._wire_async_client(monkeypatch, transport)
-        code = _async_run(
-            _stream_events(
-                job_spec_id="job_test",
-                json_output=True,
-                ws_url=None,
-                stdout=StringIO(),
-                stderr=StringIO(),
-            )
-        )
-        assert code == EXIT_JOB_FAILED
-
-    def test_connect_failure_exits_api_error(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        transport = FakeWSTransport(script=[], fail_on_connect=True)
-        self._wire_async_client(monkeypatch, transport)
-        stderr = StringIO()
-        code = _async_run(
-            _stream_events(
-                job_spec_id="job_test",
-                json_output=True,
-                ws_url=None,
-                stdout=StringIO(),
-                stderr=stderr,
-            )
-        )
-        assert code == EXIT_API_ERROR
-        assert "WebSocket error" in stderr.getvalue()
-
-    def test_missing_ws_url_exits_usage(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        async_client = AsyncConvilyn(
-            api_key="ck_test_streaming",  # pragma: allowlist secret
-            # No ws_url, no env var (patched below) → ValueError on first iter.
-        )
-        monkeypatch.delenv("CONVILYN_WS_URL", raising=False)
-
-        class _FakeSyncClient:
-            def __init__(self) -> None:
-                self.async_client = async_client
-
-            def close(self) -> None:
-                pass
-
-        monkeypatch.setattr(goals_module, "_build_client", _FakeSyncClient)
-        stderr = StringIO()
-        code = _async_run(
-            _stream_events(
-                job_spec_id="job_test",
-                json_output=True,
-                ws_url=None,
-                stdout=StringIO(),
-                stderr=stderr,
-            )
-        )
-        assert code == EXIT_USAGE
-        assert "Configuration error" in stderr.getvalue()
-
-    def test_keyboard_interrupt_mid_stream_propagates(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Ctrl-C inside the streaming loop must surface as SIGINT exit.
-
-        The async helper re-raises ``KeyboardInterrupt`` so the sync
-        entry point (``events_command``) can map it to
-        ``EXIT_INTERRUPTED`` (130) — that's the POSIX convention pinned
-        by ``_exit_codes.py``.
-        """
-        transport = FakeWSTransport(
-            script=[make_envelope("tool_started", seq=1, data={"tool": "extract"})],
-            raise_interrupt_after=1,
-        )
-        self._wire_async_client(monkeypatch, transport)
-        # Drive the sync Click command so we exercise the full
-        # asyncio.run(...) + SystemExit boundary.
-        runner = CliRunner()
-        result = runner.invoke(goals_command, ["events", "job_test", "--json"])
-        # Click maps SystemExit(130) to result.exit_code == 130.
-        assert result.exit_code == EXIT_INTERRUPTED
-
-
-# ── 5. Error mapping — gap-fill for the long subcommand bodies ───────
 
 
 class TestSyncFactoryAuthError:
@@ -680,323 +510,3 @@ class TestSyncCleanupFailure:
         )
 
         assert "cleanup failed" in result.output
-
-
-class TestStreamEventsErrorPaths:
-    """`_stream_events`: every uncovered error branch in the long async
-    helper body (cli/goals.py lines 496-498, 508-513, 522-524, 530-536).
-    """
-
-    def test_auth_error_at_factory_exits_usage(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        def boom() -> Any:
-            raise AuthError("no key")
-
-        monkeypatch.setattr(goals_module, "_build_client", boom)
-        stderr = StringIO()
-
-        code = _async_run(
-            _stream_events(
-                job_spec_id="job_test",
-                json_output=True,
-                ws_url=None,
-                stdout=StringIO(),
-                stderr=stderr,
-            )
-        )
-
-        assert code == EXIT_USAGE
-        assert "Authentication failed" in stderr.getvalue()
-
-    def test_stream_closes_without_terminal_exits_api_error(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """The iterator may exhaust naturally (e.g. server closes the
-        connection after the last frame without emitting a terminal
-        event). Treat as a transport-side issue, not success.
-        """
-
-        async def _empty_events(*args: Any, **kwargs: Any):
-            return
-            yield  # unreachable; makes this an async generator
-
-        async_client = MagicMock()
-        async_client.goals.events = _empty_events
-        async_client.aclose = MagicMock()
-
-        async def _aclose_async() -> None:
-            return None
-
-        async_client.aclose = _aclose_async
-
-        class _FakeSyncClient:
-            def __init__(self) -> None:
-                self.async_client = async_client
-
-            def close(self) -> None:
-                pass
-
-        monkeypatch.setattr(goals_module, "_build_client", _FakeSyncClient)
-        stderr = StringIO()
-
-        code = _async_run(
-            _stream_events(
-                job_spec_id="job_test",
-                json_output=True,
-                ws_url=None,
-                stdout=StringIO(),
-                stderr=stderr,
-            )
-        )
-
-        assert code == EXIT_API_ERROR
-        assert "closed without a terminal event" in stderr.getvalue()
-
-    def test_api_error_during_stream_exits_api_error(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        async def _raise_api_error(*args: Any, **kwargs: Any):
-            raise APIError(500, "INTERNAL", "downstream blew up")
-            yield  # unreachable
-
-        async_client = MagicMock()
-        async_client.goals.events = _raise_api_error
-
-        async def _aclose() -> None:
-            return None
-
-        async_client.aclose = _aclose
-
-        class _FakeSyncClient:
-            def __init__(self) -> None:
-                self.async_client = async_client
-
-            def close(self) -> None:
-                pass
-
-        monkeypatch.setattr(goals_module, "_build_client", _FakeSyncClient)
-        stderr = StringIO()
-
-        code = _async_run(
-            _stream_events(
-                job_spec_id="job_test",
-                json_output=True,
-                ws_url=None,
-                stdout=StringIO(),
-                stderr=stderr,
-            )
-        )
-
-        assert code == EXIT_API_ERROR
-        assert "API error" in stderr.getvalue()
-
-    def test_generic_exception_caught_as_api_error(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Catch-all path — a malformed server frame surfaces as
-        ValidationError; we map it to EXIT_API_ERROR rather than
-        bubbling the traceback to stdout.
-        """
-
-        async def _raise_unexpected(*args: Any, **kwargs: Any):
-            raise ValueError("malformed envelope: missing 'type'")
-            yield  # unreachable
-
-        async_client = MagicMock()
-        async_client.goals.events = _raise_unexpected
-
-        async def _aclose() -> None:
-            return None
-
-        async_client.aclose = _aclose
-
-        class _FakeSyncClient:
-            def __init__(self) -> None:
-                self.async_client = async_client
-
-            def close(self) -> None:
-                pass
-
-        monkeypatch.setattr(goals_module, "_build_client", _FakeSyncClient)
-        stderr = StringIO()
-
-        code = _async_run(
-            _stream_events(
-                job_spec_id="job_test",
-                json_output=True,
-                ws_url=None,
-                stdout=StringIO(),
-                stderr=stderr,
-            )
-        )
-
-        # ValueError is caught by the `except ValueError` branch (line
-        # 514, "Configuration error") because resolve_ws_url uses
-        # ValueError for missing URLs — so this asserts the SAME outer
-        # behaviour: a graceful exit code, not a traceback leak.
-        assert code == EXIT_USAGE
-        assert "Configuration error" in stderr.getvalue()
-
-    def test_unexpected_exception_caught_as_api_error(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """The `except Exception` final catch-all maps anything not
-        already handled to EXIT_API_ERROR (cli/goals.py lines 530-536).
-        """
-
-        async def _raise_runtime(*args: Any, **kwargs: Any):
-            raise RuntimeError("transport library bug")
-            yield  # unreachable
-
-        async_client = MagicMock()
-        async_client.goals.events = _raise_runtime
-
-        async def _aclose() -> None:
-            return None
-
-        async_client.aclose = _aclose
-
-        class _FakeSyncClient:
-            def __init__(self) -> None:
-                self.async_client = async_client
-
-            def close(self) -> None:
-                pass
-
-        monkeypatch.setattr(goals_module, "_build_client", _FakeSyncClient)
-        stderr = StringIO()
-
-        code = _async_run(
-            _stream_events(
-                job_spec_id="job_test",
-                json_output=True,
-                ws_url=None,
-                stdout=StringIO(),
-                stderr=stderr,
-            )
-        )
-
-        assert code == EXIT_API_ERROR
-        assert "Unexpected error" in stderr.getvalue()
-
-
-class TestStreamEventsAsyncCleanup:
-    """`_stream_events`'s `finally:` swallows aclose() failures unless
-    CONVILYN_DEBUG is set (cli/goals.py lines 540-542).
-    """
-
-    def test_async_cleanup_failure_logged_with_debug(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        monkeypatch.setenv("CONVILYN_DEBUG", "1")
-
-        async def _one_completed(*args: Any, **kwargs: Any):
-            yield GoalEvent.model_validate(json.loads(make_envelope("completed", seq=1)))
-
-        async_client = MagicMock()
-        async_client.goals.events = _one_completed
-
-        async def _aclose_fails() -> None:
-            raise RuntimeError("aclose blew up")
-
-        async_client.aclose = _aclose_fails
-
-        class _FakeSyncClient:
-            def __init__(self) -> None:
-                self.async_client = async_client
-
-            def close(self) -> None:
-                pass
-
-        monkeypatch.setattr(goals_module, "_build_client", _FakeSyncClient)
-        stderr = StringIO()
-
-        code = _async_run(
-            _stream_events(
-                job_spec_id="job_test",
-                json_output=True,
-                ws_url=None,
-                stdout=StringIO(),
-                stderr=stderr,
-            )
-        )
-
-        assert code == EXIT_OK
-        assert "cleanup failed" in stderr.getvalue()
-
-
-# ── 6. _emit_event / _summarise_event — output formatting helpers ────
-
-
-class TestEmitEventHumanMode:
-    """Human (non-JSON) rendering path of `_emit_event` (cli/goals.py
-    lines 569-572).
-    """
-
-    def test_human_mode_writes_glyph_and_type_to_stderr(self) -> None:
-        event = GoalEvent.model_validate(
-            json.loads(make_envelope("tool_started", seq=1, data={"tool": "extract"}))
-        )
-        stdout = StringIO()
-        stderr = StringIO()
-
-        _emit_event(event, json_output=False, stdout=stdout, stderr=stderr)
-
-        assert "tool_started" in stderr.getvalue()
-
-    def test_human_mode_writes_nothing_to_stdout(self) -> None:
-        event = GoalEvent.model_validate(
-            json.loads(make_envelope("tool_started", seq=1, data={"tool": "extract"}))
-        )
-        stdout = StringIO()
-        stderr = StringIO()
-
-        _emit_event(event, json_output=False, stdout=stdout, stderr=stderr)
-
-        assert stdout.getvalue() == ""
-
-
-class TestSummariseEvent:
-    """Detail-line builder helper (cli/goals.py lines 575-590).
-
-    Walks the data-dict candidate list in priority order
-    (name → tool → role → message → status) and falls back to the
-    progress percentage; otherwise returns empty.
-    """
-
-    @pytest.mark.parametrize(
-        "data,expected",
-        [
-            ({"name": "extract_text", "tool": "ignored"}, " extract_text"),
-            ({"tool": "extract_text"}, " extract_text"),
-            ({"role": "reviewer"}, " reviewer"),
-            ({"message": "decision pending"}, " decision pending"),
-            ({"status": "ok"}, " ok"),
-        ],
-        ids=["name_wins", "tool", "role", "message", "status"],
-    )
-    def test_first_truthy_candidate_returned(self, data: dict[str, Any], expected: str) -> None:
-        event = GoalEvent.model_validate(
-            json.loads(make_envelope("tool_started", seq=1, data=data))
-        )
-
-        assert _summarise_event(event) == expected
-
-    def test_progress_event_falls_back_to_percent(self) -> None:
-        event = GoalEvent.model_validate(
-            json.loads(make_envelope("progress", seq=1, data={"progress": 42}))
-        )
-
-        assert _summarise_event(event) == " 42%"
-
-    def test_empty_data_returns_empty_string(self) -> None:
-        event = GoalEvent.model_validate(json.loads(make_envelope("tool_started", seq=1, data={})))
-
-        assert _summarise_event(event) == ""

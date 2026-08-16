@@ -299,6 +299,7 @@ class AsyncConvert:
                 processor_type=job.processor_type,
                 code=err.code if err else "UNKNOWN",
                 message=err.message if err else "Job failed without a structured error",
+                detail=err.detail if err else None,
             )
         return job
 

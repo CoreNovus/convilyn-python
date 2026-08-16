@@ -491,3 +491,186 @@ class TestConvertObjectState:
         """
         async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
             assert not hasattr(client.convert, "_files")
+
+
+class TestRefusalDetailReachesTheCaller:
+    """A refused conversion hands over its operands, not just a canned sentence.
+
+    The third-party harness that prompted this reported the whole failure as
+
+        JobFailedError: ... failed [GENERIC]: Something went wrong during
+        processing. Please try again.
+
+    on a six-sheet workbook. The code is now branchable and the retry
+    instruction is gone; these pin the half that lets a caller explain the
+    refusal in its own words.
+    """
+
+    _DETAIL = {
+        "reason": "MULTI_SHEET_WORKBOOK",
+        "sheetCount": 6,
+        "faithfulTargets": ["md", "ods", "html", "pdf"],
+    }
+
+    async def _raise(self, file_obj, detail) -> JobFailedError:
+        error = {
+            "code": "UNSUPPORTED_INPUT",
+            "message": "This file type or input isn't supported for this workflow.",
+        }
+        if detail is not None:
+            error["detail"] = detail
+        async with respx.mock(assert_all_called=True) as mock:
+            mock.post(f"{API_BASE}/api/v1/jobs").mock(
+                return_value=httpx.Response(200, json=_job_response("queued"))
+            )
+            mock.get(f"{API_BASE}/api/v1/jobs/job_test").mock(
+                return_value=httpx.Response(
+                    200, json=_job_response("failed", progress=90, error=error)
+                )
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                with patch("convilyn.resources.convert.asyncio.sleep", return_value=None):
+                    with pytest.raises(JobFailedError) as info:
+                        await client.convert.create_and_wait(file=file_obj, target_format="csv")
+        return info.value
+
+    @pytest.mark.asyncio
+    async def test_the_sheet_count_arrives_as_an_integer(self, file_obj) -> None:
+        """An `int`, so a caller can localize. Parsing it out of the English
+        message is what this exists to make unnecessary."""
+        exc = await self._raise(file_obj, self._DETAIL)
+
+        assert exc.detail.sheet_count == 6
+
+    @pytest.mark.asyncio
+    async def test_the_alternatives_arrive_as_a_list(self, file_obj) -> None:
+        exc = await self._raise(file_obj, self._DETAIL)
+
+        assert exc.detail.faithful_targets == ["md", "ods", "html", "pdf"]
+
+    @pytest.mark.asyncio
+    async def test_the_reason_is_branchable(self, file_obj) -> None:
+        """`code` deliberately stays `UNSUPPORTED_INPUT` — a new top-level code
+        would send older clients down their unknown-code path. The discriminator
+        is here instead."""
+        exc = await self._raise(file_obj, self._DETAIL)
+
+        assert (exc.code, exc.detail.reason) == ("UNSUPPORTED_INPUT", "MULTI_SHEET_WORKBOOK")
+
+    @pytest.mark.asyncio
+    async def test_the_string_form_explains_itself(self, file_obj) -> None:
+        """What a caller sees if they only ever `print(exc)` — which is most of
+        them. The bare canned sentence is true and useless on its own."""
+        exc = await self._raise(file_obj, self._DETAIL)
+
+        assert "6 sheets" in str(exc) and "md, ods, html, pdf" in str(exc)
+
+    @pytest.mark.asyncio
+    async def test_the_existing_prefix_is_unchanged(self, file_obj) -> None:
+        """Callers match on this prefix. The operands are appended, never
+        interpolated into it, so `startswith` keeps working."""
+        exc = await self._raise(file_obj, self._DETAIL)
+
+        assert str(exc).startswith("Job job_test (document_conversion) failed [UNSUPPORTED_INPUT]:")
+
+    @pytest.mark.asyncio
+    async def test_a_failure_without_a_detail_still_raises_cleanly(self, file_obj) -> None:
+        """Boundary, and the direction that matters for forward compatibility:
+        every failure predating this field, and almost every one after it, has
+        no `detail`. The old sentence must be exactly what it was."""
+        exc = await self._raise(file_obj, None)
+
+        assert (exc.detail, str(exc).endswith("supported for this workflow.")) == (None, True)
+
+    @pytest.mark.asyncio
+    async def test_an_unknown_reason_does_not_break_the_parse(self, file_obj) -> None:
+        """The server may learn refusals this build has never heard of. An
+        unrecognised `reason` is data, not a parse error — pinned because a
+        `Literal` type here would have turned a future server release into a
+        ValidationError on an already-published client."""
+        exc = await self._raise(file_obj, {"reason": "SOMETHING_NEW_ENTIRELY"})
+
+        assert (exc.detail.reason, exc.detail.sheet_count) == ("SOMETHING_NEW_ENTIRELY", None)
+
+    @pytest.mark.asyncio
+    async def test_an_unknown_reason_carrying_a_count_gets_no_invented_sentence(
+        self, file_obj
+    ) -> None:
+        """The sentence is keyed on the REASON, not on "a count is present".
+
+        Those two conditions select the same failures today, which is exactly
+        why this is worth pinning: a future reason that happens to carry a sheet
+        count would otherwise inherit the CSV wording and assert something false
+        about a conversion it knows nothing about. Silence is the correct output
+        for a reason this build has never heard of.
+        """
+        exc = await self._raise(file_obj, {"reason": "SOMETHING_NEW", "sheetCount": 9})
+
+        assert (exc.detail.sheet_count, "CSV holds one table" in str(exc)) == (9, False)
+
+
+class TestConversionWarningsReachTheCaller:
+    """A successful conversion can still have lost something (#4054).
+
+    The channel was built by #4033 and the LibreOffice route started filling it
+    in #4111 — but `ConvertJob` did not model the field, so every warning the
+    server sent was dropped at the last hop. `pdf_reverse` has been emitting
+    real ones ("Page 3 has minimal or no text") the whole time and no caller has
+    ever seen one.
+
+    This matters most where the job **succeeds**: an `.xls` workbook converted
+    to CSV returns a file and a green status while holding only its first sheet.
+    The warning is the only thing that says so.
+    """
+
+    _WARNING = (
+        "best_effort: CSV holds one sheet. If this workbook has more than one, "
+        "only the first was converted — convert to md, ods, html, pdf to keep every sheet."
+    )
+
+    async def _completed_with(self, file_obj, payload: dict) -> Any:
+        async with respx.mock(assert_all_called=True) as mock:
+            mock.post(f"{API_BASE}/api/v1/jobs").mock(
+                return_value=httpx.Response(200, json=_job_response("queued"))
+            )
+            mock.get(f"{API_BASE}/api/v1/jobs/job_test").mock(
+                return_value=httpx.Response(200, json=_job_response("completed", **payload))
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                with patch("convilyn.resources.convert.asyncio.sleep", return_value=None):
+                    return await client.convert.create_and_wait(file=file_obj, target_format="csv")
+
+    @pytest.mark.asyncio
+    async def test_a_warning_on_a_successful_job_is_surfaced(self, file_obj) -> None:
+        job = await self._completed_with(file_obj, {"warnings": [self._WARNING]})
+
+        assert job.warnings == [self._WARNING]
+
+    @pytest.mark.asyncio
+    async def test_a_clean_conversion_reports_an_empty_list(self, file_obj) -> None:
+        """Never ``None``: an empty list unambiguously means "nothing to report",
+        so a caller can write ``for w in job.warnings`` without a guard."""
+        job = await self._completed_with(file_obj, {"warnings": []})
+
+        assert job.warnings == []
+
+    @pytest.mark.asyncio
+    async def test_a_response_without_the_field_still_parses(self, file_obj) -> None:
+        """Boundary, and the one that matters for a published client: every job
+        row written before #4033, and any older deployment, omits the key
+        entirely. Absent must mean empty, not a ValidationError on the user's
+        machine."""
+        job = await self._completed_with(file_obj, {})
+
+        assert job.warnings == []
+
+    @pytest.mark.asyncio
+    async def test_an_unprefixed_warning_is_passed_through_unchanged(self, file_obj) -> None:
+        """`pdf_reverse.py` emits warnings with no `kind:` prefix today, and the
+        SDK is not the place to normalise that — inventing a prefix here would
+        put words in the server's mouth. Pinned because the documented
+        vocabulary makes a prefix look guaranteed, and it is not.
+        """
+        job = await self._completed_with(file_obj, {"warnings": ["Page 3 has minimal or no text"]})
+
+        assert job.warnings == ["Page 3 has minimal or no text"]

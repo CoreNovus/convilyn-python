@@ -50,9 +50,6 @@ These are the extension points. Use them; do not duplicate them.
 | `_build_client` factory | Inject a mocked `Convilyn` in CLI tests | `cli/convert.py`, `cli/goals.py` |
 | `HTTPClient.raw_request` | Issue an HTTP request without `>=400` raising | `_internal/http.py` |
 | `_do_request_with_retry` | Shared retry loop — do not re-implement | `_internal/http.py` |
-| `WSTransport` Protocol | Replace the WebSocket transport (fakes for tests, alternate libs) | `_internal/ws.py` |
-| `ws_transport_factory` ctor arg | Inject a `WSTransport` factory at client construction — `AsyncConvilyn(ws_transport_factory=...)` | `client.py`, `resources/goals.py` |
-| `goals.events` async generator | Stream goal-lane events; per-call `ws_url` override; `is_terminal` self-closes the iterator | `resources/goals.py` |
 
 ## Adding a new resource (e.g. `client.goals`)
 

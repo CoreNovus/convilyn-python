@@ -169,15 +169,22 @@ class TestAgentDocStayInSync:
     updated; this test catches the silent drift.
     """
 
+    # `WSTransport` and `ws_transport_factory` were here until 3.0.0. They are
+    # removed rather than re-documented (#4136): both existed only to inject a
+    # fake WebSocket transport for `goals.events()`, and that surface is gone —
+    # it could not authenticate for any credential this SDK holds, and the only
+    # way to change that would have put a long-lived API key in a URL.
+    #
+    # Taking the test's own advice ("update the test if the seam was
+    # intentionally removed") rather than leaving two dead names in a list whose
+    # entire job is to notice when a documented seam stops existing.
     REQUIRED_SEAMS = (
         "AuthStrategy",
         "RetryPolicy",
         "OutputRenderer",
         "_build_client",
         "raw_request",
-        "WSTransport",
         "bearer_token",
-        "ws_transport_factory",
     )
 
     def test_seam_mentions_present(self) -> None:

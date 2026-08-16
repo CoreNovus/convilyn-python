@@ -12,7 +12,6 @@ interpreter teardown on Windows.
 from __future__ import annotations
 
 import sys
-from collections.abc import Callable
 from types import TracebackType
 
 if sys.version_info >= (3, 11):
@@ -25,7 +24,6 @@ from convilyn._internal.http import DEFAULT_TIMEOUT
 from convilyn._internal.loop_runner import LoopRunner
 from convilyn._internal.resilience import RetryPolicy
 from convilyn._internal.throttle import AutoThrottleArg
-from convilyn._internal.ws import WSTransport
 from convilyn.client import AsyncConvilyn
 from convilyn.resources import (
     Account,
@@ -54,25 +52,21 @@ class Convilyn:
         *,
         api_key: str | None = None,
         base_url: str | None = None,
-        ws_url: str | None = None,
         timeout: float = DEFAULT_TIMEOUT,
         auth: AuthStrategy | None = None,
         max_retries: int | None = None,
         retry_policy: RetryPolicy | None = None,
         disable_idempotency: bool = False,
-        ws_transport_factory: Callable[[], WSTransport] | None = None,
         auto_throttle: AutoThrottleArg = None,
     ) -> None:
         self._async = AsyncConvilyn(
             api_key=api_key,
             base_url=base_url,
-            ws_url=ws_url,
             timeout=timeout,
             auth=auth,
             max_retries=max_retries,
             retry_policy=retry_policy,
             disable_idempotency=disable_idempotency,
-            ws_transport_factory=ws_transport_factory,
             auto_throttle=auto_throttle,
         )
         self._runner = LoopRunner()

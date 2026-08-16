@@ -3,6 +3,92 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [Semantic Versioning](https://semver.org/).
 
+## [3.0.0] - 2026-08-16
+
+### Added
+
+- **`ConvertJob.warnings` — what a *successful* conversion could not preserve.**
+  The field has been on the wire since the warnings channel was built, and the
+  LibreOffice route began filling it in the same wave as this release; the SDK
+  simply did not model it, so every warning the server sent was dropped at the
+  last hop.
+
+  It matters most where the job **succeeds**. An `.xls` workbook converted to
+  CSV returns a file, reports `completed`, and holds only its first sheet —
+  `warnings` is the only thing that says so. `pdf_reverse` has likewise been
+  emitting `Page N has minimal or no text` all along, seen by nobody.
+
+  ```python
+  job = await client.convert.create_and_wait(file=f, target_format="csv")
+  for note in job.warnings:
+      print(note)
+  ```
+
+  Entries are prefixed by kind (`best_effort:`, `truncated:`, `bundled:`,
+  `layout_degraded:`, …), so splitting on the first `:` groups them — but treat
+  an unprefixed entry as a plain note rather than an error, because some
+  producers emit one. Always a list: absent on the wire means empty, never
+  `None`, so `for note in job.warnings` needs no guard.
+
+- **A refused conversion now tells you why, in fields you can act on.**
+  `JobFailedError` gains `detail` (`convilyn.types.JobErrorDetail`), carrying
+  `reason`, and — for a workbook refused because CSV holds one table —
+  `sheet_count` plus `faithful_targets`.
+
+  ```python
+  except JobFailedError as exc:
+      if exc.detail and exc.detail.reason == "MULTI_SHEET_WORKBOOK":
+          print(f"{exc.detail.sheet_count} sheets; try "
+                f"{' / '.join(exc.detail.faithful_targets or [])}")
+  ```
+
+  Before this, a six-sheet `.xlsx` → `csv` returned
+  `[GENERIC]: Something went wrong during processing. Please try again.` — a
+  retry instruction for a refusal that is deterministic, so every attempt spent
+  quota to fail identically. The code is now `UNSUPPORTED_INPUT` and the retry
+  advice is gone; `detail` is what lets you explain the refusal in your own
+  words and your own locale.
+
+  `str(exc)` also gains a trailing sentence when a detail is present. The
+  existing `Job <id> (<type>) failed [<code>]: <message>` prefix is unchanged,
+  so `startswith` matching keeps working.
+
+  **`code` deliberately stays `UNSUPPORTED_INPUT`** rather than becoming a new
+  member. A new code sends clients that predate it down their unknown-code
+  path, which on the web client resolves to a generic "try again" — reinstating
+  the exact advice this removed, for the users least able to act on it. Branch
+  on `code` first and treat an unrecognised `detail.reason` as absent: the
+  server may know refusals your build does not.
+
+### Removed — BREAKING
+
+- **The WebSocket event stream is gone.** Removed: `goals.events()`, the
+  `convilyn goals events` CLI command, the `GoalEvent` type, the
+  `WebSocketError` exception, and the `ws_url` / `ws_transport_factory`
+  constructor arguments (plus `CONVILYN_WS_URL`).
+
+  **Nothing that worked stops working — it never worked.** The platform's WS
+  gateway authenticates developer-portal keys (`cvl_` / `cvi_`), a JWT, or an
+  anonymous browser cookie. This SDK *rejects* developer-portal keys at
+  construction and issues no JWT, so no credential it can hold was ever
+  accepted. Every call raised. The tests passed because the transport was mocked.
+
+  **Why it was removed rather than fixed.** Making it work means the gateway
+  accepting a consumer key at `$connect`, and its authorizer takes identity from
+  a **query parameter** — it must, because the browser client shares that gateway
+  and a browser cannot set headers on a WebSocket handshake. So "gateway support"
+  meant putting a long-lived, non-self-revocable API key in a URL, permanently,
+  on every streaming call. Query strings reach proxy logs, debug tooling, and any
+  access log later switched on.
+
+  **Migration.** Use `client.goals.wait(job_spec_id, timeout=..., idle_timeout=...)`
+  or `retrieve()`; CLI `convilyn goals status`. Both authenticate over HTTPS with
+  an `Authorization` header. `wait()` already backed every documented example.
+
+  If streaming returns it will use a short-lived, single-use connect ticket —
+  a design sharing no code with what was removed, which is why keeping this was
+  not free optionality.
+
 ## [2.1.0] - 2026-08-16
 
 ### Fixed

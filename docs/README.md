@@ -160,8 +160,11 @@ quota, and the SDK raises typed `PlanRequiredError` / `QuotaExceededError`
 ## Known limits
 
 - **Goal progress is polling-only.** Follow a run with `client.goals.wait(...)`
-  or `retrieve(...)`. The WebSocket gateway does not accept consumer `ck_` keys
-  yet, so `goals.events()` raises with guidance pointing back at polling.
+  or `retrieve(...)`. WebSocket streaming was removed in 3.0.0: the gateway
+  authenticates no credential this SDK can hold, and the only way to change
+  that would have put your API key in a URL query string — a WebSocket
+  handshake carries no headers. See
+  [STABILITY.md](https://github.com/CoreNovus/convilyn-python/blob/main/docs/STABILITY.md).
 - **Beta.** The public surface and its SemVer promise are written down in
   [STABILITY.md](https://github.com/CoreNovus/convilyn-python/blob/main/docs/STABILITY.md);
   anything not listed there may move.

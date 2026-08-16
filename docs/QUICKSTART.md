@@ -411,7 +411,6 @@ conversion on `UnderstandUnavailableError`.
 | `GoalJobFailedError` | the workflow-lane equivalent of `JobFailedError` |
 | `GoalJobTimeoutError` | the workflow-lane equivalent of `JobTimeoutError` |
 | `UnderstandUnavailableError` | `goals.understand` / `goals.to_markdown` is not served by the connected platform |
-| `WebSocketError` | the event stream dropped or refused the connection |
 <!-- exceptions:cloud:end -->
 
 **Importable from `convilyn.local`** — the offline engine's own refusals. They
@@ -594,37 +593,32 @@ a, b = client.files.upload(path="r1.jpg"), client.files.upload(path="r2.jpg")
 job = client.goals.fill_slots(job.job_spec_id, {"receipts": [a.file_id, b.file_id]})
 ```
 
-### 7.3 WebSocket event stream (async-only)
+### 7.3 Async
 
-> **Not available in v1.** The event-stream gateway does not accept
-> consumer (`ck_`) keys yet, so `goals.events()` raises `WebSocketError`
-> today — use `wait()` / `retrieve()` polling (shown above). The example
-> below is the API that will work once gateway support lands; see
-> `STABILITY.md`.
-
-For live progress instead of polling, subscribe to the events stream.
-Streaming is async-only — there is no sync iterator:
+Every `client.goals` method has an async twin on `AsyncConvilyn`. Use it when
+you are already inside an event loop; the sync `Convilyn` is a thin wrapper
+around it.
 
 ```python
 import asyncio
 from convilyn import AsyncConvilyn
 
-
-async def main():
-    async with AsyncConvilyn(ws_url="wss://ws.convilyn.corenovus.com") as client:
-        job = await client.goals.start(workflow_id="doc_analyzer", files=["file_abc"])
-        async for ev in client.goals.events(job.job_spec_id):
-            print(ev.type, ev.data)
-            if ev.is_terminal:
-                break
-
+async def main() -> None:
+    async with AsyncConvilyn() as client:
+        job = await client.goals.start(
+            workflow_id="doc_analyzer",
+            files=["file_abc"],
+        )
+        job = await client.goals.wait(job.job_spec_id, timeout=1800)
+        print(job.status)
 
 asyncio.run(main())
 ```
 
-Set the WS URL via the `ws_url=` constructor arg or the
-`CONVILYN_WS_URL` environment variable; the SDK raises
-`WebSocketError` if neither is configured.
+`wait()` polls. There is no WebSocket stream — it was removed in 3.0.0 because
+the gateway could not authenticate any consumer key, and making it work would
+have required putting your API key in a URL. See
+[STABILITY.md](https://github.com/CoreNovus/convilyn-python/blob/main/docs/STABILITY.md).
 
 ### 7.4 CLI — `convilyn goals`
 
@@ -637,9 +631,6 @@ $ convilyn goals start --workflow-id doc_analyzer --files file_abc --dry-run --j
 # Start and capture the id
 $ JOB_ID=$(convilyn goals start --workflow-id doc_analyzer --files file_abc --json \
   | jq -r '.job_spec_id')
-
-# Stream events as NDJSON (one JSON event per line, pipe-friendly)
-$ convilyn goals events "$JOB_ID" --json | jq -c
 
 # Answer a slot the agent is waiting on
 $ convilyn goals fill-slot "$JOB_ID" --slot-id topic --value '"AI safety"'
@@ -660,17 +651,10 @@ $ convilyn goals retry   "$JOB_ID" --rerun-mode fresh_rerun
   supported; a job that exceeds the worker timeout surfaces as
   `failed`. Re-run with
   `convilyn goals retry --rerun-mode fresh_rerun` if you hit this.
-* **No auto-reconnect.** A WebSocket drop raises `WebSocketError`;
-  the SDK does not silently reconnect because the backend does not
-  replay missed events. Inspect `client.goals.retrieve(...)` and
-  re-subscribe if you want to resume.
-* **Sync streaming is intentionally absent.** `Convilyn` (sync)
-  exposes every other AI workflow method; `events()` lives only on
-  `AsyncConvilyn`. Use `AsyncConvilyn` directly when you
-  need streaming.
-* **Subscribe-then-start ordering.** If you subscribe before the
-  server has created the job, the WS may close immediately. Always
-  call `start()` first, then `events()`.
+* **Progress is polled, not streamed.** `goals.wait(...)` is the
+  supported way to follow a run. WebSocket streaming was removed in
+  3.0.0 — it could not authenticate for any consumer key, and the
+  only way to make it work would have put your API key in a URL.
 
 ### 7.6 Manage the workflows you author (`client.user_workflows`)
 

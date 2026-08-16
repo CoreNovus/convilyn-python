@@ -18,6 +18,28 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+# The Builder (chat-driven authoring) models live in `_types_builder` and are
+# re-exported here, because adding `warnings` took this module past its
+# 800-line budget and the ratchet's answer to that is to extract, not to
+# record a new ceiling. Public surface is unchanged: `convilyn.types.X`,
+# `convilyn.X` and `import *` all still resolve. That block was the cheap
+# seam because the Builder wire is snake_case while every other family here
+# is camelCase-with-aliases, so it shared no convention with its neighbours.
+#
+# A grouped import with one `noqa` rather than an `__all__`: this module has
+# never declared one, and adding a partial list would silently shrink what
+# `import *` exports.
+from convilyn._types_builder import (  # noqa: F401  (re-export; see above)
+    BuilderAttachment,
+    BuilderMessage,
+    BuilderMessageList,
+    BuilderPendingSlot,
+    BuilderQuota,
+    BuilderSession,
+    BuilderTurn,
+    BuilderVerdictAction,
+)
+
 JobStatus = Literal["queued", "processing", "completed", "failed"]
 
 
@@ -107,6 +129,23 @@ class ResultFile(BaseModel):
     url: str
 
 
+class JobErrorDetail(BaseModel):
+    """Why a job was refused, as operands rather than a sentence.
+
+    ``JobError.message`` is one canned sentence per ``code``, so this is what
+    lets you phrase your own. A workbook refused for CSV reports
+    ``reason="MULTI_SHEET_WORKBOOK"`` with the sheet count and the targets that
+    keep every sheet. Branch on the reasons you handle — an unknown one only
+    means the server knows a case this build does not.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, frozen=True)
+
+    reason: str
+    sheet_count: int | None = Field(default=None, alias="sheetCount")
+    faithful_targets: list[str] | None = Field(default=None, alias="faithfulTargets")
+
+
 class JobError(BaseModel):
     """Failure detail attached to a ``failed`` job."""
 
@@ -114,6 +153,9 @@ class JobError(BaseModel):
 
     code: str
     message: str
+    #: Absent on almost every failure: an unsupported extension is fully
+    #: described by ``code``.
+    detail: JobErrorDetail | None = None
 
 
 class ConvertJob(BaseModel):
@@ -133,6 +175,13 @@ class ConvertJob(BaseModel):
     progress: int = Field(ge=0, le=100)
     progress_message: str | None = Field(default=None, alias="progressMessage")
     result_files: list[ResultFile] | None = Field(default=None, alias="resultFiles")
+    #: What the conversion could not preserve. Empty on a faithful conversion,
+    #: and worth reading on a successful one — a `.xls` workbook converted to
+    #: CSV succeeds and keeps only its first sheet, and this is where it says
+    #: so. Each entry is prefixed by kind (`best_effort:`, `truncated:`,
+    #: `bundled:`, `layout_degraded:`, …); split on the first `:` to group them,
+    #: but treat an unprefixed entry as a plain note rather than an error.
+    warnings: list[str] = Field(default_factory=list)
     error: JobError | None = None
     retry_count: int = Field(default=0, alias="retryCount")
     created_at: datetime = Field(alias="createdAt")
@@ -311,39 +360,6 @@ class ArtifactDownload(BaseModel):
     size_bytes: int = Field(alias="sizeBytes", ge=0)
     mime_type: str = Field(alias="mimeType")
     expires_at: datetime = Field(alias="expiresAt")
-
-
-# ── AI workflow WebSocket event stream types ──────────────────────────
-
-
-GoalEventType = Literal[
-    # Tool lifecycle
-    "tool_started",
-    "tool_finished",
-    # Agent-step lifecycle
-    "agent_step_started",
-    "agent_step_finished",
-    # Orchestration transitions between agent steps
-    "orchestration_transition",
-    # Run control / heartbeats
-    "status",
-    "progress",
-    "completed",
-    "failed",
-    # Human-in-the-loop
-    "slot_needed",
-    # Reserved by the API but not currently emitted; included so an
-    # SDK release does not need to be re-cut the moment the server
-    # starts emitting one.
-    "keepalive",
-    # Agent text streaming
-    "agent_text",
-    "agent_text_done",
-    # ``cancelled`` is a terminal type the SDK self-closes on but the
-    # server may emit only as ``failed`` with code=cancelled today; we
-    # keep it in the terminal set below so callers and tests can rely on
-    # a single source of truth.
-]
 
 
 # Event ``type`` values that cause :meth:`AsyncGoals.events` to close the
@@ -675,163 +691,3 @@ class UsageHistoryEntry(BaseModel):
     period_end: datetime
     used: int = Field(ge=0)
     limit: int | None = None
-
-
-# ── AI workflow event stream (existing) ───────────────────────────────
-
-
-class GoalEvent(BaseModel):
-    """One server-sent event in an AI workflow execution stream.
-
-    Yielded by :meth:`convilyn.resources.goals.AsyncGoals.events`. The
-    wire envelope is defined by the event-stream contract;
-    new envelope fields are tolerated (``extra="allow"``) so an older
-    SDK release does not break when the server starts emitting
-    additional metadata.
-    """
-
-    model_config = ConfigDict(populate_by_name=True, frozen=True, extra="allow")
-
-    type: GoalEventType
-    schema_version: int = Field(alias="schemaVersion")
-    job_spec_id: str = Field(alias="jobSpecId")
-    emitted_at: datetime = Field(alias="emittedAt")
-    seq: int = 0
-    data: dict[str, Any] = Field(default_factory=dict)
-
-    @property
-    def is_terminal(self) -> bool:
-        """True when this event signals the end of the stream."""
-        return self.type in GOAL_EVENT_TERMINAL_TYPES
-
-
-# ── Builder (chat-driven authoring) ──────────────────────────────────
-# The chat/Builder wire is snake_case (the backend ChatResponse /
-# ProcessMessageResponse models carry no camelCase alias_generator, unlike
-# the goals/convert families), so these models need NO field aliases —
-# attribute names already match the wire.
-
-BuilderVerdictAction = Literal[
-    "request_input",
-    "stage_draft",
-    "register",
-    "infeasible",
-    "recommend_existing",
-    "missing_tool_call",
-    "unknown_tool",
-]
-"""Terminal action of a Builder turn (``BuilderTurn.verdict_action``)."""
-
-
-class BuilderAttachment(BaseModel):
-    """A file attached to a Builder message."""
-
-    model_config = ConfigDict(frozen=True)
-
-    file_id: str
-    file_name: str
-    file_size: int = Field(ge=0)
-    mime_type: str
-    url: str | None = None
-
-
-class BuilderSession(BaseModel):
-    """A chat session in Builder authoring mode.
-
-    Returned by :py:meth:`convilyn.resources.builder.AsyncBuilder.create_session`
-    / ``get_session``. Extra wire fields are ignored.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    chat_id: str
-    status: str
-    mode: str = "builder"
-    message_count: int = Field(ge=0)
-    agent_state: str
-    created_at: datetime
-    user_id: str | None = None
-    title: str | None = None
-    builder_mode: str | None = None
-    working_memory_summary: dict[str, Any] | None = None
-    last_message_at: datetime | None = None
-
-
-class BuilderMessage(BaseModel):
-    """One persisted Builder chat message (user echo or assistant reply)."""
-
-    model_config = ConfigDict(frozen=True)
-
-    message_id: str
-    chat_id: str
-    role: str
-    content: str
-    message_type: str
-    created_at: datetime
-    metadata: dict[str, Any] | None = None
-    attachments: list[BuilderAttachment] = Field(default_factory=list)
-
-
-class BuilderPendingSlot(BaseModel):
-    """A clarification slot the Builder is waiting on.
-
-    Populated only when ``BuilderTurn.verdict_action == "request_input"``.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    slot_id: str
-    slot_type: str
-    question: str
-    options: list[Any] | None = None
-    required: bool = True
-    context: str | None = None
-
-
-class BuilderTurn(BaseModel):
-    """The result of one Builder turn (``send_message``).
-
-    ``verdict_action`` reports the terminal action; on ``"register"``,
-    :py:attr:`registered_workflow_id` carries the built ``uw_`` id — hand it to
-    :py:meth:`convilyn.resources.goals.AsyncGoals.run` (``workflow_id=...``) to
-    run the new workflow. On ``"request_input"``, :py:attr:`pending_slots`
-    carries the clarify form. Extra wire fields are ignored.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    messages: list[BuilderMessage]
-    agent_state: str
-    stop_reason: str
-    verdict_action: str | None = None
-    failure_type: str | None = None
-    pending_slots: list[BuilderPendingSlot] = Field(default_factory=list)
-    turn_count: int | None = None
-    builder_mode: str | None = None
-    registered_workflow_id: str | None = None
-    clarification_question: str | None = None
-    clarification_options: list[str] = Field(default_factory=list)
-    error: str | None = None
-
-
-class BuilderMessageList(BaseModel):
-    """A page of a Builder session's message transcript."""
-
-    model_config = ConfigDict(frozen=True)
-
-    messages: list[BuilderMessage]
-    total: int = Field(ge=0)
-    limit: int = Field(ge=0)
-    offset: int = Field(ge=0)
-
-
-class BuilderQuota(BaseModel):
-    """The caller's Builder-turn rate-limit snapshot for the current window."""
-
-    model_config = ConfigDict(frozen=True)
-
-    used: int = Field(ge=0)
-    limit: int = Field(ge=0)
-    remaining: int = Field(ge=0)
-    window_seconds: int = Field(ge=0)
-    retry_after_seconds: int = Field(default=0, ge=0)

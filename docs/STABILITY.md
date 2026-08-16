@@ -108,15 +108,33 @@ not qualify; that is a narrowed signature, and it is major. And a change under t
 row is never quiet: it goes in `Changed`, never `Added`, and the entry has to show
 the one-line migration.
 
-## Known v1 limitation — goal events are polling-only
+## Removed in 3.0.0 — the WebSocket event stream
 
-`goals.events()` (WebSocket streaming) is part of the public surface but
-is **not serviceable in v1**: the platform's WS gateway does not accept
-consumer `ck_` keys yet, so a connect attempt raises a `WebSocketError`
-that points back at polling. The supported way to follow a goal run is
-`client.goals.wait(...)` / `retrieve(...)` (CLI: `convilyn goals
-status`). When gateway support lands, `events()` starts working without
-an SDK upgrade — this is a platform capability gate, not an API change.
+`goals.events()`, the `convilyn goals events` CLI command, `GoalEvent`,
+`WebSocketError` and the `ws_url` / `ws_transport_factory` constructor
+arguments are **gone**.
+
+They never worked. The platform's WS gateway authenticates developer-portal
+keys, a JWT, or an anonymous cookie — and this SDK rejects developer-portal
+keys at construction and issues no JWT, so no credential it can hold was ever
+accepted. Every test passed because the transport was mocked.
+
+**This section used to say the opposite:** *"When gateway support lands,
+`events()` starts working without an SDK upgrade — this is a platform
+capability gate, not an API change."* That was wrong. The gateway's authorizer
+takes its identity from `route.request.querystring.token`, and it must, because
+the browser client shares it and a browser cannot set headers on a WebSocket
+handshake. So "gateway support" would have meant putting a long-lived,
+non-self-revocable API key in a URL query string — permanently, for every
+streaming call.
+
+Follow a run with `client.goals.wait(...)` / `retrieve(...)` (CLI:
+`convilyn goals status`), which authenticate over HTTPS with an `Authorization`
+header.
+
+If streaming returns, it will be through a short-lived, single-use connect
+ticket — a design that shares no code with what was removed, which is the other
+reason keeping this was not "free optionality".
 
 ## Deprecation policy
 

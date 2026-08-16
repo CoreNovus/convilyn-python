@@ -49,7 +49,6 @@ from convilyn.exceptions import (
     RetryExhaustedError,
     S3UploadError,
     UnderstandUnavailableError,
-    WebSocketError,
 )
 from convilyn.sync_client import Convilyn
 from convilyn.types import (
@@ -67,7 +66,6 @@ from convilyn.types import (
     CostEstimate,
     File,
     FileList,
-    GoalEvent,
     GoalJob,
     JobError,
     LikeResponse,
@@ -114,7 +112,6 @@ __all__ = [
     "ExponentialBackoffRetry",
     "File",
     "FileList",
-    "GoalEvent",
     "GoalJob",
     "GoalJobFailedError",
     "GoalJobTimeoutError",
@@ -145,7 +142,6 @@ __all__ = [
     "UserWorkflowRun",
     "UserWorkflowSummary",
     "UserWorkflowsPage",
-    "WebSocketError",
     "Workflow",
     "WorkflowSearchPage",
     "WorkflowStats",

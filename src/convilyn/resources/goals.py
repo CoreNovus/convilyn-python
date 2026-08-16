@@ -6,9 +6,9 @@ Wraps Convilyn's AI workflow job API:
 * ``GET  /api/v1/jobs/goal/{id}``  — full status (drives the polling
                                       loop and the terminal return value)
 
-HITL slot filling, WebSocket events, cancel, and retry share the
-polling cadence and request shaping established here, so this resource
-is extensible without rewriting the orchestration.
+HITL slot filling, cancel, and retry share the polling cadence and
+request shaping established here, so this resource is extensible without
+rewriting the orchestration.
 
 Design follows the same SOLID seams as
 :class:`convilyn.resources.convert.AsyncConvert` (the OpenAI / Stripe
@@ -20,33 +20,23 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import re
 import time
 import warnings
-from collections.abc import AsyncIterator, Callable
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
-
-from pydantic import ValidationError
 
 from convilyn._internal.callbacks import maybe_await
 from convilyn._internal.download import download_url_to_path
 from convilyn._internal.http import HTTPClient
 from convilyn._internal.loop_runner import CoroRunner
-from convilyn._internal.ws import (
-    WebsocketsTransport,
-    WSTransport,
-    build_ws_connect_url,
-    resolve_ws_url,
-)
 from convilyn.exceptions import (
     APIError,
     GoalJobFailedError,
     GoalJobTimeoutError,
     UnderstandUnavailableError,
-    WebSocketError,
 )
-from convilyn.types import Artifact, ArtifactDownload, GoalEvent, GoalJob, PendingSlot
+from convilyn.types import Artifact, ArtifactDownload, GoalJob, PendingSlot
 
 # ── Tunables ────────────────────────────────────────────────────────
 
@@ -92,23 +82,17 @@ class AsyncGoals:
     Attached to :class:`convilyn.AsyncConvilyn` as ``client.goals``.
     Exposes ``start``, ``retrieve``, ``wait``, the ``run`` shorthand, the
     ``extract`` one-call document→JSON sugar, and ``run_interactive`` (the
-    callback-driven HITL loop), along with ``fill_slot``, ``cancel``,
-    ``retry``, and the WebSocket event stream.
+    callback-driven HITL loop), along with ``fill_slot``, ``cancel`` and
+    ``retry``.
+
+    Progress is observed by polling — :meth:`wait`. The WebSocket event stream
+    was removed in 3.0.0: it could not authenticate for any credential this SDK
+    holds, and the only way to make it work would have put a long-lived API key
+    in a URL query string, because a WS handshake carries no headers.
     """
 
-    def __init__(
-        self,
-        http: HTTPClient,
-        *,
-        ws_url: str | None = None,
-        ws_transport_factory: Callable[[], WSTransport] | None = None,
-    ) -> None:
+    def __init__(self, http: HTTPClient) -> None:
         self._http = http
-        self._ws_url = ws_url
-        # DIP seam: production wiring passes WebsocketsTransport; tests
-        # pass a fake. Default keeps the resource directly usable without
-        # going through AsyncConvilyn.
-        self._ws_transport_factory = ws_transport_factory or WebsocketsTransport
 
     # ── Public API ───────────────────────────────────────────────
 
@@ -845,100 +829,6 @@ class AsyncGoals:
         except json.JSONDecodeError as exc:
             raise ValueError(f"artifact {art.artifact_id} is not valid JSON: {exc}") from exc
 
-    async def events(
-        self,
-        job_spec_id: str,
-        *,
-        ws_url: str | None = None,
-    ) -> AsyncIterator[GoalEvent]:
-        """Stream AI workflow execution events for a job.
-
-        Opens a WebSocket to the configured ``ws_url``, sends the
-        subscribe envelope, then yields each :class:`GoalEvent`
-        received. The iterator terminates — and the connection is
-        closed — when the server emits a terminal event
-        (``completed`` / ``failed`` / ``cancelled``).
-
-        Disconnects mid-stream surface as :class:`WebSocketError` so
-        the caller can decide whether to inspect job state via
-        :meth:`retrieve` and resubscribe. The SDK does NOT auto-reconnect
-        because the backend does not replay missed events; a silent
-        reconnect would hide gaps.
-
-        .. note::
-            **WebSocket streaming is not available with a ``ck_`` consumer key
-            in v1** — the backend WS gateway does not authenticate ``ck_`` keys,
-            so the connection is denied. Use :meth:`wait` polling (standard HTTP
-            auth, works today) for the supported real-time path. This method is
-            wired and ready for when the gateway gains ``ck_`` support.
-
-        Args:
-            job_spec_id: The job to subscribe to. Must be a UUID — the
-                backend validates this and would otherwise close the
-                connection immediately.
-            ws_url: Per-call override. Overrides the constructor and
-                env-var defaults.
-
-        Yields:
-            GoalEvent: one per server-pushed message, in order.
-
-        Raises:
-            WebSocketError: connection refused, transport failure,
-                unparseable message, unknown event type, or a missing
-                WS URL configuration.
-        """
-        url = build_ws_connect_url(
-            resolve_ws_url(explicit=ws_url, fallback=self._ws_url),
-            token=self._http.auth.bearer_token(),
-        )
-        transport = self._ws_transport_factory()
-        try:
-            try:
-                await transport.connect(url)
-                await transport.send(json.dumps({"action": "subscribe", "jobSpecId": job_spec_id}))
-            except Exception as exc:
-                # Connect / subscribe failures all surface as one
-                # exception type — callers don't need to distinguish
-                # DNS failure from a malformed handshake at this layer.
-                # The auth token rides in the connect URL, so scrub it from
-                # the exception text before it can reach a log or traceback.
-                raise WebSocketError(
-                    f"Failed to open event stream for job {job_spec_id}: "
-                    f"{_redact_ws_token(str(exc))}. Note: the WebSocket gateway "
-                    "does not accept ck_ consumer keys in v1 — use wait() polling "
-                    "(HTTP auth) instead."
-                ) from exc
-
-            while True:
-                try:
-                    raw = await transport.recv()
-                except Exception as exc:
-                    raise WebSocketError(
-                        f"Event stream dropped for job {job_spec_id}: {_redact_ws_token(str(exc))}"
-                    ) from exc
-
-                event = _parse_event(raw)
-                yield event
-                if event.is_terminal:
-                    return
-        finally:
-            # close() is idempotent in the default transport; tests'
-            # fake transport implementation should mirror that.
-            await transport.close()
-
-
-_WS_TOKEN_RE = re.compile(r"(token=)[^&\s\"']+", re.IGNORECASE)
-
-
-def _redact_ws_token(text: str) -> str:
-    """Strip a ``token=<value>`` query param from text before it is surfaced.
-
-    The auth token travels in the WebSocket connect URL; a transport
-    exception may embed that URL verbatim, so scrub it out of any string
-    that could land in a log line or traceback.
-    """
-    return _WS_TOKEN_RE.sub(r"\1***", text)
-
 
 def _select_json_artifact(artifacts: list[Artifact]) -> Artifact | None:
     """Pick the JSON artifact ``extract()`` / ``understand()`` should return.
@@ -964,27 +854,6 @@ _UNDERSTAND_UNSUPPORTED_STATUSES = frozenset({400, 404, 422, 501})
 
 def _is_understand_unsupported(exc: APIError) -> bool:
     return exc.status_code in _UNDERSTAND_UNSUPPORTED_STATUSES
-
-
-def _parse_event(raw: str) -> GoalEvent:
-    """Translate a raw WS frame into a :class:`GoalEvent`.
-
-    Wrapping both JSON-decode and Pydantic-validate in one helper keeps
-    the streaming loop focused; both failure modes surface as
-    :class:`WebSocketError` with the original payload attached.
-    """
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise WebSocketError(f"Server sent non-JSON message: {exc}", payload=raw) from exc
-
-    try:
-        return GoalEvent.model_validate(payload)
-    except ValidationError as exc:
-        raise WebSocketError(
-            f"Server sent unrecognised event envelope: {exc.errors()}",
-            payload=raw,
-        ) from exc
 
 
 class Goals:

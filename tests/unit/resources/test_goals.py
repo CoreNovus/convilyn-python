@@ -1231,21 +1231,6 @@ class TestRunInteractive:
 # ── WS token redaction (never leak the bearer in an error string) ───
 
 
-class TestWsTokenRedaction:
-    def test_token_query_param_scrubbed(self):
-        from convilyn.resources.goals import _redact_ws_token
-
-        raw = "connect failed: wss://gw.example.com/v1?token=ck_secretvalue123 timeout"
-        out = _redact_ws_token(raw)
-
-        assert "ck_secretvalue123" not in out and "token=***" in out
-
-    def test_non_token_text_unchanged(self):
-        from convilyn.resources.goals import _redact_ws_token
-
-        assert _redact_ws_token("plain DNS failure, no url") == "plain DNS failure, no url"
-
-
 # ── understand() — grounded, schema-constrained understanding (#2528) ──
 
 _SCHEMA = {

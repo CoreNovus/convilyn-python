@@ -21,12 +21,10 @@ Exit codes follow the pinned convention in :mod:`._exit_codes`:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
-import sys
 from collections.abc import Callable
-from typing import IO, Any
+from typing import Any
 
 import click
 
@@ -34,17 +32,13 @@ from convilyn import (
     APIError,
     AuthError,
     Convilyn,
-    GoalEvent,
     GoalJob,
     GoalJobFailedError,
     GoalJobTimeoutError,
-    WebSocketError,
 )
 from convilyn.cli._exit_codes import (
     EXIT_API_ERROR,
-    EXIT_INTERRUPTED,
     EXIT_JOB_FAILED,
-    EXIT_OK,
     EXIT_USAGE,
 )
 from convilyn.cli._output import OutputRenderer, make_renderer
@@ -187,43 +181,6 @@ def status_command(
         return client.goals.retrieve(job_spec_id)
 
     _run_sync_action(action=action, renderer=renderer, command_name="status")
-
-
-@goals_command.command("events")
-@click.argument("job_spec_id")
-@click.option(
-    "--json",
-    "json_output",
-    is_flag=True,
-    help="Emit each event as one JSON object per line (NDJSON).",
-)
-@click.option(
-    "--ws-url",
-    "ws_url",
-    default=None,
-    help="Override the configured WebSocket URL (e.g. wss://ws.dev.convilyn.com).",
-)
-def events_command(
-    job_spec_id: str,
-    json_output: bool,
-    ws_url: str | None,
-) -> None:
-    """Stream WebSocket events for an AI workflow job.
-
-    Exits when the server emits a terminal event (``completed`` /
-    ``failed`` / ``cancelled``). Ctrl-C closes the stream and exits 130.
-    """
-    try:
-        exit_code = asyncio.run(
-            _stream_events(
-                job_spec_id=job_spec_id,
-                json_output=json_output,
-                ws_url=ws_url,
-            )
-        )
-    except KeyboardInterrupt:
-        raise SystemExit(EXIT_INTERRUPTED) from None
-    raise SystemExit(exit_code)
 
 
 @goals_command.command("fill-slot")
@@ -486,131 +443,6 @@ def _run_sync_action(
                 click.echo(f"cleanup failed: {cleanup_exc!r}", err=True)
 
 
-async def _stream_events(
-    *,
-    job_spec_id: str,
-    json_output: bool,
-    ws_url: str | None,
-    client_factory: Callable[[], Convilyn] | None = None,
-    stdout: IO[str] | None = None,
-    stderr: IO[str] | None = None,
-) -> int:
-    """Async helper driving ``goals events``.
-
-    Returns the exit code so the sync entry point can ``raise SystemExit``
-    at the boundary. Tests inject ``client_factory`` + stream sinks to
-    keep the loop assertions deterministic.
-    """
-    factory = client_factory or _build_client
-    out: IO[str] = stdout or sys.stdout
-    err: IO[str] = stderr or sys.stderr
-
-    try:
-        client = factory()
-    except AuthError as exc:
-        click.echo(f"Authentication failed: {exc}", err=True, file=err)
-        return EXIT_USAGE
-
-    try:
-        iterator = client.async_client.goals.events(job_spec_id, ws_url=ws_url)
-        async for event in iterator:
-            _emit_event(event, json_output=json_output, stdout=out, stderr=err)
-            if event.is_terminal:
-                return _terminal_event_exit_code(event)
-        # Iterator closed without a terminal event — unusual but treat
-        # as transport-side issue rather than success.
-        click.echo(
-            "Event stream closed without a terminal event",
-            err=True,
-            file=err,
-        )
-        return EXIT_API_ERROR
-    except ValueError as exc:
-        # resolve_ws_url raises ValueError when no WS URL is configured
-        # (ctor arg, env var, and per-call --ws-url all empty).
-        click.echo(f"Configuration error: {exc}", err=True, file=err)
-        return EXIT_USAGE
-    except WebSocketError as exc:
-        click.echo(f"WebSocket error: {exc}", err=True, file=err)
-        return EXIT_API_ERROR
-    except APIError as exc:
-        click.echo(f"API error: {exc}", err=True, file=err)
-        return EXIT_API_ERROR
-    except (KeyboardInterrupt, asyncio.CancelledError):
-        # Cooperative cancellation must propagate so the outer
-        # `asyncio.run(...)` in `events_command` sees the original
-        # signal and the SIGINT contract (exit 130) is preserved.
-        raise
-    except Exception as exc:
-        # Catch-all for unexpected failures (e.g. ValidationError on a
-        # malformed server frame, transport-level oddities). Without
-        # this, an uncaught traceback leaks to stdout — worse UX than
-        # the documented EXIT_API_ERROR.
-        click.echo(f"Unexpected error: {exc!r}", err=True, file=err)
-        return EXIT_API_ERROR
-    finally:
-        try:
-            await client.async_client.aclose()
-        except Exception as cleanup_exc:
-            if os.environ.get("CONVILYN_DEBUG"):
-                click.echo(f"cleanup failed: {cleanup_exc!r}", err=True, file=err)
-
-
-def _emit_event(
-    event: GoalEvent,
-    *,
-    json_output: bool,
-    stdout: IO[str],
-    stderr: IO[str],
-) -> None:
-    """Write one event to the right stream.
-
-    JSON mode → NDJSON line on stdout for ``| jq`` pipelines. Human mode
-    → glyph-prefixed status line on stderr (matches ``convert``'s
-    progress-on-stderr convention so callers can still ``> result``).
-    """
-    if json_output:
-        line = json.dumps(
-            event.model_dump(mode="json", by_alias=True),
-            ensure_ascii=False,
-            sort_keys=True,
-        )
-        stdout.write(line + "\n")
-        stdout.flush()
-        return
-    glyph = _EVENT_GLYPHS.get(event.type, "•")
-    detail = _summarise_event(event)
-    stderr.write(f"{glyph} {event.type}{detail}\n")
-    stderr.flush()
-
-
-def _summarise_event(event: GoalEvent) -> str:
-    """Best-effort one-line detail for human-mode rendering."""
-    data = event.data or {}
-    candidates = (
-        data.get("name"),
-        data.get("tool"),
-        data.get("role"),
-        data.get("message"),
-        data.get("status"),
-    )
-    for value in candidates:
-        if value:
-            return f" {value}"
-    if event.type in ("progress",) and "progress" in data:
-        return f" {data['progress']}%"
-    return ""
-
-
-def _terminal_event_exit_code(event: GoalEvent) -> int:
-    """Map a terminal event to the documented exit code."""
-    if event.type == "failed":
-        return EXIT_JOB_FAILED
-    # ``completed`` (success) and ``cancelled`` (user-initiated) both
-    # exit zero — the user already knew they cancelled.
-    return EXIT_OK
-
-
 def _job_to_payload(command_name: str, job: GoalJob) -> dict[str, Any]:
     """Render a :class:`GoalJob` into the shape ``final()`` expects."""
     return {
@@ -631,23 +463,6 @@ def _print_error(exc: Exception, prefix: str) -> Exception:
     else:
         click.echo(f"{prefix}: {exc}", err=True)
     return exc
-
-
-_EVENT_GLYPHS: dict[str, str] = {
-    "tool_started": "▶",
-    "tool_finished": "✓",
-    "agent_step_started": "▶",
-    "agent_step_finished": "✓",
-    "orchestration_transition": "↔",
-    "status": "•",
-    "progress": "…",
-    "completed": "✓",
-    "failed": "✗",
-    "slot_needed": "?",
-    "keepalive": "·",
-    "agent_text": "›",
-    "agent_text_done": "›",
-}
 
 
 # ── Sub-command registration ────────────────────────────────────────

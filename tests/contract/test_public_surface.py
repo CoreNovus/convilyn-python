@@ -70,7 +70,6 @@ FROZEN_ALL = {
     "ExponentialBackoffRetry",
     "File",
     "FileList",
-    "GoalEvent",
     "GoalJob",
     "GoalJobFailedError",
     "GoalJobTimeoutError",
@@ -101,7 +100,6 @@ FROZEN_ALL = {
     "UserWorkflowRun",
     "UserWorkflowSummary",
     "UserWorkflowsPage",
-    "WebSocketError",
     "Workflow",
     "WorkflowSearchPage",
     "WorkflowStats",
@@ -139,7 +137,6 @@ EXPECTED_ERRORS = {
     "JobTimeoutError",
     "GoalJobFailedError",
     "GoalJobTimeoutError",
-    "WebSocketError",
     "RetryExhaustedError",
 }
 
@@ -167,7 +164,6 @@ ASYNC_RESOURCE_METHODS = {
         "confirm",
         "cancel",
         "retry",
-        "events",
         "artifacts",
         "download_artifact_url",
         "download_artifact_to",
