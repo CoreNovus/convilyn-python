@@ -127,7 +127,7 @@ def _require_https_base_url(base_url: str) -> None:
 def _require_safe_external_url(url: str) -> None:
     """Guard an externally-supplied absolute URL before the SDK dials it.
 
-    ``external_put`` / ``external_post_form`` / ``external_get`` dial the
+    ``external_post_form`` / ``external_get`` dial the
     storage URLs the service hands back. Those are treated as untrusted:
     a malformed or tampered response must never make the client open a
     connection to a downgraded, local, or internal address. Two checks:
@@ -382,38 +382,6 @@ class HTTPClient:
             return
         headers["Idempotency-Key"] = generate_idempotency_key()
 
-    async def external_put(
-        self,
-        url: str,
-        *,
-        content: bytes | AsyncIterator[bytes],
-        headers: dict[str, str] | None = None,
-    ) -> httpx.Response:
-        """PUT to an external absolute URL (e.g. a presigned storage URL).
-
-        Does NOT inject Convilyn auth headers — the URL itself carries the
-        authorization signature, and adding our own ``Authorization`` would
-        confuse the upstream service.
-
-        Uses the shared :class:`httpx.AsyncClient`, so connection pooling
-        and HTTP/2 multiplexing carry over. httpx treats absolute URLs as
-        absolute, so the SDK's ``base_url`` is bypassed automatically.
-
-        Raises:
-            ValueError: the URL is not https (scheme guard).
-            S3UploadError: any non-2xx response from the upstream service.
-        """
-        _require_safe_external_url(url)
-        response = await self._client.put(url, content=content, headers=headers or {})
-        if response.status_code >= 400:
-            raise S3UploadError(
-                response.status_code,
-                f"S3_HTTP_{response.status_code}",
-                response.reason_phrase or "External upload failed",
-                {"url": url},
-            )
-        return response
-
     async def external_post_form(
         self,
         url: str,
@@ -428,8 +396,11 @@ class HTTPClient:
         The backend's upload presign issues a POST grant: every ``fields``
         entry must be copied VERBATIM into the form and the file part
         appended LAST (the storage service ignores form fields after the file part, so the
-        ordering is part of the wire contract). Same no-auth-header +
-        https-only semantics as :py:meth:`external_put`.
+        ordering is part of the wire contract).
+
+        Does NOT inject Convilyn auth headers — the presigned URL already
+        carries the authorization signature, and adding our own
+        ``Authorization`` would confuse the upstream service.
 
         Raises:
             ValueError: the URL is not https (scheme guard).
@@ -464,7 +435,7 @@ class HTTPClient:
     ) -> httpx.Response:
         """GET an external absolute URL (e.g. storage download URL).
 
-        Counterpart to :py:meth:`external_put` — same no-auth-header
+        Counterpart to :py:meth:`external_post_form` — same no-auth-header
         semantics, raises :class:`APIError` (not ``S3UploadError``, since
         a failed *download* is not strictly an upload error) on non-2xx.
 
@@ -605,20 +576,62 @@ def _decode_error(response: httpx.Response) -> APIError:
     return APIError(status, code, message, details)
 
 
+def server_reason(exc: APIError) -> str | None:
+    """``exc.message`` when the BODY carried one, else ``None``.
+
+    :func:`_decode_error` substitutes ``response.reason_phrase`` when the
+    envelope has no ``message``, so ``exc.message`` is never empty and
+    truthiness cannot tell "the server explained" from "the server said
+    nothing". A phrase like ``"Not Implemented"`` is a status LABEL, and a
+    caller that forwards it as an explanation replaces its own specific default
+    with something vaguer — which is a regression in exactly the case that
+    default exists for.
+
+    Compared against **httpx's** table rather than :class:`http.HTTPStatus`,
+    because that is the table ``_decode_error`` substituted from and the two
+    disagree: 422 is ``"Unprocessable Entity"`` to httpx and ``"Unprocessable
+    Content"`` to the stdlib. The stdlib spelling would fail to match on that
+    one status and leak a label as though it were a reason.
+    """
+    if not exc.message:
+        return None
+    return exc.message if exc.message != httpx.codes.get_reason_phrase(exc.status_code) else None
+
+
 def _flatten_error_envelope(payload: dict[str, Any]) -> dict[str, Any]:
-    """Unwrap FastAPI's ``{"detail": {...}}``; leave a flat payload alone.
+    """Unwrap FastAPI's ``{"detail": ...}``; leave a flat payload alone.
 
-    Those are the only two shapes the API produces. Enumerated from
-    ``docs/contracts/**``, which is the agreed description of the wire rather
-    than a sample of it: every declared error body is either flat
-    ``{code, message, ...}`` or ``detail``-wrapped.
+    Three shapes, not two. This docstring used to say *"those are the only two
+    shapes the API produces … enumerated from the published contracts, which is
+    the agreed description of the wire rather than a sample of it"* — and the
+    enumeration was of what the contracts DECLARE, never of what the service
+    EMITS. The two diverge, so the confident sourcing was the part that made the
+    claim hard to doubt:
 
-    An envelope this does not recognise is returned unchanged rather than
-    unwrapped on a guess, so ``code`` misses and :func:`_decode_error` falls
-    back to the status-derived one. For a shape nothing produces, reporting the
-    status is more truthful than inventing a code from an arbitrary sub-dict.
+    * ``{code, message, details}`` — flat, the declared envelope
+    * ``{"detail": {code, message, ...}}`` — the framework's wrapped-dict form
+    * ``{"detail": "<plain string>"}`` — a plain-string detail, which several
+      AI-workflow create paths return; it collapses a typed error's ``code`` and
+      ``details`` into its message string on the way out
+
+    The third fell through to ``payload`` unchanged, so ``code`` and ``message``
+    both missed and :func:`_decode_error` substituted ``HTTP_<status>`` and the
+    reason phrase. **The server's actual explanation was discarded and replaced
+    with "Bad Request"** — for :meth:`~convilyn.resources.goals.AsyncGoals.understand`
+    that meant a caller who sent too many files was told the platform does not
+    support understanding at all.
+
+    A string ``detail`` carries no code, so only ``message`` is recovered here;
+    ``code`` still falls back to the status-derived one, which remains the
+    truthful answer when the wire genuinely did not send one.
+
+    Any OTHER shape is still returned unchanged rather than unwrapped on a
+    guess. That reasoning was right and is kept — the defect was the closed set,
+    not the caution.
     """
     nested = payload.get("detail")
+    if isinstance(nested, str):
+        return {"message": nested}
     return nested if isinstance(nested, dict) else payload
 
 

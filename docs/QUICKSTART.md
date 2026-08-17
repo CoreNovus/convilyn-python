@@ -545,7 +545,8 @@ PowerShell, `cmd.exe`, WSL, macOS and Linux are unaffected.
 The AI workflow runs **agentic** workflows: the backend assembles a
 multi-step plan, calls MCP tools, and may stop to ask the user for
 clarification mid-flight. Surface mirrors the conversion API but adds
-HITL (`fill_slot` / `confirm`) and a WebSocket event stream.
+HITL (`fill_slot` / `confirm`). Progress is observed by polling — see
+§7.3 for why there is no event stream.
 
 ### 7.1 Five-line hello-world
 

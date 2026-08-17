@@ -176,8 +176,8 @@ class AsyncConvert:
     ) -> Path:
         """Download the first result file to ``to`` and return the path.
 
-        Uses :py:meth:`HTTPClient.external_put`-style raw GET to bypass
-        Convilyn auth headers on the storage URL.
+        Uses :py:meth:`HTTPClient.external_get`, which bypasses Convilyn
+        auth headers on the storage URL.
 
         Raises ``FileExistsError`` when ``to`` already exists, unless
         ``overwrite=True``. That matches :func:`convilyn.local.convert`,

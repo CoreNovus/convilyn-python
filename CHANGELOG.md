@@ -3,6 +3,90 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [Semantic Versioning](https://semver.org/).
 
+## [3.0.1] - 2026-08-17
+
+A fix-only release: nothing added, nothing removed from the public API. That is
+why it is a patch and not a minor. `goals.extract()` and `estimated_micro_u` are
+both still here and still work; their removal is bound to 4.0.0.
+
+### Fixed
+
+- **`goals.understand()` refusals now carry the server's reason instead of a
+  blanket "not supported".** A request the backend rejected for a nameable,
+  actionable cause — too many files, mixed file kinds — surfaced as
+  `UnderstandUnavailableError` with the class's default text: *the connected
+  platform does not support schema-grounded understanding yet*. That is a claim
+  about the platform, and it was false; the caller's request was the problem,
+  and the backend had said so.
+
+  Two independent losses, both fixed:
+
+  - the error envelope decoder recognised `{code, message, …}` and
+    `{"detail": {…}}` but not `{"detail": "<string>"}` — a plain-string detail,
+    which several AI-workflow create paths return. That body fell through, so
+    `message` degraded to the HTTP reason phrase and the explanation was
+    discarded before any resource saw it.
+  - `understand()` then constructed the error with no argument, discarding even
+    that.
+
+  A refusal whose body carries **no** message is unchanged: it still reads as
+  the platform not supporting the feature, which is the accurate reading when
+  the server offered nothing. The HTTP reason phrase is a status label, not an
+  explanation, and is not forwarded as one.
+
+  **`UnderstandUnavailableError` is still the type raised**, for the same four
+  statuses as before — only the message improves, so `except
+  UnderstandUnavailableError` written against 3.0.0 keeps working. Giving the
+  wrong-request case a *distinct type* needs a machine-readable discriminator on
+  the wire, which does not exist today; that is tracked for the next major.
+
+- **A shipped CLI example crashed.** `examples/07_goals_cli.sh` was published in
+  the sdist and did not run; it is removed. The examples index and the scripts
+  it lists are now checked against each other in both directions, so the index
+  cannot name a file that is absent and a file cannot ship unlisted.
+
+- **The docs described a WebSocket event stream that 3.0.0 removed.**
+  `docs/QUICKSTART.md` claimed the goals surface "adds … a WebSocket event
+  stream" while §7.3 of the same document recorded its removal, and the
+  `convilyn goals` CLI docstring still listed an `events` subcommand. Both now
+  match what the package does.
+
+- **The upload path's SSRF guard is now actually covered by a test.** Uploads go
+  through a presigned **POST** grant. The SDK also carried a presigned-PUT
+  fallback "so the SDK works against both backend generations" — there is no
+  such generation; the contract makes `fields` required and the server has one
+  producer. That dead path is gone.
+
+  What matters more than the removal: the two SSRF assertions (reject non-HTTPS,
+  reject internal hosts) were attached to the **dead** method, while the live one
+  had none. They were moved onto the live path rather than deleted with the code,
+  so the guard your uploads actually pass through is the one under test. No
+  behaviour change — the path you were already using is unchanged.
+
+- **The offline engine's format table now cannot advertise a format the package
+  does not contain.** No conversion changes here — `convilyn.local` reads the
+  same formats it read in 3.0.0, and the shipped engine is byte-for-byte what
+  3.0.0 shipped. What changed is that this is now *enforced* rather than true by
+  luck.
+
+  The engine is generated from the platform's own conversion code. That upstream
+  gained an HTML reader; the generator's precondition asked whether the import
+  could be *rewritten* for the published package, not whether the module it
+  named was one the package actually carries — and those read as the same
+  question. A regenerated engine would have advertised `html → md` through
+  `capabilities()`, then raised `ModuleNotFoundError` the first time anyone
+  converted an HTML file.
+
+  A postcondition over the whole generated tree now refuses any build whose own
+  imports do not resolve, so a route this package offers is a route it can run.
+
+  **HTML remains unavailable offline, and is now a stated limit rather than an
+  omission.** The platform's HTML reader is built on a GPL-3.0 library, and this
+  package is Apache-2.0 with permissive dependencies throughout; adding it is a
+  licensing decision, not a packaging one. `convilyn.local.capabilities()` lists
+  no `html` route, which is the honest answer — the hosted conversion API reads
+  HTML as it always has.
+
 ## [3.0.0] - 2026-08-16
 
 ### Added

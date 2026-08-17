@@ -14,7 +14,7 @@ import httpx
 import pytest
 import respx
 
-from convilyn import AsyncConvilyn
+from convilyn import APIError, AsyncConvilyn
 from convilyn._internal.http import DEFAULT_BASE_URL, resolve_base_url
 
 API_BASE = "https://api.convilyn.corenovus.com"
@@ -141,7 +141,7 @@ class TestRawRequestObjectState:
 
 
 class TestExternalUrlSchemeGuard:
-    """external_put / external_get must refuse non-https (backend) URLs."""
+    """external_post_form / external_get must refuse non-https (backend) URLs."""
 
     @pytest.mark.parametrize(
         "bad_url",
@@ -163,10 +163,26 @@ class TestExternalUrlSchemeGuard:
         ["http://example-bucket.s3.amazonaws.com/key", "file:///tmp/x"],
     )
     @pytest.mark.asyncio
-    async def test_external_put_rejects_non_https(self, bad_url: str) -> None:
+    async def test_external_post_form_rejects_non_https(self, bad_url: str) -> None:
+        """The upload path's scheme guard.
+
+        This asserted against ``external_put`` until that method was deleted as
+        dead (the contract makes the presign's ``fields`` required, so no
+        deployed backend issues the PUT-shaped grant it served). The assertion
+        moved here rather than being deleted with it: ``external_post_form`` is
+        the method every upload actually goes through, and it had **no** test of
+        its own — the guard on the live path was uncovered while the guard on
+        the dead one was covered twice.
+        """
         async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
             with pytest.raises(ValueError, match="non-https"):
-                await client._http.external_put(bad_url, content=b"x")
+                await client._http.external_post_form(
+                    bad_url,
+                    fields={"key": "k"},
+                    file_content=b"x",
+                    filename="x.txt",
+                    content_type="text/plain",
+                )
 
     @pytest.mark.asyncio
     async def test_external_get_allows_https(self, monkeypatch) -> None:
@@ -194,11 +210,22 @@ class TestExternalUrlHostGuard:
                 await client._http.external_get("https://internal.example/x")
 
     @pytest.mark.asyncio
-    async def test_external_put_rejects_private_host(self, monkeypatch) -> None:
+    async def test_external_post_form_rejects_private_host(self, monkeypatch) -> None:
+        """Upload exfiltration guard, on the method uploads actually use.
+
+        Moved off ``external_put`` when that dead method was deleted — see the
+        scheme-guard counterpart above.
+        """
         monkeypatch.setattr("convilyn._internal.http.is_safe_url", lambda _u: False)
         async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
             with pytest.raises(ValueError, match="private/internal"):
-                await client._http.external_put("https://internal.example/x", content=b"x")
+                await client._http.external_post_form(
+                    "https://internal.example/x",
+                    fields={"key": "k"},
+                    file_content=b"x",
+                    filename="x.txt",
+                    content_type="text/plain",
+                )
 
 
 class TestBaseUrlHttpsGuard:
@@ -244,3 +271,71 @@ class TestExternalDownloadCap:
             async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
                 written = await client._http.external_get_to_file(url, dest, max_bytes=1024)
         assert (written, dest.read_bytes()) == (5, b"hello")
+
+
+# ── 9. Error envelope — the THIRD wire shape (#4204) ───────────────────
+
+
+class TestStringDetailEnvelope:
+    """``HTTPException(status_code=..., detail=<str>)`` is a shape the API really
+    emits — the goal lane raises it on four paths — and ``_flatten_error_envelope``
+    recognised only the flat and dict-wrapped forms. A string ``detail`` fell
+    through unchanged, so ``message`` missed and became the reason phrase: the
+    server's explanation was replaced with ``"Bad Request"``.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_string_detail_becomes_the_message(self) -> None:
+        async with respx.mock() as mock:
+            mock.post(f"{API_BASE}/api/v1/jobs/goal").mock(
+                return_value=httpx.Response(
+                    400, json={"detail": "Structured understanding currently accepts one file"}
+                )
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                with pytest.raises(APIError) as exc_info:
+                    await client._http.request("POST", "/api/v1/jobs/goal", json={})
+
+        assert exc_info.value.message == "Structured understanding currently accepts one file"
+
+    @pytest.mark.asyncio
+    async def test_a_string_detail_still_reports_the_status_derived_code(self) -> None:
+        """A string ``detail`` carries no code, so inventing one would be worse
+        than the status-derived fallback. Only ``message`` is recovered."""
+        async with respx.mock() as mock:
+            mock.post(f"{API_BASE}/api/v1/jobs/goal").mock(
+                return_value=httpx.Response(400, json={"detail": "nope"})
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                with pytest.raises(APIError) as exc_info:
+                    await client._http.request("POST", "/api/v1/jobs/goal", json={})
+
+        assert exc_info.value.code == "HTTP_400"
+
+    @pytest.mark.asyncio
+    async def test_the_dict_wrapped_shape_is_unchanged(self) -> None:
+        async with respx.mock() as mock:
+            mock.post(f"{API_BASE}/api/v1/jobs/goal").mock(
+                return_value=httpx.Response(
+                    400, json={"detail": {"code": "WIDGET_BAD", "message": "inner"}}
+                )
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                with pytest.raises(APIError) as exc_info:
+                    await client._http.request("POST", "/api/v1/jobs/goal", json={})
+
+        assert exc_info.value.code == "WIDGET_BAD"
+
+    @pytest.mark.asyncio
+    async def test_an_unrecognised_shape_is_still_not_unwrapped_on_a_guess(self) -> None:
+        """The caution this change kept: a ``detail`` that is neither string nor
+        dict reports the status rather than inventing a code from a sub-value."""
+        async with respx.mock() as mock:
+            mock.post(f"{API_BASE}/api/v1/jobs/goal").mock(
+                return_value=httpx.Response(400, json={"detail": ["a", "list"]})
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                with pytest.raises(APIError) as exc_info:
+                    await client._http.request("POST", "/api/v1/jobs/goal", json={})
+
+        assert exc_info.value.code == "HTTP_400"

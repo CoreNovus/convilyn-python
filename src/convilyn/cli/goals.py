@@ -6,7 +6,6 @@ writing Python. Sub-commands:
 
 * ``start``      — create a job (workflow_id or goal_text)
 * ``status``     — fetch a one-shot snapshot or poll with ``--watch``
-* ``events``     — stream WebSocket events as NDJSON or glyph lines
 * ``fill-slot``  — answer one slot the agent is waiting on
 * ``confirm``    — submit filled slots for execution
 * ``cancel``     — cancel a running / queued job

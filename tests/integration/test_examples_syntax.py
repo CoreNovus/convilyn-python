@@ -32,9 +32,20 @@ README = DOCS_DIR / "README.md"
 QUICKSTART = DOCS_DIR / "QUICKSTART.md"
 AGENT = SDK_CLIENT_ROOT / "AGENT.md"
 
+EXAMPLES_INDEX = EXAMPLES_DIR / "README.md"
+
 #: The body of a fenced ```python block — the only place in a markdown file
 #: where a line is code a reader would run, rather than prose about code.
 _PYTHON_BLOCK = re.compile(r"^```(?:python|py)\n(.*?)^```", re.MULTILINE | re.DOTALL)
+
+#: A markdown link from the examples index to a SIBLING of that index:
+#: ``[`04_convert_cli.sh`](./04_convert_cli.sh)`` -> ``04_convert_cli.sh``.
+#: The leading ``./`` is required, which is what keeps the index's two
+#: out-of-tree links (``../docs/EDGE_PLACEMENT.md``,
+#: ``../tests/integration/test_examples_syntax.py``) out of the comparison.
+#: A trailing slash is consumed rather than captured, so ``app_scaffold/``
+#: compares equal to the directory entry ``app_scaffold``.
+_INDEX_LINK = re.compile(r"\]\(\./([^)/]+)/?\)")
 
 
 # ── 1. Logic — every example parses ─────────────────────────────────
@@ -65,12 +76,34 @@ class TestDocFilesExist:
             "did someone truncate it?"
         )
 
-    def test_shell_example_has_shebang(self) -> None:
-        shell_example = EXAMPLES_DIR / "04_convert_cli.sh"
+    @pytest.mark.parametrize(
+        "shell_example",
+        sorted(EXAMPLES_DIR.glob("*.sh")),
+        ids=lambda p: p.name,
+    )
+    def test_shell_example_has_shebang(self, shell_example: Path) -> None:
+        """Every shell example, not one named one.
+
+        This named ``04_convert_cli.sh`` outright, so ``07_goals_cli.sh`` shipped
+        in the sdist calling ``convilyn goals events`` — a sub-command deleted
+        with the WebSocket surface in 3.0.0 — and was in no gate at all. Naming
+        one file made this read as "shell examples are covered" while covering
+        exactly one.
+        """
         first_line = shell_example.read_text(encoding="utf-8").splitlines()[0]
         assert first_line.startswith("#!"), (
-            f"shell example must start with a shebang; got {first_line!r}"
+            f"{shell_example.name} must start with a shebang; got {first_line!r}"
         )
+
+    def test_there_is_a_shell_example_to_check(self) -> None:
+        """Non-vacuity for the parametrize above.
+
+        An empty ``@pytest.mark.parametrize`` source collapses the test to
+        ``skipped``, not to a failure — a file can report green having executed
+        zero assertions, and a skip is indistinguishable from a pass in every
+        summary anybody reads.
+        """
+        assert sorted(EXAMPLES_DIR.glob("*.sh"))
 
     def test_sample_input_exists(self) -> None:
         sample = EXAMPLES_DIR / "sample.txt"
@@ -194,4 +227,76 @@ class TestAgentDocStayInSync:
             f"AGENT.md no longer mentions these SOLID seams: {missing}. "
             "Either re-document them or update the test if the seam was "
             "intentionally removed."
+        )
+
+
+# ── 5. Coverage — the examples index matches the directory ─────────
+
+
+class TestExamplesIndexMatchesTheDirectory:
+    """``examples/README.md`` and ``examples/`` must agree, BOTH ways.
+
+    Both halves ship: ``examples/`` is in the sdist (``pyproject.toml``
+    ``[tool.hatch.build.targets.sdist] include``) and is mirrored to the public
+    repo, so a wrong index is a wrong index in the published artifact.
+
+    The two directions fail differently, and 3.0.0 shipped one of each — which
+    is the whole reason this is written as a pair rather than as the obvious
+    half:
+
+    * **listed but absent** — the index linked ``06_goals_async_events.py``,
+      deleted in 3.0.0 with the WebSocket surface. A dead link on the mirror.
+    * **present but unlisted** — ``11_local_convert_offline.py``, the offline
+      conversion engine, was in the directory and in no index. A shipped
+      capability nobody browsing the examples could find. ``07_goals_cli.sh``
+      was unlisted too, which is how it sat broken without anyone noticing.
+
+    A one-directional coverage check passes silently when the scanner stops
+    looking at one side. This repo has paid for that shape repeatedly; the
+    guards below are what make the pair mean anything.
+    """
+
+    @pytest.fixture
+    def linked(self) -> set[str]:
+        """Sibling filenames the index links to — anywhere in the file.
+
+        Deliberately not scoped to the table: a link in the intro prose is
+        still the index telling a reader the file exists.
+        """
+        return set(_INDEX_LINK.findall(EXAMPLES_INDEX.read_text(encoding="utf-8")))
+
+    @pytest.fixture
+    def on_disk(self) -> set[str]:
+        """Everything in ``examples/`` except the index itself."""
+        return {p.name for p in EXAMPLES_DIR.iterdir() if p.name != "README.md"}
+
+    def test_the_extraction_finds_real_links(self, linked: set[str]) -> None:
+        """Non-vacuity. ``assert not (a - b)`` is true whenever ``a`` empties,
+        so a regex that stops matching turns BOTH assertions below green."""
+        assert {"01_convert_docx_to_pdf.py", "04_convert_cli.sh"} <= linked
+
+    def test_the_directory_scan_finds_real_files(self, on_disk: set[str]) -> None:
+        """Non-vacuity for the other operand — same failure, other side."""
+        assert len(on_disk) > 5
+
+    def test_the_extraction_ignores_out_of_tree_links(self, linked: set[str]) -> None:
+        """Guard the guard: a pattern loose enough to match ``../docs/…`` would
+        report a doc that legitimately lives elsewhere as a missing example."""
+        assert not {name for name in linked if name.startswith("..")}
+        assert "EDGE_PLACEMENT.md" not in linked
+
+    def test_every_listed_example_exists(self, linked: set[str], on_disk: set[str]) -> None:
+        dangling = linked - on_disk
+        assert not dangling, (
+            f"examples/README.md links files that are not in examples/: "
+            f"{sorted(dangling)}. Either restore them or drop the row — a dead "
+            "link ships to PyPI and to the public mirror."
+        )
+
+    def test_every_example_is_listed(self, linked: set[str], on_disk: set[str]) -> None:
+        unlisted = on_disk - linked
+        assert not unlisted, (
+            f"examples/ holds files the index never mentions: {sorted(unlisted)}. "
+            "Add a row — an example nobody can find is an example nobody runs, "
+            "and nobody notices when it breaks."
         )

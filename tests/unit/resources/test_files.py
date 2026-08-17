@@ -22,6 +22,22 @@ API_BASE = "https://api.convilyn.corenovus.com"
 PRESIGN_URL = "https://example-bucket.s3.amazonaws.com/key?signature=abc"
 S3_KEY = "input/job_test/file_xyz/example.txt"
 
+#: The form fields of a presigned-POST grant. Declared up here, beside the other
+#: wire constants, because it is now the ONLY grant shape — not a variant.
+#:
+#: Every upload stub in this file used to omit ``fields`` and mock an S3 **PUT**,
+#: which pinned a wire shape the backend has no producer for: the contract makes
+#: ``fields`` required (``UploadPresignResponse: required: [uploadUrl, fields,
+#: fileId, s3Key]``) and the only implementation is ``generate_presigned_post``.
+#: So the primary upload tests were asserting against the dead branch while the
+#: live POST path was exercised only by section 3b below.
+_POST_FIELDS = {
+    "Content-Type": "text/plain",
+    "key": S3_KEY,
+    "policy": "eyJleHBpcmF0aW9uIjogIn0=",
+    "x-amz-signature": "sigsigsig",
+}
+
 
 # ── Fixtures ─────────────────────────────────────────────────────────
 
@@ -62,13 +78,14 @@ def _stub_happy_path(
             200,
             json={
                 "uploadUrl": PRESIGN_URL,
+                "fields": _POST_FIELDS,
                 "fileId": "file_xyz",
                 "s3Key": S3_KEY,
                 "expiresIn": 3600,
             },
         )
     )
-    s3 = mock.put(PRESIGN_URL).mock(return_value=httpx.Response(200))
+    s3 = mock.post(PRESIGN_URL).mock(return_value=httpx.Response(200))
     confirm = mock.post(f"{API_BASE}/api/v1/upload/confirm").mock(
         return_value=httpx.Response(200, json=confirm_payload)
     )
@@ -149,13 +166,14 @@ class TestUploadBoundary:
                     200,
                     json={
                         "uploadUrl": PRESIGN_URL,
+                        "fields": _POST_FIELDS,
                         "fileId": "f1",
                         "s3Key": S3_KEY,
                         "expiresIn": 3600,
                     },
                 )
             )
-            mock.put(PRESIGN_URL).mock(return_value=httpx.Response(200))
+            mock.post(PRESIGN_URL).mock(return_value=httpx.Response(200))
             mock.post(f"{API_BASE}/api/v1/upload/confirm").mock(
                 return_value=httpx.Response(200, json=confirm_payload)
             )
@@ -206,13 +224,14 @@ class TestUploadErrors:
                     200,
                     json={
                         "uploadUrl": PRESIGN_URL,
+                        "fields": _POST_FIELDS,
                         "fileId": "f1",
                         "s3Key": S3_KEY,
                         "expiresIn": 3600,
                     },
                 )
             )
-            mock.put(PRESIGN_URL).mock(return_value=httpx.Response(503))
+            mock.post(PRESIGN_URL).mock(return_value=httpx.Response(503))
             async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
                 with pytest.raises(S3UploadError) as info:
                     await client.files.upload(sample_file)
@@ -226,13 +245,14 @@ class TestUploadErrors:
                     200,
                     json={
                         "uploadUrl": PRESIGN_URL,
+                        "fields": _POST_FIELDS,
                         "fileId": "f1",
                         "s3Key": S3_KEY,
                         "expiresIn": 3600,
                     },
                 )
             )
-            mock.put(PRESIGN_URL).mock(return_value=httpx.Response(200))
+            mock.post(PRESIGN_URL).mock(return_value=httpx.Response(200))
             mock.post(f"{API_BASE}/api/v1/upload/confirm").mock(
                 return_value=httpx.Response(422, json={"code": "BAD_KEY", "message": "x"})
             )
@@ -243,13 +263,6 @@ class TestUploadErrors:
 
 
 # ── 3b. Presigned-POST grant (backend #2129 upload contract) ─────────
-
-_POST_FIELDS = {
-    "Content-Type": "text/plain",
-    "key": S3_KEY,
-    "policy": "eyJleHBpcmF0aW9uIjogIn0=",
-    "x-amz-signature": "sigsigsig",
-}
 
 
 def _stub_post_grant(mock: respx.MockRouter, confirm_payload: dict) -> respx.Route:

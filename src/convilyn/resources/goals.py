@@ -28,7 +28,7 @@ from typing import Any, Literal
 
 from convilyn._internal.callbacks import maybe_await
 from convilyn._internal.download import download_url_to_path
-from convilyn._internal.http import HTTPClient
+from convilyn._internal.http import HTTPClient, server_reason
 from convilyn._internal.loop_runner import CoroRunner
 from convilyn.exceptions import (
     APIError,
@@ -343,7 +343,11 @@ class AsyncGoals:
             job = await self._create_job(payload=payload)
         except APIError as exc:
             if _is_understand_unsupported(exc):
-                raise UnderstandUnavailableError() from exc
+                # Carry the server's words when it gave any — this was a
+                # no-argument construction, so the class default overwrote a
+                # refusal the service had already explained. Why
+                # `server_reason` and not `exc.message`: its own docstring.
+                raise UnderstandUnavailableError(server_reason(exc)) from exc
             raise
         # The goal-job FSM only enqueues execution on confirm (backend
         # _SUBMITTABLE = {READY, …}); a schema-routed create lands READY with
@@ -843,12 +847,22 @@ def _select_json_artifact(artifacts: list[Artifact]) -> Artifact | None:
     return next((a for a in json_arts if a.is_primary), json_arts[0])
 
 
-#: Create-time statuses that mean the backend did not accept a schema-constrained
-#: understanding job (``understand()``). A well-formed ``output_schema`` request
-#: only succeeds once the platform maps it to the structured-understanding gate;
-#: until then the create is rejected (no workflow source / unrecognised field),
-#: which the SDK surfaces as ``UnderstandUnavailableError`` rather than a silent
-#: ungrounded result. 402 / 429 / 5xx are real conditions and propagate as-is.
+#: Create-time statuses the SDK turns into ``UnderstandUnavailableError`` rather
+#: than a silent ungrounded result. 402 / 429 / 5xx are real conditions and
+#: propagate as-is.
+#:
+#: **400 is the coarse one, and knowingly so.** This used to read that a create
+#: is rejected as "no workflow source / unrecognised field" until the service
+#: maps ``output_schema`` — which stopped being true once it did. A 400 now also
+#: means a request the service understood and REFUSED for a nameable reason
+#: (too many files, mixed kinds), and that is not "unavailable" in any sense the
+#: caller can act on.
+#:
+#: It stays in the set because the two are **indistinguishable on the wire**:
+#: both arrive as a 400 whose body carries only a message string, with no
+#: machine-readable code to branch on. Giving the wrong-request case its own
+#: exception type needs that discriminator AND a major version of this package;
+#: until then the MESSAGE carries the distinction, not the type.
 _UNDERSTAND_UNSUPPORTED_STATUSES = frozenset({400, 404, 422, 501})
 
 

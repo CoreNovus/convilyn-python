@@ -163,7 +163,7 @@ class AsyncFiles:
         presign = await self._presign(filename=filename, size=size, content_type=content_type)
         await self._upload_to_storage(
             upload_url=presign["uploadUrl"],
-            fields=presign.get("fields") or None,
+            fields=presign["fields"],
             body=body,
             filename=filename,
             content_type=content_type,
@@ -200,7 +200,7 @@ class AsyncFiles:
         self,
         *,
         upload_url: str,
-        fields: dict[str, str] | None,
+        fields: dict[str, str],
         body: bytes | AsyncIterator[bytes],
         filename: str,
         content_type: str,
@@ -209,23 +209,20 @@ class AsyncFiles:
 
         The backend issues a presigned **POST** grant (``fields`` present,
         size-capped via the storage ``content-length-range`` policy): copy the
-        fields verbatim into a multipart form, file part LAST. A grant
-        without ``fields`` is the legacy presigned-PUT shape — kept as a
-        fallback so the SDK works against both backend generations.
+        fields verbatim into a multipart form, file part LAST.
+
+        ``fields`` is required, not optional. The contract declares it so
+        (``UploadPresignResponse: required: [uploadUrl, fields, fileId, s3Key]``)
+        and the backend has one producer — ``generate_presigned_post`` — so no
+        deployed generation issues the ``fields``-absent presigned-PUT shape
+        this used to fall back to.
         """
-        if fields:
-            await self._http.external_post_form(
-                upload_url,
-                fields=fields,
-                file_content=body,
-                filename=filename,
-                content_type=content_type,
-            )
-            return
-        await self._http.external_put(
+        await self._http.external_post_form(
             upload_url,
-            content=body,
-            headers={"Content-Type": content_type},
+            fields=fields,
+            file_content=body,
+            filename=filename,
+            content_type=content_type,
         )
 
     async def _confirm(

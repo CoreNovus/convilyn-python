@@ -1,7 +1,9 @@
 # Convilyn SDK Examples
 
 Runnable snippets you can copy + paste into your project. Each one
-assumes `CONVILYN_API_KEY` is exported in the environment.
+assumes `CONVILYN_API_KEY` is exported in the environment — except
+[`11_local_convert_offline.py`](./11_local_convert_offline.py), which runs
+entirely on your machine and reads no key at all.
 
 | File | What it shows |
 |---|---|
@@ -10,10 +12,10 @@ assumes `CONVILYN_API_KEY` is exported in the environment.
 | [`03_api_escape_hatch.py`](./03_api_escape_hatch.py) | Calling an unwrapped endpoint via `client._async._http.raw_request` (matches the `convilyn api` CLI). |
 | [`04_convert_cli.sh`](./04_convert_cli.sh) | The equivalent shell session — `convilyn doctor` → `convert` → `api`. |
 | [`05_goals_doc_analyzer.py`](./05_goals_doc_analyzer.py) | Run an agentic AI workflow end-to-end (upload → start → drive to terminal). |
-| [`06_goals_async_events.py`](./06_goals_async_events.py) | Subscribe to the AI-workflow WebSocket event stream with `AsyncConvilyn`. |
 | [`08_workflows_marketplace.py`](./08_workflows_marketplace.py) | Browse and fork community workflows via `client.workflows`. |
 | [`09_account_quota.py`](./09_account_quota.py) | Check plan tier and pre-flight cost/quota via `client.account`. |
 | [`10_uw_as_edge_operator.py`](./10_uw_as_edge_operator.py) | Wrap a Builder-authored `uw_*` workflow as an edge `ModelOperator` (`placement="cloud"`) via `client.goals.run` — the Path-A cloud→edge bridge. See [`docs/EDGE_PLACEMENT.md`](../docs/EDGE_PLACEMENT.md). |
+| [`11_local_convert_offline.py`](./11_local_convert_offline.py) | Convert to Markdown with no key, no account and no network — `convilyn.local`, and asking `capabilities()` what this machine can actually do. |
 | [`app_scaffold/`](./app_scaffold/) | A restartable consumer-app starting shape: durable app-side session (atomic JSON state) reconciled against the platform each run. Copy-paste, not a package — see its README for why. |
 | [`sample.txt`](./sample.txt) | A 1 KiB plain-text sample for the Python examples; convert it to `pdf` or anything else. |
 
