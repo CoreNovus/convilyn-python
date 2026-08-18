@@ -6,8 +6,19 @@ Hierarchy::
     ├── AuthError                 missing / malformed credentials
     ├── APIError                  HTTP 4xx / 5xx from the Convilyn API
     │   ├── RateLimitError        HTTP 429
+    │   ├── PlanRequiredError     402 — your plan does not include this action
+    │   ├── QuotaExceededError    402 — the monthly cost cap is spent
+    │   ├── InsufficientCreditsError  402 — your BALANCE cannot fund this run
+    │   ├── FreeTierBlockedError  403 — a Free-plan gate refused the run
+    │   ├── SpecNotPricedError    409 — this workflow has no price configured
+    │   ├── ChargeUnavailableError    409 — billing could not charge right now
     │   └── (further specific types land alongside resource modules)
     └── (transport-level errors are exposed as `httpx` exceptions verbatim)
+
+The four billing refusals below arrive on the SAME paid path and each wants a
+different next step from the caller — top up, upgrade, pick another workflow,
+retry later. Before they existed a caller had to string-match ``exc.code`` to
+tell them apart, which is matching on something we reserve the right to change.
 
 The SDK never raises a bare ``Exception``; callers can rely on catching
 ``ConvilynError`` to handle any SDK-originated failure.
@@ -118,6 +129,106 @@ class QuotaExceededError(APIError):
         self.estimated_micro_u = estimated_micro_u
         self.threshold_micro_u = threshold_micro_u
         self.upgrade_url = upgrade_url
+
+
+class InsufficientCreditsError(APIError):
+    """HTTP 402 with ``code=INSUFFICIENT_CREDITS`` — your balance cannot fund this run.
+
+    **Not the same thing as :class:`QuotaExceededError`, and they share a status
+    code.** A quota is a ceiling you were given; a balance is money you hold. The
+    remediation differs — a quota resets at the next period, a balance does not
+    refill on its own — so the SDK gives them separate types rather than leaving
+    the caller to branch on ``code``::
+
+        except InsufficientCreditsError as exc:
+            print(f"short by {exc.shortfall_credits} credits")   # may be None
+        except QuotaExceededError:
+            ...                                                  # wait, or upgrade
+
+    :attr:`required_credits` / :attr:`available_credits` come from the refusal
+    body, so "how short am I" needs no second round-trip. Both are ``None`` when
+    the server did not send them — read them as *unknown*, never as zero, and
+    keep :attr:`APIError.details` as the untyped fallback for anything this
+    build does not model.
+    """
+
+    def __init__(
+        self,
+        status_code: int,
+        code: str,
+        message: str,
+        details: dict[str, Any] | None = None,
+        *,
+        required_credits: int | None = None,
+        available_credits: int | None = None,
+    ) -> None:
+        super().__init__(status_code, code, message, details)
+        self.required_credits = required_credits
+        self.available_credits = available_credits
+
+    @property
+    def shortfall_credits(self) -> int | None:
+        """How many credits short this run is, or ``None`` if unknown.
+
+        Derived rather than stored: the server sends the two operands, and a
+        third wire field that must agree with them is a field that can disagree
+        with them. Clamped at zero — a negative shortfall is not a number any
+        caller wants to render, and it would mean the refusal disagreed with its
+        own operands.
+        """
+        if self.required_credits is None or self.available_credits is None:
+            return None
+        return max(0, self.required_credits - self.available_credits)
+
+
+class FreeTierBlockedError(APIError):
+    """HTTP 403 — a Free-plan gate refused the run before any charge.
+
+    Two server codes land here, and they are one class because the caller's next
+    step is the same for both: leave the Free plan (or, for the cap, fund the
+    run from a top-up).
+
+    * ``spec_not_allowed_on_free`` — this workflow is not offered on Free.
+    * ``free_cost_cap_exceeded``   — Free's monthly processing cap is spent.
+
+    Branch on :attr:`APIError.code` when you want to say which; catch the type
+    when you only need to know it is a plan gate rather than a server fault.
+    :attr:`upgrade_url` is the in-app CTA, so callers do not hardcode it.
+    """
+
+    def __init__(
+        self,
+        status_code: int,
+        code: str,
+        message: str,
+        details: dict[str, Any] | None = None,
+        *,
+        upgrade_url: str | None = None,
+    ) -> None:
+        super().__init__(status_code, code, message, details)
+        self.upgrade_url = upgrade_url
+
+
+class SpecNotPricedError(APIError):
+    """HTTP 409 with ``code=SPEC_NOT_PRICED`` — this workflow has no price configured.
+
+    **Permanent for this workflow**, and that is what separates it from
+    :class:`ChargeUnavailableError` on the same status code: retrying will not
+    help, and no amount of credit changes it. Pick another workflow, or report
+    it — a priced workflow reaching this state is a catalogue defect, not a
+    caller mistake.
+    """
+
+
+class ChargeUnavailableError(APIError):
+    """HTTP 409 with ``code=CHARGE_UNAVAILABLE`` — billing could not charge right now.
+
+    **Transient.** The run was refused because the charge could not be recorded,
+    not because it was unaffordable and not because the workflow is unpriced
+    (:class:`SpecNotPricedError`). Retrying later is the correct response; the
+    SDK does not retry it automatically, because a repeated charge attempt is
+    the caller's decision to make, not a transport concern.
+    """
 
 
 class S3UploadError(APIError):

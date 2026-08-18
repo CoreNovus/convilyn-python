@@ -136,6 +136,16 @@ If streaming returns, it will be through a short-lived, single-use connect
 ticket — a design that shares no code with what was removed, which is the other
 reason keeping this was not "free optionality".
 
+**The dependency did not follow until 3.1.0.** `websockets` stayed a *required*
+dependency of this package for the whole of 3.0.x with zero imports anywhere in
+`src/`, so every `pip install convilyn` pulled a package no code could reach. It
+is removed in 3.1.0. Nothing about the surface changes — there was nothing left
+importing it — but the set of packages installed into your environment does,
+which is why it is a minor and not a patch. This is worth recording rather than
+quietly deleting: the removal of a *surface* and the removal of the *dependency
+that served it* are two steps, and only the first one is visible in a diff of
+the public API.
+
 ## Deprecation policy
 
 We do not remove public surface without warning. A symbol slated for

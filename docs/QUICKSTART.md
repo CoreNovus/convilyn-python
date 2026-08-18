@@ -390,8 +390,33 @@ except ConvilynError as exc:      # covers every type listed below
 ```
 
 Catch a specific one when you can actually do something different about it —
-top up on `QuotaExceededError`, back off on `RateLimitError`, fall back to file
-conversion on `UnderstandUnavailableError`.
+top up on `InsufficientCreditsError`, back off on `RateLimitError`, fall back to
+file conversion on `UnderstandUnavailableError`.
+
+**`QuotaExceededError` and `InsufficientCreditsError` are both HTTP 402 and they
+are not the same thing.** A quota is a ceiling you were given and it resets at
+the next period; a balance is money you hold and it does not refill on its own.
+So they are separate types rather than one type you branch on by `code`:
+
+```python
+from convilyn import InsufficientCreditsError, QuotaExceededError
+
+try:
+    result = client.goals.run(goal_text="Summarise this", files=[file_id])
+except InsufficientCreditsError as exc:
+    # `shortfall_credits` is None when the server did not send the operands —
+    # read that as unknown, never as zero.
+    print(f"top up: short by {exc.shortfall_credits} credits")
+except QuotaExceededError:
+    print("allowance spent — wait for the next period, or upgrade")
+```
+
+The billing path refuses on three other statuses too, each wanting a different
+next step: `FreeTierBlockedError` (403 — leave the Free plan),
+`ChargeUnavailableError` (409 — transient, retry later) and `SpecNotPricedError`
+(409 — permanent for that workflow, retrying will not help). A refusal code this
+build does not model still arrives as a plain `APIError` with `code` and
+`details` intact, so a new server signal never becomes an unhandled crash.
 
 **Importable from `convilyn`:**
 
@@ -403,7 +428,11 @@ conversion on `UnderstandUnavailableError`.
 | `APIError` | the API answered with an error status |
 | `RateLimitError` | too many requests — back off and retry |
 | `QuotaExceededError` | the plan's allowance for this call is used up |
+| `InsufficientCreditsError` | your **balance** cannot fund this run — carries `required_credits` / `available_credits` / `shortfall_credits` |
 | `PlanRequiredError` | the call needs a tier this account is not on |
+| `FreeTierBlockedError` | a Free-plan gate refused the run — this workflow is not on Free, or Free's monthly cap is spent |
+| `SpecNotPricedError` | this workflow has no price configured; retrying will not help |
+| `ChargeUnavailableError` | billing could not record the charge right now — transient, retry later |
 | `RetryExhaustedError` | retried to the configured limit and still failing |
 | `S3UploadError` | the upload itself failed, before any job existed |
 | `JobFailedError` | a conversion job finished with `status=failed` |

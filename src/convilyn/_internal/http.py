@@ -46,11 +46,15 @@ from convilyn._internal.urlpolicy import is_safe_url
 from convilyn._version import __version__
 from convilyn.exceptions import (
     APIError,
+    ChargeUnavailableError,
+    FreeTierBlockedError,
+    InsufficientCreditsError,
     PlanRequiredError,
     QuotaExceededError,
     RateLimitError,
     RetryExhaustedError,
     S3UploadError,
+    SpecNotPricedError,
 )
 
 # Backend emits any of these on 402 to signal a plan-tier mismatch.
@@ -64,6 +68,26 @@ _PLAN_REQUIRED_CODES: frozenset[str] = frozenset(
         "ENTERPRISE_TIER_REQUIRED",
     }
 )
+
+# Backend emits either of these on 403 when a Free-plan gate refuses a run
+# before any charge (``services/billing/quote.py`` ``QuoteFreeBlocked``). Same
+# shape and same rationale as the frozenset above: a third Free gate is one
+# line here and changes no dispatch.
+_FREE_TIER_BLOCKED_CODES: frozenset[str] = frozenset(
+    {
+        "spec_not_allowed_on_free",
+        "free_cost_cap_exceeded",
+    }
+)
+
+# 409 billing refusals, keyed to their class. A dict rather than an `if`/`elif`
+# chain because the two mean OPPOSITE things about retrying — permanent vs
+# transient — and a reader should see that as two rows, not as an order of
+# tests (`coding-style.md` O).
+_BILLING_CONFLICT_ERRORS: dict[str, type[APIError]] = {
+    "SPEC_NOT_PRICED": SpecNotPricedError,
+    "CHARGE_UNAVAILABLE": ChargeUnavailableError,
+}
 
 DEFAULT_BASE_URL = "https://api.convilyn.corenovus.com"
 DEFAULT_TIMEOUT = 30.0
@@ -527,10 +551,15 @@ def _decode_error(response: httpx.Response) -> APIError:
         * 429 → :class:`RateLimitError`
         * 402 + code in :data:`_PLAN_REQUIRED_CODES` → :class:`PlanRequiredError`
         * 402 + code = ``QUOTA_EXCEEDED`` → :class:`QuotaExceededError`
+        * 402 + code = ``INSUFFICIENT_CREDITS`` → :class:`InsufficientCreditsError`
+        * 403 + code in :data:`_FREE_TIER_BLOCKED_CODES` → :class:`FreeTierBlockedError`
+        * 409 + code in :data:`_BILLING_CONFLICT_ERRORS` → that class
         * Otherwise → base :class:`APIError`
 
-    Unknown 402 codes fall through to ``APIError`` — forward-compat for
-    new tier signals the SDK doesn't know about yet.
+    Unknown codes fall through to ``APIError`` — forward-compat for signals the
+    SDK doesn't know about yet. That is deliberate on EVERY status here, not
+    just 402: a 403 the SDK cannot name is still a 403, and inventing a type for
+    it would assert a remediation nobody verified.
     """
     status = response.status_code
     try:
@@ -572,6 +601,40 @@ def _decode_error(response: httpx.Response) -> APIError:
                 ),
                 upgrade_url=upgrade_url,
             )
+        if code == "INSUFFICIENT_CREDITS":
+            # These two ride INSIDE `details`, not beside it — the refusal is
+            # built as `detail={code, message, details={requiredCredits, ...}}`
+            # (`api/v1/goal_lane/_charging.py`), so `inner` holds the dict and
+            # not the numbers. Reading them off `inner` would silently produce
+            # None on every real refusal while looking exactly like the
+            # QUOTA_EXCEEDED branch above.
+            credit_detail = details if isinstance(details, dict) else {}
+            return InsufficientCreditsError(
+                status,
+                code,
+                message,
+                details,
+                required_credits=_coerce_int(
+                    _first_present(credit_detail, "requiredCredits", "required_credits")
+                ),
+                available_credits=_coerce_int(
+                    _first_present(credit_detail, "availableCredits", "available_credits")
+                ),
+            )
+
+    if status == 403 and code in _FREE_TIER_BLOCKED_CODES:
+        return FreeTierBlockedError(
+            status,
+            code,
+            message,
+            details,
+            upgrade_url=inner.get("upgrade_url") or inner.get("upgradeUrl"),
+        )
+
+    if status == 409:
+        conflict = _BILLING_CONFLICT_ERRORS.get(code)
+        if conflict is not None:
+            return conflict(status, code, message, details)
 
     return APIError(status, code, message, details)
 
@@ -633,6 +696,25 @@ def _flatten_error_envelope(payload: dict[str, Any]) -> dict[str, Any]:
     if isinstance(nested, str):
         return {"message": nested}
     return nested if isinstance(nested, dict) else payload
+
+
+def _first_present(payload: dict[str, Any], *keys: str) -> Any:
+    """The first key that is PRESENT, not the first that is truthy.
+
+    ``payload.get("a") or payload.get("a_snake")`` is the idiom used elsewhere
+    in this module for camel/snake aliases, and it is wrong for any field whose
+    zero value is meaningful. ``availableCredits`` is exactly that field: it is
+    ``0`` for the caller :class:`InsufficientCreditsError` exists for — someone
+    whose balance is empty — and ``0 or None`` is ``None``, so the number would
+    read as "the server did not send it" on the most common refusal there is.
+
+    Returns ``None`` when no key is present, which :func:`_coerce_int` then
+    passes through as the genuine "unknown".
+    """
+    for key in keys:
+        if key in payload:
+            return payload[key]
+    return None
 
 
 def _coerce_int(value: Any) -> int | None:

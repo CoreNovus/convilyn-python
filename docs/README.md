@@ -152,10 +152,12 @@ convilyn goals start "summarise these contracts" --dry-run
 ## Free to install, metered to use
 
 `pip install convilyn` is free, and everything under `convilyn local` stays free
-and unlimited — it runs on your hardware. Platform calls draw on your plan's
-quota, and the SDK raises typed `PlanRequiredError` / `QuotaExceededError`
-(both `APIError`) rather than failing opaquely. Check first with
-`client.account`.
+and unlimited — it runs on your hardware. Platform calls draw on your balance and
+your plan, and every refusal is a typed `APIError` subclass rather than an opaque
+failure: `InsufficientCreditsError` (your balance cannot fund this run — it
+carries `shortfall_credits`), `QuotaExceededError` (an allowance is spent),
+`PlanRequiredError` and `FreeTierBlockedError` (this needs a different plan).
+Check first with `client.account`.
 
 ## Known limits
 

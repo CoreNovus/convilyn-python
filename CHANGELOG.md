@@ -3,6 +3,65 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [Semantic Versioning](https://semver.org/).
 
+## [3.1.0] - 2026-08-17
+
+Minor, and both halves are why: the public surface **grows** by four exception
+types, and the set of packages installed into your environment **shrinks** by
+one. Nothing is removed from the API and nothing you catch today stops being
+caught, so no migration is required.
+
+### Added
+
+- **Four typed billing refusals.** The paid path can refuse a run in four ways
+  that want four different next steps from you, and until now all four arrived
+  as a bare `APIError` — so telling "top up" from "wait" from "this workflow
+  has no price" meant string-matching `exc.code`, which is matching on
+  something we reserve the right to change.
+
+  | | status | what to do |
+  |---|---|---|
+  | `InsufficientCreditsError` | 402 | top up — carries `required_credits`, `available_credits`, `shortfall_credits` |
+  | `FreeTierBlockedError` | 403 | leave the Free plan (or fund the run) — carries `upgrade_url` |
+  | `SpecNotPricedError` | 409 | pick another workflow; retrying will not help |
+  | `ChargeUnavailableError` | 409 | transient — retry later |
+
+  **`InsufficientCreditsError` is not `QuotaExceededError`, and they share HTTP
+  402.** A quota is a ceiling you were given and it resets at the next period; a
+  balance is money you hold and it does not refill on its own. One status code,
+  two different facts about your account — so they are two types rather than one
+  type you branch on by `code`:
+
+  ```python
+  except InsufficientCreditsError as exc:
+      print(f"short by {exc.shortfall_credits} credits")   # None when unknown
+  except QuotaExceededError:
+      ...                                                  # wait, or upgrade
+  ```
+
+  `shortfall_credits` is derived from the two operands rather than sent as a
+  third field, because a third field that must agree with two others is a field
+  that can disagree with them. It is `None` — *unknown*, never zero — when the
+  refusal carried no operands, and clamped at zero if they ever disagree.
+
+  All four subclass `APIError`, so every existing `except APIError:` and
+  `except ConvilynError:` keeps catching them. **A refusal code this build does
+  not model still arrives as a plain `APIError`** with `code` and `details`
+  intact — on 402, 403 and 409 alike — so a new server signal is never an
+  unhandled crash and never a type asserting a remediation nobody verified.
+
+### Removed
+
+- **`websockets` is no longer a dependency.** It had been *required* since
+  before 3.0.0 and imported nowhere in the package since — the WebSocket
+  surface was removed in 3.0.0 (`goals.events()`, `GoalEvent`, `WebSocketError`,
+  `ws_url`) and the dependency did not follow, so every `pip install convilyn`
+  pulled a package no code could reach.
+
+  Nothing in the public API changes; there was nothing left importing it. What
+  changes is your installed environment — one fewer transitive package, one
+  fewer version-compatibility surface, one fewer CVE feed to read. That is why
+  this is a minor rather than a patch.
+
 ## [3.0.1] - 2026-08-17
 
 A fix-only release: nothing added, nothing removed from the public API. That is
