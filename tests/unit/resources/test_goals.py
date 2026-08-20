@@ -20,6 +20,7 @@ from convilyn import (
     APIError,
     AsyncConvilyn,
     Convilyn,
+    GoalArtifactUnusableError,
     GoalJob,
     GoalJobFailedError,
     GoalJobTimeoutError,
@@ -74,14 +75,16 @@ class TestGoalsLogic:
 
             async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
                 with patch("convilyn.resources.goals.asyncio.sleep", return_value=None):
-                    job = await client.goals.run(workflow_id="doc_analyzer", files=["file_abc"])
+                    job = await client.goals.run(
+                        workflow_id="goal_lane.content_to_multipost", files=["file_abc"]
+                    )
 
         assert isinstance(job, GoalJob)
         assert job.status == "completed"
         assert job.is_terminal
         # The POST payload must carry the workflow_id (not goal_text) path.
         sent = create.calls.last.request.read().decode().replace(" ", "")
-        assert '"workflowId":"doc_analyzer"' in sent
+        assert '"workflowId":"goal_lane.content_to_multipost"' in sent
         assert '"fileIds":["file_abc"]' in sent
 
     @pytest.mark.asyncio
@@ -116,7 +119,7 @@ class TestGoalsLogic:
 
             async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
                 await client.goals.start(
-                    workflow_id="doc_analyzer",
+                    workflow_id="goal_lane.content_to_multipost",
                     files=["file_abc"],
                     llm_config_id="cfg_openai_1",
                 )
@@ -133,7 +136,9 @@ class TestGoalsLogic:
             )
 
             async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
-                await client.goals.start(workflow_id="doc_analyzer", files=["file_abc"])
+                await client.goals.start(
+                    workflow_id="goal_lane.content_to_multipost", files=["file_abc"]
+                )
 
         sent = create.calls.last.request.read().decode()
         assert "llmConfigId" not in sent
@@ -150,13 +155,13 @@ class TestGoalsLogic:
 
             async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
                 await client.goals.start(
-                    workflow_id="goal_lane.ad_creative_analyzer",
+                    workflow_id="goal_lane.content_to_multipost",
                     files=["file_abc"],
-                    slots={"industry_vertical": "saas"},
+                    slots={"target_platform": "linkedin"},
                 )
 
         sent = create.calls.last.request.read().decode().replace(" ", "")
-        assert '"slotAnswers":[{"slotId":"industry_vertical","value":"saas"}]' in sent
+        assert '"slotAnswers":[{"slotId":"target_platform","value":"linkedin"}]' in sent
         assert '"slots":' not in sent
 
     @pytest.mark.asyncio
@@ -221,7 +226,7 @@ class TestGoalsBoundary:
                 return_value=httpx.Response(201, json=_job_response("queued", fileIds=[]))
             )
             async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
-                job = await client.goals.start(workflow_id="doc_analyzer")
+                job = await client.goals.start(workflow_id="goal_lane.content_to_multipost")
         assert job.status == "queued"
 
     @pytest.mark.asyncio
@@ -259,7 +264,9 @@ class TestGoalsErrors:
             async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
                 with patch("convilyn.resources.goals.asyncio.sleep", return_value=None):
                     with pytest.raises(GoalJobFailedError) as info:
-                        await client.goals.run(workflow_id="doc_analyzer", files=["file_abc"])
+                        await client.goals.run(
+                            workflow_id="goal_lane.content_to_multipost", files=["file_abc"]
+                        )
         assert info.value.code == "WORKFLOW_FAILED"
         assert info.value.job_spec_id == "job_test"
 
@@ -320,7 +327,9 @@ class TestGoalsObjectState:
             )
             async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
                 with patch("convilyn.resources.goals.asyncio.sleep", return_value=None):
-                    job = await client.goals.run(workflow_id="doc_analyzer", files=["file_abc"])
+                    job = await client.goals.run(
+                        workflow_id="goal_lane.content_to_multipost", files=["file_abc"]
+                    )
 
         assert job.status == "slots_pending"
         assert job.needs_input
@@ -343,7 +352,9 @@ class TestGoalsObjectState:
             )
             async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
                 with patch("convilyn.resources.goals.asyncio.sleep", return_value=None):
-                    job = await client.goals.run(workflow_id="doc_analyzer", files=["file_abc"])
+                    job = await client.goals.run(
+                        workflow_id="goal_lane.content_to_multipost", files=["file_abc"]
+                    )
 
         assert job.status == "partial"
         assert job.is_terminal
@@ -360,7 +371,9 @@ class TestGoalsObjectState:
             client = Convilyn(api_key="ck_test")  # pragma: allowlist secret
             try:
                 with patch("convilyn.resources.goals.asyncio.sleep", return_value=None):
-                    job = client.goals.run(workflow_id="doc_analyzer", files=["file_abc"])
+                    job = client.goals.run(
+                        workflow_id="goal_lane.content_to_multipost", files=["file_abc"]
+                    )
             finally:
                 client.close()
 
@@ -983,7 +996,7 @@ class TestExtract:
                 )
             )
             async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
-                with pytest.raises(ValueError, match="no JSON artifact"):
+                with pytest.raises(GoalArtifactUnusableError, match="no JSON artifact"):
                     await client.goals.extract(["file_abc"])
 
     @pytest.mark.asyncio
@@ -1005,25 +1018,8 @@ class TestExtract:
                 )
             )
             async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
-                with pytest.raises(ValueError, match="in-memory cap"):
+                with pytest.raises(GoalArtifactUnusableError, match="in-memory cap"):
                     await client.goals.extract(["file_abc"])
-
-    def test_select_json_artifact_prefers_primary(self) -> None:
-        from convilyn.resources.goals import _select_json_artifact
-        from convilyn.types import Artifact
-
-        arts = [
-            Artifact.model_validate(_json_artifact_payload(artifactId="j1", isPrimary=False)),
-            Artifact.model_validate(_json_artifact_payload(artifactId="j2", isPrimary=True)),
-        ]
-        assert _select_json_artifact(arts).artifact_id == "j2"
-
-    def test_select_json_artifact_none_when_no_json(self) -> None:
-        from convilyn.resources.goals import _select_json_artifact
-        from convilyn.types import Artifact
-
-        arts = [Artifact.model_validate(_artifact_payload())]
-        assert _select_json_artifact(arts) is None
 
     def test_sync_wrapper_present(self) -> None:
         client = Convilyn(api_key="ck_test")  # pragma: allowlist secret
@@ -1365,7 +1361,9 @@ class TestReadyAutoConfirm:
             )
             async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
                 with patch("convilyn.resources.goals.asyncio.sleep", return_value=None):
-                    job = await client.goals.run(workflow_id="doc_analyzer", files=["file_abc"])
+                    job = await client.goals.run(
+                        workflow_id="goal_lane.content_to_multipost", files=["file_abc"]
+                    )
 
         assert (job.status, confirm.call_count) == ("completed", 1)
 
@@ -1387,7 +1385,9 @@ class TestReadyAutoConfirm:
                 with patch("convilyn.resources.goals.asyncio.sleep", return_value=None):
                     with pytest.raises(GoalJobTimeoutError):
                         await client.goals.run(
-                            workflow_id="doc_analyzer", files=["file_abc"], timeout=0.05
+                            workflow_id="goal_lane.content_to_multipost",
+                            files=["file_abc"],
+                            timeout=0.05,
                         )
 
         assert confirm.call_count == 1
@@ -1413,7 +1413,9 @@ class TestReadyAutoConfirm:
             )
             async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
                 with patch("convilyn.resources.goals.asyncio.sleep", return_value=None):
-                    job = await client.goals.run(workflow_id="doc_analyzer", files=["file_abc"])
+                    job = await client.goals.run(
+                        workflow_id="goal_lane.content_to_multipost", files=["file_abc"]
+                    )
 
         assert job.status == "completed"
 
@@ -1433,7 +1435,9 @@ class TestReadyAutoConfirm:
             async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
                 with patch("convilyn.resources.goals.asyncio.sleep", return_value=None):
                     with pytest.raises(APIError) as info:
-                        await client.goals.run(workflow_id="doc_analyzer", files=["file_abc"])
+                        await client.goals.run(
+                            workflow_id="goal_lane.content_to_multipost", files=["file_abc"]
+                        )
 
         assert info.value.status_code == 500
 
@@ -1473,7 +1477,9 @@ class TestReadyAutoConfirm:
                 with patch("convilyn.resources.goals.asyncio.sleep", return_value=None):
                     with pytest.raises(GoalJobTimeoutError):
                         await client.goals.run(
-                            workflow_id="doc_analyzer", files=["file_abc"], timeout=0.05
+                            workflow_id="goal_lane.content_to_multipost",
+                            files=["file_abc"],
+                            timeout=0.05,
                         )
 
         assert confirm.call_count == 0

@@ -72,6 +72,7 @@ FROZEN_ALL = {
     "File",
     "FileList",
     "FreeTierBlockedError",
+    "GoalArtifactUnusableError",
     "GoalJob",
     "GoalJobFailedError",
     "GoalJobTimeoutError",
@@ -141,6 +142,7 @@ EXPECTED_ERRORS = {
     "JobTimeoutError",
     "GoalJobFailedError",
     "GoalJobTimeoutError",
+    "GoalArtifactUnusableError",
     "RetryExhaustedError",
 }
 

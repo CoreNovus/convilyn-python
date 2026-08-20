@@ -3,6 +3,118 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [Semantic Versioning](https://semver.org/).
 
+## [3.2.0b1] - 2026-08-20
+
+Pre-release. Minor rather than patch because of one **behaviour change you can
+see from the outside**: five failure paths that used to raise `ValueError` now
+raise a `ConvilynError`. Nothing is removed from the public API, but `except
+ValueError:` wrapped around `extract()` / `understand()` / `to_markdown()` stops
+catching them. See **Changed** — it is written in both directions on purpose.
+
+### Added
+
+- **`GoalArtifactUnusableError`** — the run succeeded, was charged, and there is
+  still nothing usable to hand back. That is not the same event as a failed job
+  and it is not your mistake, so it is now its own type under `ConvilynError`
+  rather than a bare `ValueError`.
+
+  It carries the operands you would otherwise have to parse out of the message:
+
+  | attribute | |
+  |---|---|
+  | `reason` | `"missing"` \| `"unparsable"` \| `"too_large"` |
+  | `kind` | `"json"` \| `"markdown"` — which artifact was being fetched |
+  | `job_spec_id`, `artifact_id` | feed both straight to `goals.download_artifact_to(...)` |
+  | `size_bytes`, `max_bytes` | set on `"too_large"` |
+  | `job_status` | the terminal status the run actually reached |
+
+  The `too_large` case is the one worth knowing about: the message has always
+  told you to use `download_artifact_to()`, but `extract()` / `understand()` /
+  `to_markdown()` never return a job handle, so there was no supported way to
+  obtain the two ids that call needs. They are on the exception now.
+
+  ```python
+  except convilyn.GoalArtifactUnusableError as exc:
+      if exc.reason == "too_large":
+          client.goals.download_artifact_to(exc.job_spec_id, exc.artifact_id, to="out.json")
+  ```
+
+- **`GoalJobFailedError.detail` / `.suggested_action` / `.retryable`.**
+  `PROCESSING_LIMIT` is one canned sentence covering **four unrelated ceilings**
+  — an iteration cap, an input-token budget, a repeated tool call, a scratchpad
+  read loop — so until now a caller could not tell them apart, nor whether
+  changing the input would help.
+
+  ```python
+  except convilyn.GoalJobFailedError as exc:
+      if exc.detail and exc.detail.reason == "ITERATION_LIMIT":
+          print(f"stopped at {exc.detail.reached} of {exc.detail.limit} steps")
+      if exc.retryable:
+          job = client.goals.retry(exc.job_spec_id)   # same job spec, not charged again
+  ```
+
+  `detail.reason` is one of `ITERATION_LIMIT`, `TOKEN_BUDGET`,
+  `REPEATED_TOOL_CALL`, `SCRATCHPAD_READ_BUDGET`; `limit` / `reached` are `None`
+  — never `0` — when a resumed run has no counter. `suggested_action` is the
+  server's own next step for this `code`, so you do not keep a second copy of
+  that mapping, and `retryable` is simply `suggested_action == "retry"`. Read it
+  rather than inferring: a plan ceiling is **not** retryable but **is**
+  actionable, which is why the API sends an action rather than a boolean.
+
+  Both fields require a backend that serves them; against an older deployment
+  they are `None`, which is why this is a pre-release.
+
+### Changed
+
+- **`except ConvilynError:` now catches five situations it did not.** All five
+  are post-success artifact problems in `extract()`, `understand()` and
+  `to_markdown()`: no JSON artifact, no Markdown artifact, the payload is not
+  valid JSON, and the two in-memory size caps. If the exception table in
+  QUICKSTART §4 is what you built your handling on, this is the direction that
+  makes it more true, and no change is required.
+
+- **`except ValueError:` around those three methods stops catching them.** This
+  is the migration, and it is one line:
+
+  ```python
+  - except ValueError as exc:          # used to catch an unusable artifact
+  + except convilyn.GoalArtifactUnusableError as exc:
+  ```
+
+  **What is still `ValueError`:** argument mistakes. `understand([], schema={})`
+  — an empty file list, a malformed schema — raises a bare `ValueError` exactly
+  as before, and deliberately so. The line is *"you passed something
+  unreasonable" stays a builtin; "the platform produced something unusable"
+  becomes a `ConvilynError"*.
+
+- **`convilyn goals understand` exits `3` instead of `1`** when the run produced
+  no usable result. `1` means you invoked the command wrongly; this outcome is
+  a run that happened and was paid for, which is what `3` already meant for a
+  failed job. The command's `--help` documents `3` as covering both.
+
+### Fixed
+
+- **A non-UTF-8 artifact escaped as a bare `UnicodeDecodeError`.** `json.loads`
+  on bytes raises `UnicodeDecodeError`, not `JSONDecodeError`, so the guard
+  never fired: `except ConvilynError:` missed it and the promised message never
+  appeared. `to_markdown()`'s `.decode("utf-8")` had the same hole. Both are now
+  reported as `GoalArtifactUnusableError(reason="unparsable")`.
+
+- **The oversize message named `extract()` even when you called
+  `understand()`.** The cap is stated by the exception's `size_bytes` /
+  `max_bytes` now, so it cannot name the wrong method.
+
+- **`doc_analyzer` is not a workflow that exists.** It appeared in QUICKSTART,
+  in an example file, in `--workflow-id` help text and in a docstring — so the
+  first snippet a new user copies returned a 4xx. Every occurrence now names
+  `goal_lane.content_to_multipost`, an active workflow with a single required
+  slot, which is also what makes the human-in-the-loop walkthrough actually
+  reach its loop.
+
+- **`to_markdown()`'s documentation said no platform build served it.** That
+  stopped being true and the docstring did not. It now describes what the
+  method really raises when a given output kind has no pipeline.
+
 ## [3.1.0] - 2026-08-17
 
 Minor, and both halves are why: the public surface **grows** by four exception
@@ -422,6 +534,7 @@ both still here and still work; their removal is bound to 4.0.0.
 
   ```python
   from convilyn import local
+
   local.convert("clip.mov", to="mp4")
   ```
 

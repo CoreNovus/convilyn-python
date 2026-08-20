@@ -113,7 +113,7 @@ class AsyncWorkflows:
 
         Args:
             source_spec_id: The spec id to fork from. For curated
-                workflows this is the registry id (e.g. ``doc_analyzer``);
+                workflows this is the registry id (e.g. ``goal_lane.content_to_multipost``);
                 for user-owned public workflows this is the
                 ``user_<prefix>.<workflow_id>`` compiled id available on
                 :attr:`Workflow.spec_id`.

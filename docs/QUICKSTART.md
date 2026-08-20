@@ -130,9 +130,9 @@ local.convert("photo.png", to="jpg")  # images too — see §1b, Images
 the **path**, and the format is read from its suffix:
 
 ```python
-local.convert("report.docx", to="md")                  # → report.md
-local.convert("report.docx", out="build/report.md")    # → build/report.md
-local.convert("logo.svg", out="logo.png")              # png, from the suffix
+local.convert("report.docx", to="md")  # → report.md
+local.convert("report.docx", out="build/report.md")  # → build/report.md
+local.convert("logo.svg", out="logo.png")  # png, from the suffix
 ```
 
 The keyword is `out=`, not `output=`, and **exactly one of the two is required** —
@@ -149,8 +149,8 @@ doing it:
 
 ```python
 route = local.plan("logo.svg", out="logo.png")
-route.target_format   # 'png'
-route.available       # False here — and route.unavailable_reason says what to install
+route.target_format  # 'png'
+route.available  # False here — and route.unavailable_reason says what to install
 ```
 
 #### Re-running: `overwrite=`
@@ -211,7 +211,7 @@ Raise the cap, or remove it entirely with `0`:
 
 ```python
 local.convert("export.csv", to="md", max_rows=50_000)
-local.convert("export.csv", to="md", max_rows=0)      # the whole file
+local.convert("export.csv", to="md", max_rows=0)  # the whole file
 ```
 
 ```bash
@@ -385,7 +385,7 @@ from convilyn import Convilyn, ConvilynError
 
 try:
     job = client.convert.create_and_wait(file=f, target_format="mp3")
-except ConvilynError as exc:      # covers every type listed below
+except ConvilynError as exc:  # covers every type listed below
     print("conversion failed:", exc)
 ```
 
@@ -439,6 +439,7 @@ build does not model still arrives as a plain `APIError` with `code` and
 | `JobTimeoutError` | `create_and_wait` gave up before the job finished |
 | `GoalJobFailedError` | the workflow-lane equivalent of `JobFailedError` |
 | `GoalJobTimeoutError` | the workflow-lane equivalent of `JobTimeoutError` |
+| `GoalArtifactUnusableError` | the workflow **succeeded** and its output cannot be handed back — no artifact of the kind you asked for, an unreadable one, or one over this method's in-memory cap. Branch on `reason` (`missing` / `unparsable` / `too_large`); carries `job_spec_id` / `artifact_id` |
 | `UnderstandUnavailableError` | `goals.understand` / `goals.to_markdown` is not served by the connected platform |
 <!-- exceptions:cloud:end -->
 
@@ -469,9 +470,11 @@ the API's answer to anything:
   destination's problem, and `overwrite=True` is the fix.
 - `ValueError` / `TypeError` from arguments that do not make sense — `upload()`
   with neither a path nor content, `create(file="report.pdf")` when `file=`
-  wants an uploaded `File`, a `page_range` on an image conversion. Those mean
-  the call is wrong, not that the platform refused it, and Python already has
-  names for them.
+  wants an uploaded `File`, a `page_range` on an image conversion, an empty
+  `files` list. Those mean the call is wrong, not that the platform refused it,
+  and Python already has names for them. The dividing question is what the SDK
+  is telling you about: **your arguments** (builtin) or **what a finished job
+  produced** (`GoalArtifactUnusableError`).
 - `JobError` is **not** an exception, despite the name and despite being
   exported from `convilyn`. It is the model behind `job.error` — a `code` and a
   `message` read off a failed job. `except JobError` is a `TypeError` at
@@ -583,7 +586,7 @@ HITL (`fill_slot` / `confirm`). Progress is observed by polling — see
 from convilyn import Convilyn
 
 client = Convilyn()
-job = client.goals.run(workflow_id="doc_analyzer", files=["file_abc"])
+job = client.goals.run(workflow_id="goal_lane.content_to_multipost", files=["file_abc"])
 print(job.status, job.progress)
 ```
 
@@ -596,7 +599,7 @@ When the agent needs more information, `wait()` returns with
 `job.needs_input == True` and one or more `PendingSlot` entries:
 
 ```python
-job = client.goals.run(workflow_id="doc_analyzer", files=["file_abc"])
+job = client.goals.run(workflow_id="goal_lane.content_to_multipost", files=["file_abc"])
 while job.needs_input:
     slot = job.pending_slots[0]
     answer = input(f"{slot.question}: ")
@@ -633,14 +636,16 @@ around it.
 import asyncio
 from convilyn import AsyncConvilyn
 
+
 async def main() -> None:
     async with AsyncConvilyn() as client:
         job = await client.goals.start(
-            workflow_id="doc_analyzer",
+            workflow_id="goal_lane.content_to_multipost",
             files=["file_abc"],
         )
         job = await client.goals.wait(job.job_spec_id, timeout=1800)
         print(job.status)
+
 
 asyncio.run(main())
 ```
@@ -656,14 +661,14 @@ The same surface from the shell:
 
 ```bash
 # Dry-run preview (no network)
-$ convilyn goals start --workflow-id doc_analyzer --files file_abc --dry-run --json
+$ convilyn goals start --workflow-id goal_lane.content_to_multipost --files file_abc --dry-run --json
 
 # Start and capture the id
-$ JOB_ID=$(convilyn goals start --workflow-id doc_analyzer --files file_abc --json \
+$ JOB_ID=$(convilyn goals start --workflow-id goal_lane.content_to_multipost --files file_abc --json \
   | jq -r '.job_spec_id')
 
 # Answer a slot the agent is waiting on
-$ convilyn goals fill-slot "$JOB_ID" --slot-id topic --value '"AI safety"'
+$ convilyn goals fill-slot "$JOB_ID" --slot-id target_platform --value '"linkedin"'
 
 # Snapshot or poll
 $ convilyn goals status "$JOB_ID" --json
@@ -721,7 +726,7 @@ every value against the input before returning it:
 ```python
 result = client.goals.understand(
     ["file_abc"],
-    schema={                      # a JSON Schema dict — no extra dependency
+    schema={  # a JSON Schema dict — no extra dependency
         "type": "object",
         "properties": {
             "invoice_no": {"type": "string"},
@@ -729,7 +734,7 @@ result = client.goals.understand(
         },
         "required": ["invoice_no", "total"],
     },
-    instructions="The total is the figure after tax.",   # optional steer
+    instructions="The total is the figure after tax.",  # optional steer
 )
 ```
 
@@ -741,9 +746,10 @@ conversion, which is free on every plan and is what `client.convert` (or
 `convilyn local convert`) does. `to_markdown()` earns its cost only when the
 content is not there to be read — a scan, an image, a diagram.
 
-Both raise `UnderstandUnavailableError` when the connected platform does not
-serve them yet, and the message names the free alternative. That is the current
-state of the hosted platform, so write the fallback:
+`to_markdown()` takes **one file** and routes on what you uploaded — a
+document, an image, an audio file or a video file each has its own pipeline.
+A kind of file no pipeline serves raises `UnderstandUnavailableError`, and the
+message names the free alternative:
 
 ```python
 try:
@@ -752,10 +758,71 @@ except convilyn.UnderstandUnavailableError:
     job = client.convert.create_and_wait(file=f, target_format="md")
 ```
 
-The error is raised **before** any credit is spent, and it is never substituted
+That error is raised **before** any credit is spent, and it is never substituted
 with a differently-shaped result: an answer the platform did not ground is not
 returned as though it had been. `client.account.get_quota()` (§8.2) prices a run
 before you start it.
+
+**When the run finishes and there is still nothing to return.** All three of
+these methods promise a shape, and a job can succeed without producing it — most
+often a `partial` run, where some tasks failed and the platform reports the
+result it does have rather than throwing your money away. That is
+`GoalArtifactUnusableError`, not a `ValueError`: you passed nothing wrong and the
+run was charged. Branch on `reason`:
+
+```python
+from convilyn import GoalArtifactUnusableError
+
+try:
+    result = client.goals.understand(["file_abc"], schema=schema)
+except GoalArtifactUnusableError as exc:
+    if exc.reason == "too_large":
+        # The artifact is fine — just bigger than this method buffers. Both
+        # arguments you need are on the exception.
+        client.goals.download_artifact_to(exc.job_spec_id, exc.artifact_id, to="out.json")
+    elif exc.reason == "unparsable":
+        report(exc.artifact_id, exc.detail)  # retrying will produce the same bytes
+    else:  # "missing"
+        print(f"nothing of that kind was produced; job status: {exc.job_status}")
+```
+
+**A failed or unusable run does not have to be paid for twice.**
+`client.goals.retry(job_spec_id)` reuses the same job spec and costs **no
+credits and no quota**; calling `understand()` again creates a new job spec and
+is charged again. Ask the exception which one applies rather than guessing from
+the message:
+
+```python
+except convilyn.GoalJobFailedError as exc:
+    if exc.retryable:
+        job = client.goals.retry(exc.job_spec_id)   # free — same job spec
+    else:
+        print(exc.suggested_action)   # "upgrade" | "login" | "contact_support" | "none"
+```
+
+`exc.suggested_action` is the server's own next step for this failure, so you
+never keep a second copy of the code-to-action mapping; `exc.retryable` is just
+`suggested_action == "retry"`. They are not the same question: a plan ceiling is
+**not** retryable but **is** actionable, which is why a plain boolean is not what
+the API sends.
+
+**`exc.detail` says which limit, when there was one.** `PROCESSING_LIMIT` covers
+four unrelated ceilings, and the message is the same canned sentence for all of
+them. The operands let you tell them apart — and decide whether changing the
+input would help at all:
+
+```python
+except convilyn.GoalJobFailedError as exc:
+    if exc.detail and exc.detail.reason == "ITERATION_LIMIT":
+        print(f"stopped after {exc.detail.reached} of {exc.detail.limit} steps")
+```
+
+`reason` is one of `ITERATION_LIMIT`, `TOKEN_BUDGET`, `REPEATED_TOOL_CALL`,
+`SCRATCHPAD_READ_BUDGET`. `detail` is `None` on most failures — the code says
+everything there is to say — and `limit` / `reached` are `None` rather than `0`
+when a resumed run has no counter, so a missing number never reads as a real one.
+Branch on the reasons you handle and treat an unfamiliar one as absent: the
+server may know a ceiling your installed version does not.
 
 ## 8. Check your plan + quota before running (`client.account`)
 
@@ -800,7 +867,7 @@ from convilyn import (
 )
 
 try:
-    client.workflows.fork(source_spec_id="doc_analyzer")
+    client.workflows.fork(source_spec_id="goal_lane.content_to_multipost")
 except PlanRequiredError as exc:
     print(f"upgrade required: {exc.upgrade_url}")
 except QuotaExceededError as exc:

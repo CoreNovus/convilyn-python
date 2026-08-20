@@ -18,7 +18,6 @@ Design follows the same SOLID seams as
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import time
 import warnings
@@ -269,9 +268,11 @@ class AsyncGoals:
         ``dict``).
 
         Raises:
-            ValueError: ``files`` is empty, the job stopped for slot input, it
-                produced no JSON artifact, or that artifact exceeds the
-                in-memory size cap / is not valid JSON.
+            ValueError: ``files`` is empty, or the job stopped for slot input —
+                both are the call being wrong for this workflow.
+            GoalArtifactUnusableError: the job SUCCEEDED and its output cannot
+                be returned — no JSON artifact, an unparsable one, or one over
+                the in-memory cap. Read ``exc.reason``.
             GoalJobFailedError, GoalJobTimeoutError: propagated from ``run()``.
         """
         warnings.warn(
@@ -295,7 +296,7 @@ class AsyncGoals:
                 "extract() expected a single-step workflow, but the job stopped for "
                 "slot input; use start()/fill_slot() for interactive workflows."
             )
-        return await self._fetch_json_artifact(job.job_spec_id)
+        return await self._fetch_json_artifact(job.job_spec_id, job_status=job.status)
 
     async def understand(
         self,
@@ -325,12 +326,19 @@ class AsyncGoals:
         the platform is never silently returned as if it were.
 
         Raises:
-            ValueError / TypeError: ``files`` is empty or ``schema`` is not a
-                dict; the job stopped for slot input, produced no JSON artifact,
-                or that artifact exceeds the in-memory cap / is not valid JSON.
+            ValueError / TypeError: ``files`` is empty, ``schema`` is not a
+                dict, or the job stopped for slot input — argument mistakes.
+            GoalArtifactUnusableError: the job SUCCEEDED and its output cannot
+                be returned — no JSON artifact, an unparsable one, or one over
+                the in-memory cap. Read ``exc.reason``.
             UnderstandUnavailableError: the backend does not (yet) accept a
                 schema-constrained understanding request.
             GoalJobFailedError, GoalJobTimeoutError: the job failed / timed out.
+
+        A failed run does NOT have to be paid for twice. ``retry()`` reuses the
+        same ``job_spec_id`` and is free — ``client.goals.retry(
+        exc.job_spec_id)`` on a ``GoalJobFailedError``. Calling ``understand()``
+        again creates a NEW job spec, and is charged again.
         """
         if not files:
             raise ValueError("understand() requires at least one file id")
@@ -367,7 +375,7 @@ class AsyncGoals:
                 "understand() expected a single-step job, but it stopped for slot "
                 "input; use start()/fill_slot() for interactive workflows."
             )
-        return await self._fetch_json_artifact(job.job_spec_id)
+        return await self._fetch_json_artifact(job.job_spec_id, job_status=job.status)
 
     async def to_markdown(
         self,
@@ -377,9 +385,18 @@ class AsyncGoals:
         poll_interval: float = DEFAULT_POLL_INTERVAL,
         idle_timeout: float | None = None,
     ) -> str:
-        """Extract unstructured content into Markdown — METERED, and NOT
-        yet served by any build: raises ``UnderstandUnavailableError`` naming the
-        free conversion path. See :mod:`convilyn.resources._goals_markdown`.
+        """Extract unstructured content into Markdown — METERED, one file.
+
+        Routed by what you uploaded (document / image / audio / video). A kind
+        with no pipeline raises ``UnderstandUnavailableError`` naming the free
+        conversion path rather than returning a different shape. See
+        :mod:`convilyn.resources._goals_markdown`.
+
+        Raises:
+            ValueError: ``files`` is empty.
+            GoalArtifactUnusableError: the job SUCCEEDED and its Markdown
+                cannot be returned. Read ``exc.reason``.
+            UnderstandUnavailableError: no pipeline serves this kind of file.
         """
         from convilyn.resources._goals_markdown import run_to_markdown
 
@@ -636,6 +653,8 @@ class AsyncGoals:
                 job_spec_id=job.job_spec_id,
                 code=job.error_code,
                 message=job.error_message,
+                detail=job.error_detail,
+                suggested_action=job.suggested_action,
             )
         return job
 
@@ -752,7 +771,12 @@ class AsyncGoals:
         rerun_mode: Literal["retry_same_thread", "fresh_rerun"] = "retry_same_thread",
         reason: str | None = None,
     ) -> GoalJob:
-        """Retry a failed job.
+        """Retry a failed job — free, and the cheap answer to a failure.
+
+        This reuses the SAME ``job_spec_id``: no new credits and no new quota
+        are consumed. Re-calling ``run()`` / ``understand()`` / ``to_markdown()``
+        instead creates a NEW job spec and IS charged again, which is what
+        "please try again" in a failure message reads like but is not.
 
         ``rerun_mode`` selects whether to resume the existing run
         thread (cheaper, picks up from the last resume boundary) or to
@@ -812,39 +836,16 @@ class AsyncGoals:
         info = await self.download_artifact_url(job_spec_id, artifact_id)
         return await download_url_to_path(self._http, info.download_url, to, overwrite=overwrite)
 
-    async def _fetch_json_artifact(self, job_spec_id: str) -> Any:
+    async def _fetch_json_artifact(self, job_spec_id: str, *, job_status: str | None = None) -> Any:
         """Fetch + parse a completed job's primary JSON artifact.
 
         Shared by ``extract()`` and ``understand()`` (both return the JSON body).
+        Body in :mod:`convilyn.resources._goals_artifacts`, for the same reason
+        ``to_markdown`` delegates below.
         """
-        art = _select_json_artifact(await self.artifacts(job_spec_id))
-        if art is None:
-            raise ValueError(f"job {job_spec_id} produced no JSON artifact to extract")
-        if art.size_bytes > MAX_EXTRACT_JSON_BYTES:
-            raise ValueError(
-                f"artifact {art.artifact_id} is {art.size_bytes} bytes, over the "
-                f"{MAX_EXTRACT_JSON_BYTES}-byte extract() in-memory cap; use "
-                "download_artifact_to() to stream it to disk instead."
-            )
-        info = await self.download_artifact_url(job_spec_id, art.artifact_id)
-        response = await self._http.external_get(info.download_url)
-        try:
-            return json.loads(response.content)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"artifact {art.artifact_id} is not valid JSON: {exc}") from exc
+        from convilyn.resources._goals_artifacts import fetch_json_artifact
 
-
-def _select_json_artifact(artifacts: list[Artifact]) -> Artifact | None:
-    """Pick the JSON artifact ``extract()`` / ``understand()`` should return.
-
-    Prefers an ``application/json`` artifact (the primary one when flagged),
-    else None — both promise JSON, so a job with no JSON output is an error
-    rather than a silent fallback to some other artifact type.
-    """
-    json_arts = [a for a in artifacts if (a.mime_type or "").lower() == "application/json"]
-    if not json_arts:
-        return None
-    return next((a for a in json_arts if a.is_primary), json_arts[0])
+        return await fetch_json_artifact(self, job_spec_id, job_status=job_status)
 
 
 #: Create-time statuses the SDK turns into ``UnderstandUnavailableError`` rather

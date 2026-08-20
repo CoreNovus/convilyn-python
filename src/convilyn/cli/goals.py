@@ -63,7 +63,7 @@ def goals_command() -> None:
     "--workflow-id",
     "workflow_id",
     default=None,
-    help="Built-in workflow spec id (e.g. doc_analyzer). "
+    help="Built-in workflow spec id (e.g. goal_lane.content_to_multipost). "
     "Mutually exclusive with --user-workflow-id and --goal-text.",
 )
 @click.option(

@@ -123,11 +123,17 @@ class TestStartLogic:
         mock_factory.goals.start.return_value = started_job
         result = runner.invoke(
             goals_command,
-            ["start", "--workflow-id", "doc_analyzer", "--files", "file_abc,file_def"],
+            [
+                "start",
+                "--workflow-id",
+                "goal_lane.content_to_multipost",
+                "--files",
+                "file_abc,file_def",
+            ],
         )
         assert result.exit_code == EXIT_OK
         mock_factory.goals.start.assert_called_once_with(
-            workflow_id="doc_analyzer",
+            workflow_id="goal_lane.content_to_multipost",
             user_workflow_id=None,
             goal_text=None,
             files=["file_abc", "file_def"],
@@ -183,7 +189,7 @@ class TestStartLogic:
             [
                 "start",
                 "--workflow-id",
-                "doc_analyzer",
+                "goal_lane.content_to_multipost",
                 "--files",
                 "file_abc",
                 "--json",
@@ -207,7 +213,7 @@ class TestStartLogic:
             [
                 "start",
                 "--workflow-id",
-                "doc_analyzer",
+                "goal_lane.content_to_multipost",
                 "--files",
                 "file_abc",
                 "--slot",
@@ -332,7 +338,7 @@ class TestStartBoundary:
             [
                 "start",
                 "--workflow-id",
-                "doc_analyzer",
+                "goal_lane.content_to_multipost",
                 "--files",
                 "file_abc",
                 "--dry-run",
@@ -342,7 +348,7 @@ class TestStartBoundary:
         assert result.exit_code == EXIT_OK
         payload = json.loads(result.output.strip().splitlines()[-1])
         assert payload["dry_run"] is True
-        assert payload["payload"]["workflowId"] == "doc_analyzer"
+        assert payload["payload"]["workflowId"] == "goal_lane.content_to_multipost"
         assert payload["payload"]["fileIds"] == ["file_abc"]
 
     def test_slot_missing_equals_rejected(
@@ -357,7 +363,7 @@ class TestStartBoundary:
             [
                 "start",
                 "--workflow-id",
-                "doc_analyzer",
+                "goal_lane.content_to_multipost",
                 "--files",
                 "file_abc",
                 "--slot",
@@ -462,7 +468,7 @@ class TestSyncFactoryAuthError:
 
         result = runner.invoke(
             goals_command,
-            ["start", "--workflow-id", "doc_analyzer", "--files", "file_a"],
+            ["start", "--workflow-id", "goal_lane.content_to_multipost", "--files", "file_a"],
         )
 
         # Click maps a click.ClickException to exit_code == 1 by default.
@@ -488,7 +494,7 @@ class TestSyncCleanupFailure:
 
         result = runner.invoke(
             goals_command,
-            ["start", "--workflow-id", "doc_analyzer", "--files", "file_a"],
+            ["start", "--workflow-id", "goal_lane.content_to_multipost", "--files", "file_a"],
         )
 
         assert "cleanup failed" not in result.output
@@ -506,7 +512,7 @@ class TestSyncCleanupFailure:
 
         result = runner.invoke(
             goals_command,
-            ["start", "--workflow-id", "doc_analyzer", "--files", "file_a"],
+            ["start", "--workflow-id", "goal_lane.content_to_multipost", "--files", "file_a"],
         )
 
         assert "cleanup failed" in result.output

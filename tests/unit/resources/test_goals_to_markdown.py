@@ -4,9 +4,11 @@ Split out of ``test_goals.py`` rather than appended to it: that module is at its
 file-size ceiling, and this capability has its own artifact type, its own error
 message and its own reason to exist.
 
-The error case is the one that runs in production today — no platform build
-serves Markdown yet — so it is tested first and hardest. The success path is
-tested so the surface is proven correct for the day the pipeline is enabled.
+Both paths run in production: the markdown axis is routed for document, image,
+audio and video, and the flags that used to gate it were deleted. The
+``UnderstandUnavailableError`` case is now what a caller gets for a KIND of file
+with no pipeline, not for the capability being switched off — this module's
+docstring claimed the latter for as long as it was true and then some.
 """
 
 from __future__ import annotations
@@ -18,7 +20,13 @@ import httpx
 import pytest
 import respx
 
-from convilyn import APIError, AsyncConvilyn, Convilyn, UnderstandUnavailableError
+from convilyn import (
+    APIError,
+    AsyncConvilyn,
+    Convilyn,
+    GoalArtifactUnusableError,
+    UnderstandUnavailableError,
+)
 
 API_BASE = "https://api.convilyn.corenovus.com"
 
@@ -89,10 +97,7 @@ def _mock_extract_chain(mock: respx.Router, *, artifacts: list[dict], storage_js
 
 
 class TestToMarkdown:
-    """The metered extraction path. Not served by any platform build yet, so the
-    error case is the one that runs in production today — it is tested first and
-    hardest, and the success path is tested so the surface is proven correct for
-    the day the pipeline is enabled."""
+    """The metered extraction path — live, and charged per unit of content."""
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("status", [400, 404, 422, 501])
@@ -153,7 +158,7 @@ class TestToMarkdown:
         async with respx.mock as mock:
             _mock_extract_chain(mock, artifacts=[_json_artifact_payload()], storage_json={})
             async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
-                with pytest.raises(ValueError, match="no Markdown artifact"):
+                with pytest.raises(GoalArtifactUnusableError, match="no Markdown artifact"):
                     await client.goals.to_markdown(["file_abc"])
 
     @pytest.mark.asyncio
@@ -165,7 +170,7 @@ class TestToMarkdown:
                 storage_json="x",
             )
             async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
-                with pytest.raises(ValueError, match="download_artifact_to"):
+                with pytest.raises(GoalArtifactUnusableError, match="download_artifact_to"):
                     await client.goals.to_markdown(["file_abc"])
 
     def test_sync_to_markdown_is_wired(self) -> None:

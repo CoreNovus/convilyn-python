@@ -13,7 +13,12 @@ command onto the group at the bottom of that file. Nothing is duplicated here.
 
 Exit codes follow the pinned convention in :mod:`._exit_codes`:
 ``0`` success, ``1`` usage (including every ``--schema-file`` failure mode),
-``2`` API / transport error or an unavailable capability, ``3`` job failed.
+``2`` API / transport error or an unavailable capability, ``3`` the job did not
+deliver a usable result.
+
+``3`` covers two outcomes, and deliberately: a job that FAILED, and a job that
+succeeded while producing nothing this command can return. Both were paid for
+and neither is the caller's mistake, which is what separates them from ``1``.
 """
 
 from __future__ import annotations
@@ -30,6 +35,7 @@ from convilyn import (
     APIError,
     AuthError,
     Convilyn,
+    GoalArtifactUnusableError,
     GoalJobFailedError,
     GoalJobTimeoutError,
     UnderstandUnavailableError,
@@ -243,12 +249,17 @@ def _run_understand(
         raise SystemExit(EXIT_API_ERROR) from _goals._print_error(exc, "Polling timed out")
     except AuthError as exc:
         raise SystemExit(EXIT_USAGE) from _goals._print_error(exc, "Authentication failed")
+    except GoalArtifactUnusableError as exc:
+        # The run happened and was charged; there is simply nothing to print.
+        # NOT `EXIT_USAGE` — the invocation was fine.
+        raise SystemExit(EXIT_JOB_FAILED) from _goals._print_error(exc, "No usable result")
     except APIError as exc:
         raise SystemExit(EXIT_API_ERROR) from _goals._print_error(exc, "API error")
     except (TypeError, ValueError) as exc:
         # understand() rejects an empty file list / non-dict schema, and raises
-        # ValueError when the job stopped for slot input or produced no JSON
-        # artifact. All are caller-actionable, none deserve a traceback.
+        # ValueError when the job stopped for slot input. All are caller
+        # mistakes, none deserve a traceback. An unusable RESULT is not one of
+        # them and is caught above.
         raise SystemExit(EXIT_USAGE) from _goals._print_error(exc, "Cannot understand these inputs")
     finally:
         try:

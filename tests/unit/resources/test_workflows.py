@@ -38,7 +38,7 @@ def _workflow_wire(
         "workflowId": workflow_id,
         "ownerId": "user_owner_1",
         "specId": spec_id,
-        "sourceSpecId": "doc_analyzer",
+        "sourceSpecId": "goal_lane.content_to_multipost",
         "sourceType": "curated",
         "sourceVersion": "1.0.0",
         "name": name,
@@ -142,11 +142,11 @@ class TestForkLogic:
             return_value=httpx.Response(201, json=_workflow_wire(name="Copy of Doc Analyzer"))
         )
         forked = await client.workflows.fork(
-            source_spec_id="doc_analyzer", name="Copy of Doc Analyzer"
+            source_spec_id="goal_lane.content_to_multipost", name="Copy of Doc Analyzer"
         )
         assert isinstance(forked, Workflow)
         body = json.loads(route.calls[0].request.content)
-        assert body["sourceSpecId"] == "doc_analyzer"
+        assert body["sourceSpecId"] == "goal_lane.content_to_multipost"
         assert body["name"] == "Copy of Doc Analyzer"
 
 
@@ -203,10 +203,10 @@ class TestBoundary:
         route = respx.post(f"{API_BASE}/api/v1/workflows/fork").mock(
             return_value=httpx.Response(201, json=_workflow_wire())
         )
-        await client.workflows.fork(source_spec_id="doc_analyzer")
+        await client.workflows.fork(source_spec_id="goal_lane.content_to_multipost")
         body = json.loads(route.calls[0].request.content)
         assert "name" not in body
-        assert body["sourceSpecId"] == "doc_analyzer"
+        assert body["sourceSpecId"] == "goal_lane.content_to_multipost"
 
     @pytest.mark.asyncio
     @respx.mock
@@ -239,7 +239,7 @@ class TestErrors:
             )
         )
         with pytest.raises(APIError) as exc_info:
-            await client.workflows.fork(source_spec_id="doc_analyzer")
+            await client.workflows.fork(source_spec_id="goal_lane.content_to_multipost")
         assert exc_info.value.status_code == 402
         # The code, not just the status. A `PRO_TIER_REQUIRED` on a 402 is what
         # routes this to `PlanRequiredError` rather than a bare `APIError`, and

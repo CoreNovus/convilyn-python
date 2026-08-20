@@ -30,12 +30,12 @@ the shell or from Python:
 ```python
 from convilyn import local
 
-local.convert("report.pdf", to="md")                       # one file
-local.convert_many(["a.docx", "b.pptx"], out_dir="out/")   # many, one call
-local.convert("photo.png", to="webp")                      # images too
+local.convert("report.pdf", to="md")  # one file
+local.convert_many(["a.docx", "b.pptx"], out_dir="out/")  # many, one call
+local.convert("photo.png", to="webp")  # images too
 
-local.convert("report.pdf", out="build/report.md")         # or name the path…
-local.convert("report.pdf", to="md", overwrite=True)       # …and re-run over it
+local.convert("report.pdf", out="build/report.md")  # or name the path…
+local.convert("report.pdf", to="md", overwrite=True)  # …and re-run over it
 ```
 
 `to=` names the format and writes beside the input; `out=` names the path and
@@ -106,7 +106,7 @@ from convilyn.local import pdf
 
 pdf.merge(["a.pdf", "b.pdf"], "combined.pdf")
 pdf.select("report.pdf", "summary.pdf", pages="1-3,10")
-pdf.burst("scan.pdf", "pages/")     # one file per page — `split` on the CLI
+pdf.burst("scan.pdf", "pages/")  # one file per page — `split` on the CLI
 ```
 
 Also on the CLI: `convilyn local pdf {merge,select,split,rotate,compress,protect,unlock,info}`.
@@ -122,7 +122,7 @@ missing.
 ```python
 from convilyn import Convilyn
 
-client = Convilyn()                     # reads CONVILYN_API_KEY from env
+client = Convilyn()  # reads CONVILYN_API_KEY from env
 file = client.files.upload("report.docx")
 job = client.convert.create_and_wait(file=file, target_format="pdf")
 client.convert.download_to(job, to="report.pdf")

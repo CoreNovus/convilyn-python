@@ -183,12 +183,24 @@ line-length = 100
 # `ruff format` and the CI gate see the same tree (#3939).
 #
 # ruff 0.16 formats python code fences inside markdown; `ruff check` does NOT
-# scan markdown at all. Left unstated, `format` would cover a surface `lint`
-# does not, and the READMEs here ship inside the published package — measured,
-# the reflow explodes deliberately-compact multi-name imports in quickstart
-# samples one-per-line. Formatting published docs is a docs decision, not a
-# side effect of adding a formatter gate; tracked separately.
-extend-exclude = ["*.md"]
+# scan markdown at all. #3952 excluded `*.md` here rather than decide that
+# silently, because these READMEs ship inside the published package.
+#
+# **Decided (operator, 2026-08-19, #3953): markdown fences ARE formatted.** The
+# exclusion is gone. Measured on this package before flipping: 3 files change,
+# all of it trailing-comment realignment — the class #3953 warned about
+# (deliberately one-line multi-name imports exploded one-per-line) does not
+# occur here, it was measured on `edge-python` / `author-python`. Those four
+# SDKs still carry the exclusion and are NOT covered by this decision; each is
+# its owner's call.
+#
+# What this buys is narrow, and worth stating so nobody over-reads a green run:
+# consistency, not correctness. A formatter has no opinion on whether a sample
+# CALLS A FUNCTION THAT EXISTS — #3953's own comment measured four real defects
+# in one README that `292 files reformatted` was silent on. The check that
+# catches those here is `tests/integration/test_examples_syntax.py`, which
+# parses every QUICKSTART python fence and resolves its `from convilyn import`
+# names against the real public surface.
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP", "B"]

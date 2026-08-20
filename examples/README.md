@@ -11,7 +11,7 @@ entirely on your machine and reads no key at all.
 | [`02_async_convert.py`](./02_async_convert.py) | Same flow with `AsyncConvilyn` inside an `asyncio` event loop. |
 | [`03_api_escape_hatch.py`](./03_api_escape_hatch.py) | Calling an unwrapped endpoint via `client._async._http.raw_request` (matches the `convilyn api` CLI). |
 | [`04_convert_cli.sh`](./04_convert_cli.sh) | The equivalent shell session — `convilyn doctor` → `convert` → `api`. |
-| [`05_goals_doc_analyzer.py`](./05_goals_doc_analyzer.py) | Run an agentic AI workflow end-to-end (upload → start → drive to terminal). |
+| [`05_goals_content_to_multipost.py`](./05_goals_content_to_multipost.py) | Run an agentic AI workflow end-to-end (upload → start → drive to terminal). |
 | [`08_workflows_marketplace.py`](./08_workflows_marketplace.py) | Browse and fork community workflows via `client.workflows`. |
 | [`09_account_quota.py`](./09_account_quota.py) | Check plan tier and pre-flight cost/quota via `client.account`. |
 | [`10_uw_as_edge_operator.py`](./10_uw_as_edge_operator.py) | Wrap a Builder-authored `uw_*` workflow as an edge `ModelOperator` (`placement="cloud"`) via `client.goals.run` — the Path-A cloud→edge bridge. See [`docs/EDGE_PLACEMENT.md`](../docs/EDGE_PLACEMENT.md). |

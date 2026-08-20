@@ -249,6 +249,30 @@ class PendingSlot(BaseModel):
     suggested_confidence: float | None = Field(default=None, alias="suggestedConfidence")
 
 
+class GoalErrorDetail(BaseModel):
+    """Which ceiling an AI-workflow run hit, and how far it got.
+
+    ``GoalJob.error_message`` is one canned sentence per ``error_code``, and
+    ``PROCESSING_LIMIT`` alone covers four unrelated ceilings — an iteration
+    cap, an input-token budget, a repeated tool call, a scratchpad read loop.
+    Without this you cannot tell them apart, nor whether changing the input
+    would help.
+
+    ``limit`` and ``reached`` are in the unit ``reason`` implies. Either can be
+    ``None``: a run resumed from a checkpoint written before the counter existed
+    has no count, and the server sends null rather than a fabricated zero.
+
+    Branch on the reasons you handle and treat an unknown one as absent — the
+    server may know a ceiling this build does not.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, frozen=True)
+
+    reason: str
+    limit: int | None = None
+    reached: int | None = None
+
+
 class GoalJob(BaseModel):
     """An AI workflow (agentic) job — handle returned by
     :py:meth:`convilyn.resources.goals.AsyncGoals.start`.
@@ -281,6 +305,12 @@ class GoalJob(BaseModel):
     agent_message: str | None = Field(default=None, alias="agentMessage")
     error_message: str | None = Field(default=None, alias="errorMessage")
     error_code: str | None = Field(default=None, alias="errorCode")
+    #: Absent on most failures: the code says everything there is to say.
+    error_detail: GoalErrorDetail | None = Field(default=None, alias="errorDetail")
+    #: The next step this failure implies — ``"retry"`` | ``"upgrade"`` |
+    #: ``"login"`` | ``"contact_support"`` | ``"none"``. ``None`` on a job that
+    #: has not failed, which is a different fact from a failure with no action.
+    suggested_action: str | None = Field(default=None, alias="suggestedAction")
     created_at: datetime = Field(alias="createdAt")
     updated_at: datetime = Field(alias="updatedAt")
     started_at: datetime | None = Field(default=None, alias="startedAt")

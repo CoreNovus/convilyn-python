@@ -24,6 +24,7 @@ from click.testing import CliRunner
 from convilyn import (
     APIError,
     AuthError,
+    GoalArtifactUnusableError,
     GoalJobFailedError,
     GoalJobTimeoutError,
     UnderstandUnavailableError,
@@ -407,6 +408,44 @@ class TestUnderstandErrorMapping:
         )
 
         assert result.exit_code == EXIT_USAGE
+
+    def test_an_unusable_result_exits_job_failed_not_usage(
+        self,
+        runner: CliRunner,
+        mock_factory: MagicMock,
+        schema_file: Path,
+    ) -> None:
+        """A run that succeeded and produced nothing usable is not a usage
+        error: the invocation was fine and it was charged. Without its own
+        handler this escapes every `except` in the command as a traceback,
+        because it is not an `APIError` and no longer a `ValueError`."""
+        mock_factory.goals.understand.side_effect = GoalArtifactUnusableError(
+            job_spec_id="job_x", kind="json", reason="missing", job_status="partial"
+        )
+
+        result = runner.invoke(
+            goals_command,
+            ["understand", "--files", "file_a", "--schema-file", str(schema_file)],
+        )
+
+        assert result.exit_code == EXIT_JOB_FAILED
+
+    def test_the_unusable_result_message_reaches_the_user(
+        self,
+        runner: CliRunner,
+        mock_factory: MagicMock,
+        schema_file: Path,
+    ) -> None:
+        mock_factory.goals.understand.side_effect = GoalArtifactUnusableError(
+            job_spec_id="job_x", kind="json", reason="missing", job_status="partial"
+        )
+
+        result = runner.invoke(
+            goals_command,
+            ["understand", "--files", "file_a", "--schema-file", str(schema_file)],
+        )
+
+        assert "No usable result" in result.output
 
     def test_factory_auth_error_exits_usage(
         self,
