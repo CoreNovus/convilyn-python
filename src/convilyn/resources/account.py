@@ -8,6 +8,7 @@ Exposes three read-only verbs:
                                          my plan's monthly cost cap?
 * :meth:`AsyncAccount.usage_history`  — past usage periods for billing
                                          retrospectives + MTD breakdowns.
+* :meth:`AsyncAccount.get_balance`    — how many credits do I have left?
 
 ``get_plan`` / ``get_quota`` both call ``POST /api/v1/workflows/cost-preview``.
 That is the canonical tier source for the SDK data plane: it is the endpoint
@@ -15,7 +16,15 @@ that accepts the consumer ``ck_`` key (via ``get_current_user_or_api_key``) and
 returns the caller's tier in ``quotaCheck.tier``. (The web app reads
 ``GET /api/v1/payment/subscription`` for the current plan, but that route is
 JWT/session-only and rejects ``ck_`` keys, so the SDK cannot use it.)
-``usage_history`` calls ``GET /api/v1/payment/usage/history`` directly.
+``usage_history`` calls ``GET /api/v1/payment/usage/history`` directly, and
+``get_balance`` calls ``GET /api/v1/credits/balance``.
+
+Those two answer different questions and neither substitutes for the other:
+``usage_history`` returns run COUNTS for quota metrics — the credits period is
+not in its tracked set, so it carries no balance row at all. Before the balance
+route shipped, the only ``ck_``-reachable balance was a side effect of
+quoting a workflow the caller did not intend to run, which is a side door, not
+an API.
 
 Pure-data return — actions (upgrade, top-up) belong on the website,
 not in the SDK.
@@ -33,7 +42,7 @@ from typing import Any
 
 from convilyn._internal.http import HTTPClient
 from convilyn._internal.loop_runner import CoroRunner
-from convilyn.types import CostEstimate, Plan, UsageHistoryEntry
+from convilyn.types import CostEstimate, CreditBalance, Plan, UsageHistoryEntry
 
 
 class AsyncAccount:
@@ -131,6 +140,28 @@ class AsyncAccount:
             return entries
         return [e for e in entries if e.period_start >= since]
 
+    async def get_balance(self) -> CreditBalance:
+        """How many credits does this account have left?
+
+        Wraps ``GET /api/v1/credits/balance``. Read
+        :py:attr:`~convilyn.CreditBalance.balance_credits` — the two-bucket
+        TOTAL — when comparing against a quote from :meth:`get_quota`; the
+        ``period`` / ``topup`` split is exposed because the buckets behave
+        differently at renewal, not because a caller should add them up.
+
+        Read-only, like the rest of this resource: topping up is a website
+        action, not an SDK one.
+
+        Returns:
+            A :class:`~convilyn.CreditBalance`.
+
+        Raises:
+            convilyn.APIError: server errors, including 401 when the caller is
+                anonymous — this endpoint is authenticated-only.
+        """
+        response = await self._http.request("GET", "/api/v1/credits/balance")
+        return CreditBalance.model_validate(response.json())
+
 
 class Account:
     """Synchronous facade around :class:`AsyncAccount`.
@@ -151,6 +182,9 @@ class Account:
 
     def get_plan(self) -> Plan:
         return self._run(self._async.get_plan())
+
+    def get_balance(self) -> CreditBalance:
+        return self._run(self._async.get_balance())
 
     def usage_history(self, *, since: datetime | None = None) -> list[UsageHistoryEntry]:
         return self._run(self._async.usage_history(since=since))

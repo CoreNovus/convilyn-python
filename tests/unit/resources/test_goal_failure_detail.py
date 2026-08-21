@@ -156,7 +156,17 @@ class TestWhatThisBuildDoesNotKnow:
     async def test_a_failure_without_either_field_still_raises_cleanly(self) -> None:
         """Boundary, and the direction that matters for forward compatibility:
         every failure predating these fields, and most after them, carries
-        neither. The old behaviour must be exactly what it was."""
+        neither.
+
+        ``retryable` is ``None`` here, not ``False`` (#4505). It WAS ``False``,
+        which made "the server said do not retry" and "the server said nothing"
+        the same answer — and until the backend began sending ``suggestedAction``
+        on a failed job, this was EVERY failure, so ``retryable` was structurally
+        false for every job this SDK had ever seen fail.
+
+        ``if exc.retryable:`` is unaffected either way; a caller who needs to
+        tell "no guidance" from "do not retry" now can.
+        """
         exc = await _raise()
 
-        assert (exc.detail, exc.suggested_action, exc.retryable) == (None, None, False)
+        assert (exc.detail, exc.suggested_action, exc.retryable) == (None, None, None)

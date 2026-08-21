@@ -92,13 +92,27 @@ class AsyncWorkflows:
         return WorkflowSearchPage.model_validate(response.json())
 
     async def get(self, workflow_id: str) -> Workflow:
-        """Fetch a single workflow by its ``workflow_id``.
+        """Fetch a single USER-AUTHORED workflow by its ``uw_`` id.
+
+        .. warning::
+
+           A catalog id — ``goal_lane.*`` or ``business.*`` — will 404 here.
+           The two are **disjoint namespaces**: built-in workflows are not
+           stored as ``Workflow`` rows at all, so there is nothing for this
+           route to return. Round-6 external testing hit this on all 19
+           catalog ids and read the uniform 404 as a defect.
+
+           Use :meth:`catalog` for built-ins. **The catalog entry IS the
+           complete public record** — it carries every field the platform
+           publishes about a built-in workflow, so a per-id lookup would add
+           nothing, which is why one does not exist.
 
         The caller sees their own workflows at any visibility; for
         other users only ``public`` workflows are returned. Both
         ``private`` access and a missing row surface as
         :class:`APIError` with status 404 — the backend collapses both
-        to prevent ID-existence probing.
+        to prevent ID-existence probing, which is also why a catalog id
+        cannot be distinguished from a private one by its status code.
         """
         response = await self._http.request("GET", f"/api/v1/workflows/{workflow_id}")
         return Workflow.model_validate(response.json())

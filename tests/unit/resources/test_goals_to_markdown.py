@@ -50,7 +50,6 @@ def _artifact(**overrides: Any) -> dict:
         "sizeBytes": 64,
         "downloadUrl": "https://storage.example.com/bucket/doc.json?sig=abc",
         "artifactType": "markdown",
-        "platform": None,
         "metadata": None,
         "isPrimary": True,
         "description": "",

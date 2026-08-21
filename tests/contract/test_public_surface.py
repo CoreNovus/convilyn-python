@@ -68,6 +68,7 @@ FROZEN_ALL = {
     "Convilyn",
     "ConvilynError",
     "CostEstimate",
+    "CreditBalance",
     "ExponentialBackoffRetry",
     "File",
     "FileList",
@@ -177,7 +178,7 @@ ASYNC_RESOURCE_METHODS = {
     AsyncWorkflows: {"catalog", "search", "get", "fork", "publish", "patch", "like"},
     AsyncUserWorkflows: {"list", "get", "delete", "export", "grounded_contract", "runs"},
     AsyncBuilder: {"create_session", "send_message", "get_session", "messages", "quota"},
-    AsyncAccount: {"get_quota", "get_plan", "usage_history"},
+    AsyncAccount: {"get_quota", "get_plan", "usage_history", "get_balance"},
 }
 
 # The sync surface mirrors async exactly EXCEPT goals.events() — WebSocket
@@ -214,7 +215,7 @@ SYNC_RESOURCE_METHODS = {
     Workflows: {"catalog", "search", "get", "fork", "publish", "patch", "like"},
     UserWorkflows: {"list", "get", "delete", "export", "grounded_contract", "runs"},
     Builder: {"create_session", "send_message", "get_session", "messages", "quota"},
-    Account: {"get_quota", "get_plan", "usage_history"},
+    Account: {"get_quota", "get_plan", "usage_history", "get_balance"},
 }
 
 

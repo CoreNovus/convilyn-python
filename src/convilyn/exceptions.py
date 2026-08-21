@@ -373,8 +373,9 @@ class GoalJobFailedError(ConvilynError):
         super().__init__(f"GoalJob {job_spec_id} failed [{self.code}]: {self.message}")
 
     @property
-    def retryable(self) -> bool:
-        """Whether re-running THIS job is the server's suggested next step.
+    def retryable(self) -> bool | None:
+        """Whether re-running THIS job is the server's suggested next step, or
+        ``None`` when the server did not say.
 
         Convenience over :pyattr:`suggested_action`, and deliberately not a
         field the server sends. It is **not** a second implementation of the
@@ -382,11 +383,33 @@ class GoalJobFailedError(ConvilynError):
         that stays on the server — ``action == "retry"`` is the definition of
         that enum member, nothing more.
 
+        **Tri-state, and the third state is the point.** This returned a bare
+        ``bool``, so "the server said do not retry" and "the server said
+        nothing" were the same answer — ``False``. That is the reading this
+        package's own :class:`InsufficientCreditsError` docstring already
+        forbids for its operands: *read them as unknown, never as zero*. The
+        same discipline applies to a verdict.
+
+        It was not academic. Until the backend began sending
+        ``suggestedAction`` on a failed job, ``suggested_action`` was ``None``
+        on every failure — so ``retryable`` was structurally ``False`` for
+        every job this SDK has ever seen fail, and a caller branching on it
+        would never once have retried.
+
+        Branch explicitly::
+
+            if exc.retryable:
+                job = await client.goals.retry(exc.job_spec_id)
+            elif exc.retryable is None:
+                ...   # no guidance — decide from `code` yourself
+
         Read it rather than assuming. ``UPGRADE_REQUIRED`` is not retryable but
         IS actionable, which is why the server sends an action rather than a
         bool. And ``goals.retry(job_spec_id)`` reuses the same job rather than
         opening — and charging for — a new one.
         """
+        if self.suggested_action is None:
+            return None
         return self.suggested_action == "retry"
 
 
@@ -526,16 +549,22 @@ class GoalArtifactUnusableError(ConvilynError):
 class UnderstandUnavailableError(ConvilynError):
     """:py:meth:`convilyn.resources.goals.AsyncGoals.understand` could not run.
 
-    Raised when the connected Convilyn platform does not (yet) support
-    schema-grounded understanding (the ``output_schema`` path), so no grounded,
-    schema-validated result could be produced. It is raised **instead of**
-    returning an ungrounded / unvalidated answer — an answer that was
-    not grounded by the platform is never silently returned as if it were.
+    Raised when the platform has no pipeline for the SHAPE you asked for, so
+    no grounded, schema-validated result could be produced. It is raised
+    **instead of** returning an ungrounded / unvalidated answer — an answer that
+    was not grounded by the platform is never silently returned as if it were.
 
-    The capability ships behind a platform rollout. Until it reaches the
-    environment you are calling, catch this and fall back to a workflow you
-    authored (``goals.run(user_workflow_id=...)``) or the fixed-schema
-    ``goals.extract(...)``.
+    The shapes that reach it today are multi-file and mixed-modality requests:
+    one call, one file, one modality is what the understanding pipelines serve.
+    Fall back to a workflow you authored (``goals.run(user_workflow_id=...)``)
+    or the fixed-schema ``goals.extract(...)``.
+
+    This used to say the capability "ships behind a platform rollout", and that
+    was withdrawn rather than reworded: the switch it referred to was
+    ``structured_understanding_enabled``, which was never turned ON — it was
+    DELETED, because removing it was the launch. A reader who believed the old
+    wording would have concluded the whole method was unavailable and stopped
+    calling it, which is the opposite of what the platform does now.
     """
 
     def __init__(self, message: str | None = None) -> None:

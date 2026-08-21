@@ -52,9 +52,9 @@ class TestDoctorPing:
     def test_ping_success_path(
         self, runner: CliRunner, env_with_key: None, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("CONVILYN_BASE_URL", "https://api.test.convilyn.com")
+        monkeypatch.setenv("CONVILYN_BASE_URL", "https://api.example.com")
         with respx.mock(assert_all_called=True) as mock:
-            mock.get("https://api.test.convilyn.com/api/v1/health").mock(
+            mock.get("https://api.example.com/api/v1/health").mock(
                 return_value=httpx.Response(200, json={"status": "ok"})
             )
             result = runner.invoke(doctor_command, ["--ping"])
@@ -77,9 +77,9 @@ class TestDoctorErrors:
     def test_ping_unreachable_exits_api_error(
         self, runner: CliRunner, env_with_key: None, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("CONVILYN_BASE_URL", "https://api.test.convilyn.com")
+        monkeypatch.setenv("CONVILYN_BASE_URL", "https://api.example.com")
         with respx.mock(assert_all_called=True) as mock:
-            mock.get("https://api.test.convilyn.com/api/v1/health").mock(
+            mock.get("https://api.example.com/api/v1/health").mock(
                 side_effect=httpx.ConnectError("boom")
             )
             result = runner.invoke(doctor_command, ["--ping"])
@@ -115,13 +115,13 @@ class TestDoctorObjectState:
         """When --ping is on AND an API key is set, the tier signal is
         surfaced as an advisory line so a free user can see the upgrade
         prompt context up front."""
-        monkeypatch.setenv("CONVILYN_BASE_URL", "https://api.test.convilyn.com")
+        monkeypatch.setenv("CONVILYN_BASE_URL", "https://api.example.com")
         with respx.mock(assert_all_called=True) as mock:
-            mock.get("https://api.test.convilyn.com/api/v1/health").mock(
+            mock.get("https://api.example.com/api/v1/health").mock(
                 return_value=httpx.Response(200, json={"status": "ok"})
             )
             # The tier check calls /cost-preview under the hood.
-            mock.post("https://api.test.convilyn.com/api/v1/workflows/cost-preview").mock(
+            mock.post("https://api.example.com/api/v1/workflows/cost-preview").mock(
                 return_value=httpx.Response(
                     200,
                     json={
@@ -155,12 +155,12 @@ class TestDoctorObjectState:
         """A tier-query failure must NOT flip the doctor's exit code.
         It surfaces as WARN so the operator notices, but doctor still
         exits OK if every required check passed."""
-        monkeypatch.setenv("CONVILYN_BASE_URL", "https://api.test.convilyn.com")
+        monkeypatch.setenv("CONVILYN_BASE_URL", "https://api.example.com")
         with respx.mock(assert_all_called=False) as mock:
-            mock.get("https://api.test.convilyn.com/api/v1/health").mock(
+            mock.get("https://api.example.com/api/v1/health").mock(
                 return_value=httpx.Response(200, json={"status": "ok"})
             )
-            mock.post("https://api.test.convilyn.com/api/v1/workflows/cost-preview").mock(
+            mock.post("https://api.example.com/api/v1/workflows/cost-preview").mock(
                 side_effect=httpx.ConnectError("transient")
             )
             result = runner.invoke(doctor_command, ["--ping", "--json"])
@@ -177,9 +177,9 @@ class TestDoctorObjectState:
         """No API key + --ping: tier check should not fire (it would
         guaranteed-fail and waste a network call)."""
         monkeypatch.delenv("CONVILYN_API_KEY", raising=False)
-        monkeypatch.setenv("CONVILYN_BASE_URL", "https://api.test.convilyn.com")
+        monkeypatch.setenv("CONVILYN_BASE_URL", "https://api.example.com")
         with respx.mock(assert_all_called=False) as mock:
-            mock.get("https://api.test.convilyn.com/api/v1/health").mock(
+            mock.get("https://api.example.com/api/v1/health").mock(
                 return_value=httpx.Response(200, json={"status": "ok"})
             )
             result = runner.invoke(doctor_command, ["--ping", "--json"])
@@ -210,7 +210,7 @@ class TestRejectedKeyIsFatal:
     it, "make everything FAIL" would pass this class.
     """
 
-    BASE = "https://api.test.convilyn.com"
+    BASE = "https://api.example.com"
 
     def _run(
         self,
@@ -269,7 +269,7 @@ class TestTransientTierFailureStaysAdvisory:
     *optional* signal is not a broken environment.
     """
 
-    BASE = "https://api.test.convilyn.com"
+    BASE = "https://api.example.com"
 
     def test_server_error_stays_warn_and_exits_ok(
         self, runner: CliRunner, env_with_key: None, monkeypatch: pytest.MonkeyPatch
@@ -292,7 +292,7 @@ class TestSummaryCountsWarnings:
     """`All checks passed.` was printed whenever nothing had status FAIL, so a
     run that printed a WARN line ended by contradicting its own output."""
 
-    BASE = "https://api.test.convilyn.com"
+    BASE = "https://api.example.com"
 
     def test_a_warning_is_named_in_the_summary(
         self, runner: CliRunner, env_with_key: None, monkeypatch: pytest.MonkeyPatch

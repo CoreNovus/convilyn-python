@@ -67,6 +67,26 @@ Convilyn is for:
 uv add convilyn          # or: pip install convilyn
 ```
 
+### Installing a pre-release
+
+Pin the version. Do **not** reach for `--pre`:
+
+```bash
+pip install "convilyn[all]==3.2.0b1"
+```
+
+pip already allows a pre-release when the specifier names one explicitly, so the
+pin is enough on its own. `--pre` is a **global** switch — it applies to the
+whole dependency resolution, not just to `convilyn` — and pip's own hint
+(``install with `pip install --pre` ``) does not say so. Following that hint
+pulls pre-releases of the packages underneath us too: `pydantic`, which every
+model in this SDK is built on, and `lxml`, which `python-docx` / `python-pptx`
+parse with. A result from that environment cannot be attributed to `convilyn`
+at all.
+
+That is pip's behaviour rather than a defect here, but anyone installing a
+pre-release will meet it.
+
 ## Quickstart
 
 See **[docs/QUICKSTART.md](docs/QUICKSTART.md)** and the full docs at:

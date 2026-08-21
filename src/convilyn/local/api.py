@@ -27,6 +27,33 @@ machine, and a missing dependency is an answer.
 easy to ignore. ``convert_many()`` does not, because a five-hundred-file batch
 that stops on file three is not a batch — each failure becomes a result with
 ``ok=False``, and ``raise_on_error=True`` opts back into stopping.
+
+## Spreadsheet numbers keep every digit the file has
+
+Converting a workbook to Markdown, a cell's **display format is applied only
+where doing so is lossless and adds meaning.** The stored content is
+authoritative; this converts format, never content.
+
+===================== ======= ==================================================
+format                applied why
+===================== ======= ==================================================
+percentage ``0.0%``   yes     the ×100 and the ``%``, **not** the rounding
+currency ``"NT$"#,##0`` yes   the symbol — nothing else records which currency
+thousands ``#,##0``   **no**  lossless but zero semantic, and separators break
+                              every downstream attempt to parse the number
+decimal rounding      **no**  lossy; a rounded number is a different number
+===================== ======= ==================================================
+
+So a ``0.0%`` cell holding ``-0.720386735542037`` comes out as
+``-72.0386735542037%``, not ``-72.0%``. Matching what the spreadsheet *shows* is
+the obvious-looking answer and is the wrong one — it discards eleven digits the
+file actually contains.
+
+This surprises people, which is why it is here rather than only in the
+converter's own docstring: external testing has reported the missing separators
+as a defect twice. It is a decision, not an omission. If you want the rendered
+appearance, format the number at your end — the reverse is not possible, because
+the digits would already be gone.
 """
 
 from __future__ import annotations

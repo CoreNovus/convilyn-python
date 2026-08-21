@@ -106,12 +106,27 @@ def understand_command(
 ) -> None:
     """Grounded, schema-constrained understanding of file(s).
 
-    Returns a result that conforms to the supplied JSON Schema and is
-    grounded by the platform before it is returned. The schema is read and
-    validated as *JSON* locally (no schema-validation dependency is added —
-    conformance is the platform's guarantee), so a malformed or unreadable
-    ``--schema-file`` exits ``1`` with a single error line instead of a
-    traceback, and it does so **before** any network call.
+    Returns a result that conforms to the supplied JSON Schema and is grounded
+    by the platform before it is returned. The schema is read and validated as
+    *JSON* locally (no schema-validation dependency is added — conformance is
+    the platform's guarantee), and it is checked **before** any network call, so
+    a malformed or unreadable ``--schema-file`` costs nothing and prints one
+    error line rather than a traceback.
+
+    \b
+    Exit codes:
+      0  the result was returned
+      1  usage — bad flag, missing file id, or any --schema-file problem
+      2  API / transport error, or the platform has no pipeline for this shape
+      3  the run happened and was charged, but there is no usable result
+
+    ``3`` covers two outcomes deliberately: a job that FAILED, and a job that
+    succeeded while producing nothing this command can return. Both were paid
+    for and neither is your mistake, which is what separates them from ``1``.
+
+    This table was documented in the module docstring and in the CHANGELOG but
+    not here, so ``--help`` named only ``1`` — the number a caller branching on
+    exit status most needs was absent from the one place they would look.
     """
     renderer = make_renderer(json_output=json_output)
     file_ids = _goals._parse_file_ids(files)

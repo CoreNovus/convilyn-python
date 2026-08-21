@@ -60,12 +60,12 @@ class TestClientErrors:
             AsyncConvilyn(api_key="")
 
     def test_custom_base_url_respected(self):
-        c = AsyncConvilyn(api_key="ck_x", base_url="https://staging.convilyn.com")
-        assert c.base_url == "https://staging.convilyn.com"
+        c = AsyncConvilyn(api_key="ck_x", base_url="https://custom.example.com")
+        assert c.base_url == "https://custom.example.com"
 
     def test_trailing_slash_normalised(self):
-        c = AsyncConvilyn(api_key="ck_x", base_url="https://staging.convilyn.com/")
-        assert c.base_url == "https://staging.convilyn.com"
+        c = AsyncConvilyn(api_key="ck_x", base_url="https://custom.example.com/")
+        assert c.base_url == "https://custom.example.com"
 
 
 # ── Object-state — lifecycle ─────────────────────────────────────────

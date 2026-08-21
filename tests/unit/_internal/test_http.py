@@ -231,9 +231,7 @@ class TestExternalUrlHostGuard:
 class TestBaseUrlHttpsGuard:
     """A non-loopback http base_url leaks the API key in cleartext."""
 
-    @pytest.mark.parametrize(
-        "url", ["http://api.example.com", "http://staging.convilyn.corenovus.com"]
-    )
+    @pytest.mark.parametrize("url", ["http://api.example.com", "http://staging.example.com"])
     def test_http_non_loopback_rejected(self, url: str) -> None:
         with pytest.raises(ValueError, match="insecure base_url"):
             resolve_base_url(url, env={})

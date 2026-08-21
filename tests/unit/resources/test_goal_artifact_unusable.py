@@ -48,7 +48,6 @@ def _artifact(**overrides: Any) -> dict:
         "sizeBytes": 64,
         "downloadUrl": _STORAGE_URL,
         "artifactType": "json",
-        "platform": None,
         "metadata": None,
         "isPrimary": True,
         "description": "",

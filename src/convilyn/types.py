@@ -368,8 +368,11 @@ class Artifact(BaseModel):
     mime_type: str = Field(alias="mimeType")
     size_bytes: int = Field(alias="sizeBytes", ge=0)
     download_url: str | None = Field(default=None, alias="downloadUrl")
+    #: Icon hint the server derives from :py:attr:`mime_type` — one of
+    #: ``video | image | audio | document | csv | json | zip | text``, or
+    #: ``None`` when the artifact carries no MIME. Read
+    #: :py:attr:`mime_type` for the real format; this is a display aid.
     artifact_type: str | None = Field(default=None, alias="artifactType")
-    platform: str | None = None
     metadata: dict[str, Any] | None = None
     is_primary: bool = Field(default=False, alias="isPrimary")
     description: str = ""
@@ -701,6 +704,41 @@ class Plan(BaseModel):
     model_config = ConfigDict(populate_by_name=True, frozen=True, extra="allow")
 
     tier: PlanTier
+
+
+class CreditBalance(BaseModel):
+    """What the caller has left to spend, in credits.
+
+    Returned by :py:meth:`convilyn.resources.account.AsyncAccount.get_balance`,
+    which wraps ``GET /api/v1/credits/balance``.
+
+    Two buckets, because they behave differently at renewal:
+
+    * :py:attr:`period_credits` — subscription / trial grants for the active
+      billing period. **Zeroed at renewal.**
+    * :py:attr:`topup_credits` — the persistent wallet. Never expires.
+
+    :py:attr:`balance_credits` is their TOTAL and is the authoritative number —
+    compare a quote against this one, not against either bucket.
+
+    Both buckets are ``None`` when the server did not send them; read that as
+    *unknown*, never as zero, exactly as
+    :py:attr:`convilyn.InsufficientCreditsError.shortfall_credits` is read.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, frozen=True, extra="allow")
+
+    balance_credits: int = Field(alias="balanceCredits")
+    period_credits: int | None = Field(default=None, alias="periodCredits")
+    topup_credits: int | None = Field(default=None, alias="topupCredits")
+    period_end: datetime = Field(alias="periodEnd")
+    last_grant_at: datetime | None = Field(default=None, alias="lastGrantAt")
+    #: Free tier only — credits spent this period against the monthly Free cost
+    #: cap. FRACTIONAL by design: it accumulates charges, and rounding
+    #: it to whole credits would make the cap unauditable.
+    free_tier_month_spent_credits: float | None = Field(
+        default=None, alias="freeTierMonthSpentCredits"
+    )
 
 
 class UsageHistoryEntry(BaseModel):

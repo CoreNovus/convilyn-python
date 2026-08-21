@@ -776,7 +776,6 @@ def _artifact_payload(**overrides: Any) -> dict:
         "sizeBytes": 2048,
         "downloadUrl": "https://storage.example.com/bucket/summary.xlsx?sig=abc",
         "artifactType": "spreadsheet",
-        "platform": None,
         "metadata": None,
         "isPrimary": True,
         "description": "Vendor-grouped expense summary",

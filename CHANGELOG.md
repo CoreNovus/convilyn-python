@@ -3,7 +3,64 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [Semantic Versioning](https://semver.org/).
 
+## [3.2.0b2] - 2026-08-21
+
+### Added
+
+- **`account.get_balance()`** — `GET /api/v1/credits/balance`, the two-bucket
+  credit balance (`period_credits` + `topup_credits`, totalled as
+  `balance_credits`). Compare a quote from `account.get_quota()` against
+  `balance_credits`.
+
+  `account.usage_history()` does **not** answer this and never did: it returns
+  run COUNTS for quota metrics, and the credits period is not in its tracked
+  set, so it carries no balance row at all. Before this, the only balance a
+  `ck_` key could reach was a side effect of quoting a workflow you did not
+  intend to run.
+
+### Changed
+
+- **`GoalJobFailedError.retryable` is now `bool | None`.** It was a bare
+  `bool`, so "the server said do not retry" and "the server said nothing" were
+  the same answer — `False`. That is the reading this package's own
+  `InsufficientCreditsError` docstring already forbids for its operands
+  (*"read them as unknown, never as zero"*), and it applies to a verdict too.
+
+  Not academic: until the backend began sending `suggestedAction` on a failed
+  job, `suggested_action` was `None` on **every** failure, so `retryable` was
+  structurally `False` for every job this SDK has ever seen fail. A caller
+  branching on it would never once have retried.
+
+  `if exc.retryable:` keeps working unchanged. Add `elif exc.retryable is
+  None:` if you want to distinguish "no guidance" from "do not retry".
+
 ## [3.2.0b1] - 2026-08-20
+
+### Installing this pre-release
+
+Pin the version. Do **not** reach for `--pre`:
+
+```bash
+pip install "convilyn[all]==3.2.0b1"
+```
+
+pip already allows a pre-release when the specifier names one explicitly, so
+the pin is sufficient on its own. `--pre` is a **global** switch — it applies
+to the whole dependency resolution, not just to `convilyn` — and pip's own
+hint (`install with `pip install --pre``) does not say so. Following that hint
+during round-6 testing produced:
+
+| package | pinned install | after `--pre` |
+|---|---|---|
+| `defusedxml` | 0.7.1 | **0.8.0rc2** |
+| `lxml` | 6.1.1 | **7.0.0a3** |
+| `pydantic` | 2.13.4 | **2.14.0b1** |
+
+Every model in this SDK is built on pydantic, and `lxml` is what
+`python-docx` / `python-pptx` parse with — so a result from that environment
+cannot be attributed to `convilyn` at all. That is pip's behaviour rather than
+a defect here, but anyone installing a pre-release will meet it, so it belongs
+next to the version number rather than in a support thread.
 
 Pre-release. Minor rather than patch because of one **behaviour change you can
 see from the outside**: five failure paths that used to raise `ValueError` now
@@ -81,16 +138,32 @@ catching them. See **Changed** — it is written in both directions on purpose.
   + except convilyn.GoalArtifactUnusableError as exc:
   ```
 
-  **What is still `ValueError`:** argument mistakes. `understand([], schema={})`
-  — an empty file list, a malformed schema — raises a bare `ValueError` exactly
-  as before, and deliberately so. The line is *"you passed something
-  unreasonable" stays a builtin; "the platform produced something unusable"
-  becomes a `ConvilynError"*.
+  **What is still a builtin:** argument mistakes — but they are **`ValueError`
+  *or* `TypeError`**, not one type, and this said `ValueError` alone:
+
+  | call | raises |
+  |---|---|
+  | `understand([], schema={})` — empty file list | `ValueError` |
+  | `understand(["file_x"], schema="not-a-dict")` — schema is not a dict | `TypeError` |
+
+  `goals.py`'s own docstring has always said `ValueError / TypeError` and the
+  CLI handler has always caught both; only this entry merged two different
+  inputs into one sentence. A reader who wrote `except ValueError:` from it
+  would miss every schema *type* error.
+
+  The line being drawn is *"you passed something unreasonable" stays a builtin;
+  "the platform produced something unusable" becomes a `ConvilynError`*.
 
 - **`convilyn goals understand` exits `3` instead of `1`** when the run produced
   no usable result. `1` means you invoked the command wrongly; this outcome is
   a run that happened and was paid for, which is what `3` already meant for a
-  failed job. The command's `--help` documents `3` as covering both.
+  failed job.
+
+  This said "the command's `--help` documents `3` as covering both", and it did
+  not: the help text named exactly one exit code, `1`, for a malformed
+  `--schema-file`. The implementation was right the whole time — only the help
+  was silent. `--help` now carries the full table, so the claim and the output
+  agree.
 
 ### Fixed
 
