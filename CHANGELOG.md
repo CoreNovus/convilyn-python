@@ -3,6 +3,65 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [Semantic Versioning](https://semver.org/).
 
+## [3.2.0b3] - 2026-08-23
+
+### Fixed
+
+- **`convilyn.local`: a PDF with more than one column no longer comes back with
+  its lines welded together.** The extractor treated "same `top` coordinate
+  means same line", which is the same thing as asserting every page has one
+  column. On a facing-page (2-up) scan that premise fails on every line, and
+  the three symptoms it produced were one missing layer, not three bugs.
+
+  A layout pass now runs in front of every PDF: recursive XY-cut over the word
+  bounding boxes, pure geometry, no new dependency and no model download. **A
+  region with no qualifying gap comes back whole** — i.e. exactly today's
+  behaviour — so a single-column document cannot be made worse by it.
+
+  Measured on a 23-page 2-up textbook: welded two-column lines fell from
+  541 / 1,630 to 103 / 2,386.
+
+- **A one-row or one-column grid is no longer emitted as a table.** `pdfplumber`
+  reads decorative rounded label boxes as tables — 26 of 44 on that same file —
+  and the Markdown renderer opens with `header, *body`, so a one-row grid
+  renders as a header with nothing under it. Worse, its cells were being cut
+  out of the prose stream, so a single token could arrive split across two
+  cells (`| 閩-E | -B1 |`) and a sentence could arrive interleaved with another.
+
+  Rejected grids contribute no bounding box, so their words return to the prose
+  where they belong. Tables on that file: 44 → 17, all of them at least 2x2.
+  Character conservation is unchanged at 99.892% — filtering the false tables
+  dropped no text.
+
+- **Images land where the page drew them, instead of all trailing the page.**
+  Coordinates come from `pdfplumber`'s `page.images` and the bytes still come
+  from `pypdf`, joined on the PDF's own XObject resource name. On the reference
+  file 68 of 68 image blocks now have content after them on the same page.
+
+- **JPEG 2000 images are no longer delivered as files named `.png` that no
+  viewer opens.** Every unknown suffix used to be reported as `image/png`; 34
+  embedded `.jp2` files shipped that way. Unknown suffixes now report
+  `application/octet-stream`, and non-renderable formats are re-encoded to real
+  PNG. Assets whose name matches their format: 31 / 63 → 63 / 63, zero broken
+  links.
+
+### Changed
+
+- **`account.usage_history()` documents the row shape the server actually
+  sends.** It returns **at most 50 rows, newest first, with no cursor** — so
+  receiving exactly 50 means older periods exist and you have not seen them.
+  The rows are run COUNTS for quota metrics; the credits period is never in
+  that set, so **no row here reports spend**. `account.get_balance()` is the
+  credits question. Documentation only — no behaviour change.
+
+### Packaging
+
+- **The author email published on the PyPI page can now receive mail.** It
+  pointed at `convilyn.corenovus.com`, a domain with no MX record, so the one
+  channel a stranger installing this package can see swallowed their mail.
+  Fixed metadata takes effect only on a release, which is one of the reasons
+  this one exists. Support goes to `support@convilyn.com`.
+
 ## [3.2.0b2] - 2026-08-21
 
 ### Added

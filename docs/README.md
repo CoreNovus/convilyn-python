@@ -9,7 +9,7 @@
 [![Licence](https://img.shields.io/pypi/l/convilyn.svg)](https://github.com/CoreNovus/convilyn-python/blob/main/LICENSE)
 
 Convert files on your own machine, or run AI workflows on the
-[Convilyn](https://convilyn.corenovus.com) platform — one package, one CLI.
+[Convilyn](https://convilyn.com) platform — one package, one CLI.
 
 ## Convert a file with no account, no key, no network
 
@@ -189,7 +189,7 @@ dependency cost.
 
 - [Quickstart](https://github.com/CoreNovus/convilyn-python/blob/main/docs/QUICKSTART.md)
   — 5 minutes, covering offline conversion, goals, workflows and quota
-- [Full documentation](https://docs.convilyn.corenovus.com)
+- [Full documentation](https://docs.convilyn.com)
 - [Examples](https://github.com/CoreNovus/convilyn-python/tree/main/examples)
   — runnable Python and shell scripts
 - [Changelog](https://github.com/CoreNovus/convilyn-python/blob/main/CHANGELOG.md)

@@ -292,9 +292,9 @@ if not route.available:
 
 ## 2. Get an API key
 
-Sign up at <https://convilyn.corenovus.com>, then mint your `ck_…` API key from
+Sign up at <https://convilyn.com>, then mint your `ck_…` API key from
 **Settings → API** (the API Console) at
-<https://convilyn.corenovus.com/en/settings/api> — the page is auth-gated and is
+<https://convilyn.com/en/settings/api> — the page is auth-gated and is
 also where you manage billing, usage, and quota. Export it once so the
 SDK and CLI both pick it up:
 
@@ -911,7 +911,7 @@ usual.
 
 Convilyn keeps only what a run needs. Full details — retention windows,
 processing regions, encryption, and the AI-training stance — are on the
-[Data handling & retention](https://docs.convilyn.corenovus.com/en/data-handling/)
+[Data handling & retention](https://docs.convilyn.com/en/data-handling/)
 page. The essentials for SDK callers:
 
 * **Uploads are ephemeral by default.** Input files are deleted automatically

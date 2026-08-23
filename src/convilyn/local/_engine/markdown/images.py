@@ -50,7 +50,13 @@ _EXT_BY_MEDIA_TYPE = {
     "image/webp": "webp",
     "image/bmp": "bmp",
     "image/tiff": "tiff",
+    "image/jp2": "jp2",
+    "image/jpx": "jpx",
 }
+
+RENDERABLE_MEDIA_TYPES = frozenset(
+    {"image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp"}
+)
 
 
 @dataclass(frozen=True)
@@ -105,6 +111,43 @@ def inspect(data: bytes) -> ImageFacts:
     except Exception as exc:
         logger.debug("image triage decode failed (%s); falling back to byte hash", exc)
         return ImageFacts(dedup_key=hashlib.sha256(data).hexdigest())
+
+
+def to_deliverable(data: bytes, media_type: str) -> tuple[bytes, str]:
+    """Re-encode an image to PNG when its format is not one a viewer renders.
+
+    Documents carry pictures in formats that are perfectly valid and that nothing
+    opens by double-clicking — JPEG 2000 above all, which publishing tools emit
+    routinely and no browser displays. Extracting such an image faithfully still
+    leaves the reader with a file they cannot look at.
+
+    Returns the bytes and the media type to store, unchanged for a format that is
+    already renderable and unchanged again when the decode fails. Either way the
+    delivered file's extension describes its actual contents.
+
+    PNG rather than JPEG, because these images frequently carry an alpha channel
+    and JPEG has nowhere to put it.
+    """
+    if media_type in RENDERABLE_MEDIA_TYPES:
+        return data, media_type
+
+    try:
+        from PIL import Image
+
+        with Image.open(io.BytesIO(data)) as handle:
+            handle.load()
+            converted = handle.convert("RGBA" if "A" in handle.getbands() else "RGB")
+            buffer = io.BytesIO()
+            converted.save(buffer, format="PNG", optimize=True)
+        return buffer.getvalue(), "image/png"
+    except Exception as exc:
+        logger.warning(
+            "could not re-encode a %s image to PNG (%s); delivering the original, "
+            "which may not open in a browser",
+            media_type,
+            exc,
+        )
+        return data, media_type
 
 
 def is_decorative(facts: ImageFacts, byte_size: int) -> bool:

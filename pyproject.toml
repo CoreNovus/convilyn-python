@@ -75,8 +75,8 @@ documents = ["convilyn[pdf,docx,pptx,xlsx,xml]"]
 all = ["convilyn[documents,images]"]
 
 [project.urls]
-Homepage = "https://convilyn.corenovus.com"
-Documentation = "https://docs.convilyn.corenovus.com"
+Homepage = "https://convilyn.com"
+Documentation = "https://docs.convilyn.com"
 Issues = "https://github.com/CoreNovus/convilyn-python/issues"
 Repository = "https://github.com/CoreNovus/convilyn-python"
 "Source Code" = "https://github.com/CoreNovus/convilyn-python"

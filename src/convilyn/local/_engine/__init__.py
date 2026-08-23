@@ -1,9 +1,14 @@
 """Generated conversion engine. Internal — no stability guarantee.
 
-Everything under this package is projected from Convilyn's server-side
+Every module under this package is projected from Convilyn's server-side
 conversion engine by ``scripts/oss/project_local_engine.py`` and regenerated
-whenever that engine changes. Do not edit these files; a drift gate compares
-them against a fresh projection and fails on any hand edit.
+whenever that engine changes. Do not edit them; a drift gate compares them
+against a fresh projection and fails on any hand edit.
+
+This file and the sibling package ``__init__`` files are the exception: they
+are hand-written, so there is no fresh projection to compare them against and
+the drift gate does not cover them. What does cover them is the projection's
+truth pass, which requires every name they cite to exist.
 
 Do not import from here either. ``convilyn.local`` is the public surface and the
 only one covered by the SDK's semantic-versioning promise — see

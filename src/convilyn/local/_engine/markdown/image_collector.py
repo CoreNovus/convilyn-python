@@ -72,6 +72,8 @@ class ImageCollector:
             self._decorative += 1
             return None
 
+        data, media_type = img.to_deliverable(data, media_type)
+
         name = self._seen.get(facts.dedup_key)
         if name is None:
             name = img.asset_name(len(self._seen) + 1, media_type)
@@ -86,6 +88,16 @@ class ImageCollector:
             height=facts.height,
             alt_text=alt_text,
         )
+
+    def note_over_cap(self) -> None:
+        """Records an image reached past the decode cap, without decoding it.
+
+        The counterpart to `at_cap`. Reaching an image's bytes is what runs its decode,
+        so a caller that asks first pays nothing for the pictures beyond the cap — but
+        it still has to say what it skipped, or the cap becomes exactly the silent kind
+        of loss the triage counts exist to end.
+        """
+        self._over_cap += 1
 
     def note_unreadable(self) -> None:
         """Records an image reference whose bytes could not be read.

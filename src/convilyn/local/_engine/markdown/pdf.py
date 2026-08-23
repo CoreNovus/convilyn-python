@@ -29,6 +29,8 @@ from __future__ import annotations
 import logging
 import re
 from collections import Counter
+from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +40,7 @@ from convilyn.local._engine.markdown.heuristics import (
     looks_like_heading,
 )
 from convilyn.local._engine.markdown.image_collector import ImageCollector
+from convilyn.local._engine.markdown.layout import median_height, order_regions
 from convilyn.local._engine.markdown.model import (
     Block,
     ExtractedImage,
@@ -53,6 +56,13 @@ _HEADING_RATIO = 1.15
 _HEADING_TIERS = ((1.6, 2), (1.35, 3), (_HEADING_RATIO, 4))
 
 _LINE_TOLERANCE = 2.0
+
+_DEDUPE_TOLERANCE = 1
+
+_PLACED_BLOCK = "_placed_block"
+
+MIN_TABLE_ROWS = 2
+MIN_TABLE_COLUMNS = 2
 
 
 _SENTENCE_END = SENTENCE_END + "：:"
@@ -104,23 +114,15 @@ def _merge_wrapped(lines: list[tuple[str, float]], body: float) -> list[tuple[st
     return merged
 
 
-def _lines_with_sizes(page: Any, table_boxes: list[tuple]) -> list[tuple[str, float]]:
-    try:
-        words = page.extract_words(extra_attrs=["size"])
-    except Exception as exc:
-        logger.debug("pdf word extraction failed on a page (%s)", exc)
-        return []
-
-    kept = [w for w in words if not _in_any_box(w, table_boxes)]
-
-    lines: list[tuple[str, float]] = []
-    for row in _cluster_rows(kept):
-        row = sorted(row, key=lambda w: w["x0"])
-        text = " ".join(w["text"] for w in row).strip()
+def _lines_from_words(words: list[dict]) -> list[tuple[str, float, float]]:
+    lines: list[tuple[str, float, float]] = []
+    for row in _cluster_rows(words):
+        ordered = sorted(row, key=lambda w: w["x0"])
+        text = " ".join(w["text"] for w in ordered).strip()
         if not text:
             continue
-        sizes = sorted(float(w.get("size") or 0.0) for w in row)
-        lines.append((text, sizes[len(sizes) // 2]))
+        sizes = sorted(float(w.get("size") or 0.0) for w in ordered)
+        lines.append((text, sizes[len(sizes) // 2], min(float(w["top"]) for w in ordered)))
     return lines
 
 
@@ -136,8 +138,8 @@ def _in_any_box(word: dict, boxes: list[tuple]) -> bool:
     return False
 
 
-def _body_size(all_lines: list[tuple[str, float]]) -> float:
-    sizes = Counter(round(size, 1) for _, size in all_lines if size > 0)
+def _body_size(all_lines: list[tuple[str, float, float]]) -> float:
+    sizes = Counter(round(line[1], 1) for line in all_lines if line[1] > 0)
     if not sizes:
         return 0.0
     return sizes.most_common(1)[0][0]
@@ -153,8 +155,8 @@ def _heading_level(size: float, body: float) -> int | None:
     return None
 
 
-def _extract_images(path: Path, collector: ImageCollector) -> dict[int, list[ExtractedImage]]:
-    per_page: dict[int, list[ExtractedImage]] = {}
+def _image_sources_by_page(path: Path) -> dict[int, dict[str, Any]]:
+    per_page: dict[int, dict[str, Any]] = {}
 
     try:
         from pypdf import PdfReader
@@ -162,16 +164,25 @@ def _extract_images(path: Path, collector: ImageCollector) -> dict[int, list[Ext
         reader = PdfReader(str(path))
         for index, page in enumerate(reader.pages[:MAX_PAGES]):
             for item in page.images:
-                if collector.at_cap:
-                    return per_page
-
-                image = collector.collect(item.data, _media_type_for(item.name))
-                if image is not None:
-                    per_page.setdefault(index, []).append(image)
+                per_page.setdefault(index, {})[item.name.rsplit(".", 1)[0]] = item
     except Exception as exc:
         logger.debug("pdf image extraction failed (%s); continuing without images", exc)
 
     return per_page
+
+
+def _collect(item: Any, collector: ImageCollector) -> ExtractedImage | None:
+    if collector.at_cap:
+        collector.note_over_cap()
+        return None
+
+    try:
+        data = item.data
+    except Exception as exc:
+        logger.warning("a pdf image stream could not be decoded (%s); skipping it", exc)
+        collector.note_unreadable()
+        return None
+    return collector.collect(data, _media_type_for(item.name))
 
 
 def _media_type_for(name: str) -> str:
@@ -183,46 +194,181 @@ def _media_type_for(name: str) -> str:
         "gif": "image/gif",
         "webp": "image/webp",
         "tiff": "image/tiff",
+        "tif": "image/tiff",
         "bmp": "image/bmp",
-    }.get(suffix, "image/png")
+        "jp2": "image/jp2",
+        "jpx": "image/jpx",
+        "jpf": "image/jpx",
+    }.get(suffix, "application/octet-stream")
 
 
-def extract(path: Path) -> MarkdownDoc:
-    """Read a PDF into a ``MarkdownDoc``.
+@dataclass(frozen=True)
+class _Region:
+    lines: tuple[tuple[str, float, float], ...] = ()
+    placed: tuple[tuple[float, Block], ...] = ()
 
-    Headings are inferred from relative font size, tables from detected geometry,
-    and everything else becomes paragraphs in reading order.
-    """
-    import pdfplumber
 
-    warnings: list[str] = []
-    collector = ImageCollector()
-    page_images = _extract_images(path, collector)
+def _table_block(rows: list[list[str | None]]) -> Block | None:
+    cleaned = tuple(tuple((cell or "").strip() for cell in row) for row in rows if row)
+    if len(cleaned) < MIN_TABLE_ROWS:
+        return None
+    if max((len(row) for row in cleaned), default=0) < MIN_TABLE_COLUMNS:
+        return None
+    if not any(cell for row in cleaned for cell in row):
+        return None
+    return Block(kind="table", rows=cleaned)
 
-    pages: list[tuple[list[tuple[str, float]], list[list[list[str | None]]]]] = []
-    with pdfplumber.open(path) as pdf:
-        total = len(pdf.pages)
-        if total > MAX_PAGES:
-            warnings.append(f"truncated: only the first {MAX_PAGES} of {total} pages converted")
 
-        for page in pdf.pages[:MAX_PAGES]:
-            try:
-                found = page.find_tables()
-                boxes = [t.bbox for t in found]
-                tables = [t.extract() for t in found]
-            except Exception as exc:
-                logger.debug("pdf table extraction failed on a page (%s)", exc)
-                boxes, tables = [], []
-            pages.append((_lines_with_sizes(page, boxes), tables))
+def _placed_images(
+    placements: list[dict],
+    image_sources: dict[str, Any],
+    collector: ImageCollector,
+) -> tuple[list[dict], list[Block]]:
+    boxes: list[dict] = []
+    seen: dict[str, ExtractedImage | None] = {}
 
-    body = _body_size([line for lines, _ in pages for line in lines])
+    for placement in placements:
+        name = str(placement.get("name") or "")
+        item = image_sources.get(name)
+        if item is None:
+            collector.note_unreadable()
+            continue
+        if name not in seen:
+            seen[name] = _collect(item, collector)
+        image = seen[name]
+        if image is None:
+            continue
+        boxes.append(
+            {
+                "x0": placement["x0"],
+                "x1": placement["x1"],
+                "top": placement["top"],
+                "bottom": placement["bottom"],
+                _PLACED_BLOCK: Block(kind="image", image=image),
+            }
+        )
 
+    trailing: list[Block] = []
+    for name, item in image_sources.items():
+        if name in seen:
+            continue
+        image = _collect(item, collector)
+        if image is not None:
+            trailing.append(Block(kind="image", image=image))
+
+    return boxes, trailing
+
+
+def _column_overlap(box: dict, bounds: tuple[float, float, float, float]) -> float:
+    x0, _, x1, _ = bounds
+    return min(float(box["x1"]), x1) - max(float(box["x0"]), x0)
+
+
+def _vertical_distance(box: dict, bounds: tuple[float, float, float, float]) -> float:
+    _, top, _, bottom = bounds
+    if float(box["bottom"]) < top:
+        return top - float(box["bottom"])
+    if float(box["top"]) > bottom:
+        return float(box["top"]) - bottom
+    return 0.0
+
+
+def _assign_images(
+    regions: list[list[dict]],
+    images: list[dict],
+) -> tuple[dict[int, list[tuple[float, Block]]], list[Block]]:
+    bounds = [
+        (
+            min((float(b["x0"]) for b in region), default=0.0),
+            min((float(b["top"]) for b in region), default=0.0),
+            max((float(b["x1"]) for b in region), default=0.0),
+            max((float(b["bottom"]) for b in region), default=0.0),
+        )
+        for region in regions
+    ]
+
+    assigned: dict[int, list[tuple[float, Block]]] = {}
+    leftovers: list[Block] = []
+    for image in images:
+        best_index, best_distance = -1, 0.0
+        for index, rectangle in enumerate(bounds):
+            if _column_overlap(image, rectangle) <= 0:
+                continue
+            distance = _vertical_distance(image, rectangle)
+            if best_index < 0 or distance < best_distance:
+                best_index, best_distance = index, distance
+        if best_index < 0:
+            leftovers.append(image[_PLACED_BLOCK])
+        else:
+            assigned.setdefault(best_index, []).append((float(image["top"]), image[_PLACED_BLOCK]))
+    return assigned, leftovers
+
+
+def _read_page(
+    page: Any,
+    image_sources: dict[str, Any],
+    collector: ImageCollector,
+) -> list[_Region]:
+    placements = list(getattr(page, "images", None) or [])
+    page = page.dedupe_chars(tolerance=_DEDUPE_TOLERANCE)
+
+    try:
+        found = page.find_tables()
+        candidates = [(t.bbox, t.extract()) for t in found]
+    except Exception as exc:
+        logger.debug("pdf table extraction failed on a page (%s)", exc)
+        candidates = []
+
+    tables = [(bbox, block) for bbox, rows in candidates if (block := _table_block(rows))]
+
+    try:
+        words = page.extract_words(extra_attrs=["size"])
+    except Exception as exc:
+        logger.debug("pdf word extraction failed on a page (%s)", exc)
+        words = []
+
+    items: list[dict] = [w for w in words if not _in_any_box(w, [bbox for bbox, _ in tables])]
+    for bbox, block in tables:
+        x0, top, x1, bottom = bbox
+        items.append(
+            {"x0": x0, "x1": x1, "top": top, "bottom": bottom, _PLACED_BLOCK: block},
+        )
+
+    boxes, trailing = _placed_images(placements, image_sources, collector)
+
+    grouped = order_regions(items, unit=median_height(items))
+    assigned, unplaced = _assign_images(grouped, boxes)
+    trailing.extend(unplaced)
+
+    regions: list[_Region] = []
+    for index, region in enumerate(grouped):
+        placed = [(float(i["top"]), i[_PLACED_BLOCK]) for i in region if _PLACED_BLOCK in i]
+        placed.extend(assigned.get(index, ()))
+        placed.sort(key=lambda entry: entry[0])
+        words_only = [i for i in region if _PLACED_BLOCK not in i]
+        regions.append(_Region(lines=tuple(_lines_from_words(words_only)), placed=tuple(placed)))
+
+    if trailing:
+        regions.append(_Region(placed=tuple((0.0, block) for block in trailing)))
+    return regions
+
+
+def _chunk_at_blocks(
+    region: _Region,
+) -> Iterator[tuple[list[tuple[str, float, float]], Block | None]]:
+    lines = sorted(region.lines, key=lambda line: line[2])
+    cursor = 0
+    for top, block in region.placed:
+        chunk = [line for line in lines[cursor:] if line[2] < top]
+        cursor += len(chunk)
+        yield chunk, block
+    yield lines[cursor:], None
+
+
+def _region_blocks(region: _Region, body: float) -> list[Block]:
     blocks: list[Block] = []
-    for index, (lines, tables) in enumerate(pages):
-        if index:
-            blocks.append(Block(kind="page_break"))
-
-        for text, size, bullet in _merge_wrapped(lines, body):
+    for chunk, placed in _chunk_at_blocks(region):
+        for text, size, bullet in _merge_wrapped([(t, s) for t, s, _ in chunk], body):
             if not text:
                 continue
             if bullet:
@@ -236,13 +382,41 @@ def extract(path: Path) -> MarkdownDoc:
             else:
                 blocks.append(Block(kind="paragraph", text=text))
 
-        for table in tables:
-            rows = tuple(tuple((cell or "").strip() for cell in row) for row in table if row)
-            if rows:
-                blocks.append(Block(kind="table", rows=rows))
+        if placed is not None:
+            blocks.append(placed)
+    return blocks
 
-        for image in page_images.get(index, ()):
-            blocks.append(Block(kind="image", image=image))
+
+def extract(path: Path) -> MarkdownDoc:
+    """Read a PDF into a ``MarkdownDoc``.
+
+    Headings are inferred from relative font size, tables from detected geometry,
+    and everything else becomes paragraphs in reading order.
+    """
+    import pdfplumber
+
+    warnings: list[str] = []
+    collector = ImageCollector()
+    image_sources = _image_sources_by_page(path)
+
+    pages: list[list[_Region]] = []
+    with pdfplumber.open(path) as pdf:
+        total = len(pdf.pages)
+        if total > MAX_PAGES:
+            warnings.append(f"truncated: only the first {MAX_PAGES} of {total} pages converted")
+
+        for index, page in enumerate(pdf.pages[:MAX_PAGES]):
+            pages.append(_read_page(page, image_sources.get(index, {}), collector))
+
+    body = _body_size([line for regions in pages for region in regions for line in region.lines])
+
+    blocks: list[Block] = []
+    for index, regions in enumerate(pages):
+        if index:
+            blocks.append(Block(kind="page_break"))
+
+        for region in regions:
+            blocks.extend(_region_blocks(region, body))
 
     if not blocks:
         warnings.append("no text layer found — this PDF is probably a scan")

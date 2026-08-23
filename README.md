@@ -91,7 +91,7 @@ pre-release will meet it.
 
 See **[docs/QUICKSTART.md](docs/QUICKSTART.md)** and the full docs at:
 
-[https://docs.convilyn.corenovus.com](https://docs.convilyn.corenovus.com)
+[https://docs.convilyn.com](https://docs.convilyn.com)
 
 ## Community
 

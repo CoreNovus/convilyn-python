@@ -114,11 +114,17 @@ class AsyncAccount:
     ) -> list[UsageHistoryEntry]:
         """List the caller's past usage periods (one row per metric+period).
 
-        Wraps ``GET /api/v1/payment/usage/history``. The backend returns
-        every period the caller has ever owned — Free monthly resets,
-        Pro subscription cycles, top-up windows. Use ``since`` to
-        restrict to entries whose ``period_start`` is on or after the
-        given timestamp; the default ``None`` returns the full history.
+        Wraps ``GET /api/v1/payment/usage/history``. Rows are run COUNTS
+        for the quota metrics the authenticated side tracks — Free
+        monthly resets, Pro subscription cycles. **Not credits:** the
+        credits period is never in that set, so no row here reports
+        spend. :py:meth:`get_balance` is the credits question.
+
+        **At most 50 rows, newest first, and there is no cursor.** Use
+        ``since`` to restrict to entries whose ``period_start`` is on or
+        after the given timestamp; the default ``None`` returns whatever
+        the server sent, which is not necessarily everything the account
+        has ever owned. Receiving exactly 50 means older periods exist.
 
         ``since`` filtering happens client-side because the backend does
         not currently honour a query param — the SDK does the work so
