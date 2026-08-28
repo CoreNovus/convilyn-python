@@ -12,9 +12,33 @@ The first is font size. Lines are grouped into rows, the body text size is taken
 as the most common size in the document, and a line set noticeably larger than
 that becomes a heading, with the heading level following how much larger it is.
 
+A line whose whole text is a number is never a heading, whatever its size — a
+page number, a contents column and a figure label all reach the size test the
+same way, and `## 4` is not an outline entry anyone can use. The text is kept
+as a paragraph, so a document whose sections genuinely are numbers loses the
+outline entry rather than the content.
+
+Where a PDF carries no size signal at all, a line's characters are read as a
+last resort — a leading `1.` that does not finish a sentence, for instance. That
+fallback is withdrawn for any text the document sets in a heading font
+somewhere else: a body-sized copy of a text that is styled as a heading
+elsewhere is a reference to it, such as a table-of-contents entry or a running
+header, and promoting it would put every section into the outline twice.
+
 The second is table geometry, which the underlying library detects from ruling
 lines and text alignment. Text falling inside a detected table is claimed by
 that table rather than being emitted twice as loose paragraphs.
+
+Running headers and footers are dropped rather than converted. A page number, a
+document reference or a confidentiality marker is printed on the page without
+being part of what the page says, and a converter that hands it back as body
+text is republishing a label as a sentence. A PDF states none of this, so it is
+inferred — see ``layout.furniture_indices`` for the three conditions and what
+each one is worth. All three narrow what is removed: where the answer is
+unclear the text is kept, because a repeated page number costs a line and a
+deleted paragraph cannot be recovered by anything downstream. Only the text goes
+— a logo drawn in the header band is a picture the document contains, and it is
+still extracted.
 
 Embedded images are extracted where the PDF stores them as image objects. A
 page-count cap bounds the work a very large document can cause and is reported
@@ -28,19 +52,29 @@ from __future__ import annotations
 
 import logging
 import re
-from collections import Counter
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from convilyn.local._engine.markdown.headings import (
+    HEADING_RATIO,
+    body_size,
+    heading_level,
+    is_bare_number,
+)
 from convilyn.local._engine.markdown.heuristics import (
     SENTENCE_END,
     has_cjk,
     looks_like_heading,
 )
 from convilyn.local._engine.markdown.image_collector import ImageCollector
-from convilyn.local._engine.markdown.layout import median_height, order_regions
+from convilyn.local._engine.markdown.images import media_type_for
+from convilyn.local._engine.markdown.layout import (
+    furniture_indices,
+    median_height,
+    order_regions,
+)
 from convilyn.local._engine.markdown.model import (
     Block,
     ExtractedImage,
@@ -50,10 +84,6 @@ from convilyn.local._engine.markdown.model import (
 logger = logging.getLogger(__name__)
 
 MAX_PAGES = 500
-
-_HEADING_RATIO = 1.15
-
-_HEADING_TIERS = ((1.6, 2), (1.35, 3), (_HEADING_RATIO, 4))
 
 _LINE_TOLERANCE = 2.0
 
@@ -96,7 +126,7 @@ def _continues(previous: tuple[str, float, bool], size: float, body: float) -> b
         return False
     if round(previous_size, 1) != round(size, 1):
         return False
-    if body > 0 and previous_size >= body * _HEADING_RATIO:
+    if body > 0 and previous_size >= body * HEADING_RATIO:
         return False
     return text[-1] not in _SENTENCE_END
 
@@ -138,23 +168,6 @@ def _in_any_box(word: dict, boxes: list[tuple]) -> bool:
     return False
 
 
-def _body_size(all_lines: list[tuple[str, float, float]]) -> float:
-    sizes = Counter(round(line[1], 1) for line in all_lines if line[1] > 0)
-    if not sizes:
-        return 0.0
-    return sizes.most_common(1)[0][0]
-
-
-def _heading_level(size: float, body: float) -> int | None:
-    if body <= 0 or size <= 0:
-        return None
-    ratio = size / body
-    for threshold, level in _HEADING_TIERS:
-        if ratio >= threshold:
-            return level
-    return None
-
-
 def _image_sources_by_page(path: Path) -> dict[int, dict[str, Any]]:
     per_page: dict[int, dict[str, Any]] = {}
 
@@ -182,24 +195,7 @@ def _collect(item: Any, collector: ImageCollector) -> ExtractedImage | None:
         logger.warning("a pdf image stream could not be decoded (%s); skipping it", exc)
         collector.note_unreadable()
         return None
-    return collector.collect(data, _media_type_for(item.name))
-
-
-def _media_type_for(name: str) -> str:
-    suffix = Path(name or "").suffix.lower().lstrip(".")
-    return {
-        "png": "image/png",
-        "jpg": "image/jpeg",
-        "jpeg": "image/jpeg",
-        "gif": "image/gif",
-        "webp": "image/webp",
-        "tiff": "image/tiff",
-        "tif": "image/tiff",
-        "bmp": "image/bmp",
-        "jp2": "image/jp2",
-        "jpx": "image/jpx",
-        "jpf": "image/jpx",
-    }.get(suffix, "application/octet-stream")
+    return collector.collect(data, media_type_for(item.name))
 
 
 @dataclass(frozen=True)
@@ -340,12 +336,24 @@ def _read_page(
     assigned, unplaced = _assign_images(grouped, boxes)
     trailing.extend(unplaced)
 
+    furniture = furniture_indices(
+        [
+            (
+                min(float(i["top"]) for i in region),
+                max(float(i["bottom"]) for i in region),
+                max((float(i.get("size") or 0.0) for i in region), default=0.0),
+            )
+            for region in grouped
+        ],
+        page_height=float(page.height),
+    )
+
     regions: list[_Region] = []
     for index, region in enumerate(grouped):
         placed = [(float(i["top"]), i[_PLACED_BLOCK]) for i in region if _PLACED_BLOCK in i]
         placed.extend(assigned.get(index, ()))
         placed.sort(key=lambda entry: entry[0])
-        words_only = [i for i in region if _PLACED_BLOCK not in i]
+        words_only = [] if index in furniture else [i for i in region if _PLACED_BLOCK not in i]
         regions.append(_Region(lines=tuple(_lines_from_words(words_only)), placed=tuple(placed)))
 
     if trailing:
@@ -365,7 +373,21 @@ def _chunk_at_blocks(
     yield lines[cursor:], None
 
 
-def _region_blocks(region: _Region, body: float) -> list[Block]:
+def _styled_heading_texts(pages: list[list[_Region]], body: float) -> frozenset[str]:
+    return frozenset(
+        text
+        for regions in pages
+        for region in regions
+        for chunk, _ in _chunk_at_blocks(region)
+        for text, size, bullet in _merge_wrapped([(t, s) for t, s, _ in chunk], body)
+        if text
+        and not bullet
+        and not is_bare_number(text)
+        and heading_level(size, body) is not None
+    )
+
+
+def _region_blocks(region: _Region, body: float, styled: frozenset[str]) -> list[Block]:
     blocks: list[Block] = []
     for chunk, placed in _chunk_at_blocks(region):
         for text, size, bullet in _merge_wrapped([(t, s) for t, s, _ in chunk], body):
@@ -374,9 +396,11 @@ def _region_blocks(region: _Region, body: float) -> list[Block]:
             if bullet:
                 blocks.append(Block(kind="list_item", text=text))
                 continue
-            level = _heading_level(size, body)
-            if level is None and looks_like_heading(text):
+            level = heading_level(size, body)
+            if level is None and text not in styled and looks_like_heading(text):
                 level = 3
+            if level is not None and is_bare_number(text):
+                level = None
             if level is not None:
                 blocks.append(Block(kind="heading", text=text, level=level))
             else:
@@ -408,7 +432,8 @@ def extract(path: Path) -> MarkdownDoc:
         for index, page in enumerate(pdf.pages[:MAX_PAGES]):
             pages.append(_read_page(page, image_sources.get(index, {}), collector))
 
-    body = _body_size([line for regions in pages for region in regions for line in region.lines])
+    body = body_size([line for regions in pages for region in regions for line in region.lines])
+    styled = _styled_heading_texts(pages, body)
 
     blocks: list[Block] = []
     for index, regions in enumerate(pages):
@@ -416,7 +441,7 @@ def extract(path: Path) -> MarkdownDoc:
             blocks.append(Block(kind="page_break"))
 
         for region in regions:
-            blocks.extend(_region_blocks(region, body))
+            blocks.extend(_region_blocks(region, body, styled))
 
     if not blocks:
         warnings.append("no text layer found — this PDF is probably a scan")

@@ -335,10 +335,10 @@ class AsyncGoals:
                 schema-constrained understanding request.
             GoalJobFailedError, GoalJobTimeoutError: the job failed / timed out.
 
-        A failed run does NOT have to be paid for twice. ``retry()`` reuses the
-        same ``job_spec_id`` and is free — ``client.goals.retry(
-        exc.job_spec_id)`` on a ``GoalJobFailedError``. Calling ``understand()``
-        again creates a NEW job spec, and is charged again.
+        A failed run does NOT have to be paid for twice: ``retry()`` reuses the
+        same ``job_spec_id`` and, in its default mode, consumes no new credits
+        (``rerun_mode="fresh_rerun"`` IS charged — see ``retry()``). Calling
+        ``understand()`` again creates a NEW job spec, and is charged again.
         """
         if not files:
             raise ValueError("understand() requires at least one file id")
@@ -771,17 +771,21 @@ class AsyncGoals:
         rerun_mode: Literal["retry_same_thread", "fresh_rerun"] = "retry_same_thread",
         reason: str | None = None,
     ) -> GoalJob:
-        """Retry a failed job — free, and the cheap answer to a failure.
+        """Retry a failed job. What it costs depends on ``rerun_mode``.
 
-        This reuses the SAME ``job_spec_id``: no new credits and no new quota
-        are consumed. Re-calling ``run()`` / ``understand()`` / ``to_markdown()``
-        instead creates a NEW job spec and IS charged again, which is what
-        "please try again" in a failure message reads like but is not.
+        Both modes reuse the SAME ``job_spec_id`` and consume no new quota.
+        Re-calling ``run()`` / ``understand()`` / ``to_markdown()`` creates a
+        NEW job spec and is charged as a new run.
 
-        ``rerun_mode`` selects whether to resume the existing run
-        thread (cheaper, picks up from the last resume boundary) or to
-        start a fresh execution. ``reason`` is an optional audit string
-        capped at 512 chars by the platform.
+        ``"retry_same_thread"`` (default) resumes from the last resume
+        boundary; its cost belongs to the charge still outstanding, so **no new
+        credits are consumed**. ``"fresh_rerun"`` purges the thread and runs
+        from the top — a new run, **charged in full**.
+
+        This said "free … no new credits" unqualified, true only while
+        ``fresh_rerun`` was unimplemented. Corrected 2026-08-28.
+
+        ``reason`` is an optional audit string capped at 512 chars.
         """
         body: dict[str, Any] = {"rerunMode": rerun_mode}
         if reason is not None:

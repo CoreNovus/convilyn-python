@@ -272,7 +272,10 @@ def cancel_command(job_spec_id: str, json_output: bool) -> None:
     type=click.Choice(["retry_same_thread", "fresh_rerun"], case_sensitive=False),
     default="retry_same_thread",
     show_default=True,
-    help="Whether to resume the existing run thread or start fresh.",
+    help=(
+        "Whether to resume the existing run thread (no new credits) or start "
+        "fresh (charged as a new run)."
+    ),
 )
 @click.option(
     "--reason",

@@ -23,7 +23,7 @@ from convilyn import (
     UserWorkflowsPage,
 )
 
-API_BASE = "https://api.convilyn.corenovus.com"
+API_BASE = "https://api.convilyn.com"
 UW = "uw_abc123"
 
 

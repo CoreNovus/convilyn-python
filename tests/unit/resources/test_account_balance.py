@@ -22,7 +22,7 @@ import respx
 
 from convilyn import APIError, AsyncConvilyn, CreditBalance
 
-API_BASE = "https://api.convilyn.corenovus.com"
+API_BASE = "https://api.convilyn.com"
 
 
 def _balance_wire(**overrides: object) -> dict[str, object]:

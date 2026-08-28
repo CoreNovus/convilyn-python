@@ -5,7 +5,12 @@
 """Spreadsheets to ``MarkdownDoc``, one table per worksheet.
 
 Each sheet becomes a heading followed by a table, so a multi-sheet workbook
-reads as a document rather than as one undifferentiated grid.
+reads as a document rather than as one undifferentiated grid. A workbook
+with exactly one sheet gets no heading at all — there is nothing to
+navigate between, so the sheet's own name is dropped rather than shown as
+if it were the document's title. This is deliberately silent: a
+single-sheet workbook is the commonest shape this function sees, and no
+warning is emitted for the omission.
 
 Cells are read for their stored value, not their formula: a Markdown table of
 ``=SUM(B2:B9)`` is useless to every reader.
@@ -180,6 +185,9 @@ def _uncached_formula_cells(values: Any, path: Path, names: list[str]) -> int:
 def extract(path: Path) -> MarkdownDoc:
     """Read a workbook into one table block per worksheet.
 
+    A sheet's name becomes a heading only when there is more than one sheet — a
+    single-sheet workbook gets its table with no heading at all.
+
     Empty trailing rows and columns are trimmed, so a sheet with data in A1:C10 does
     not render as a table padded out to the spreadsheet's maximum extent.
     """
@@ -198,9 +206,12 @@ def extract(path: Path) -> MarkdownDoc:
                 f"truncated: only the first {MAX_SHEETS} of {len(names)} sheets converted"
             )
 
-        for name in names[:MAX_SHEETS]:
+        sheet_names = names[:MAX_SHEETS]
+        needs_heading = len(sheet_names) > 1
+        for name in sheet_names:
             rows, truncated = _sheet_rows(workbook[name])
-            blocks.append(Block(kind="heading", text=name, level=2))
+            if needs_heading:
+                blocks.append(Block(kind="heading", text=name, level=2))
 
             if not rows:
                 blocks.append(Block(kind="paragraph", text="(empty sheet)"))
@@ -211,7 +222,7 @@ def extract(path: Path) -> MarkdownDoc:
             if truncated:
                 warnings.append(f"truncated: sheet {name!r} exceeded {MAX_ROWS_PER_SHEET} rows")
 
-        uncached = _uncached_formula_cells(workbook, path, names[:MAX_SHEETS])
+        uncached = _uncached_formula_cells(workbook, path, sheet_names)
     finally:
         workbook.close()
 

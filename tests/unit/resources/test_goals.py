@@ -28,7 +28,7 @@ from convilyn import (
 )
 from convilyn.resources.goals import AsyncGoals
 
-API_BASE = "https://api.convilyn.corenovus.com"
+API_BASE = "https://api.convilyn.com"
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────

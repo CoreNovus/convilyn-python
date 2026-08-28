@@ -52,17 +52,21 @@ class HumanRenderer:
         # Map event kinds to a leading glyph for at-a-glance scanning.
         glyph = _GLYPHS.get(kind, "•")
         message = fields.get("message") or _format_event(kind, fields)
-        _write(f"{glyph} {message}", self._stderr)
+        write_line(f"{glyph} {message}", self._stderr)
 
     def final(self, payload: dict[str, Any]) -> None:
         # The summary line goes to stdout so a caller redirecting
         # ``> result.txt`` still captures a sensible one-liner.
         summary = payload.get("summary") or _format_summary(payload)
-        _write(summary, self._stdout)
+        write_line(summary, self._stdout)
 
 
-def _write(line: str, stream: IO[str]) -> None:
+def write_line(line: str, stream: IO[str]) -> None:
     """Print a line, degrading rather than crashing on a narrow codepage.
+
+    Public (not module-private) because :mod:`convilyn.cli._banner` needs the
+    same degrade-don't-crash behaviour for its ANSI-art lines — the second
+    caller that promoted this out of the renderer classes.
 
     The glyphs and typographic punctuation this CLI prints are not
     representable everywhere: a Windows console left on ``cp437`` cannot encode

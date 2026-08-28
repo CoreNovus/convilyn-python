@@ -18,7 +18,7 @@ import respx
 
 from convilyn import AsyncConvilyn, AutoThrottleConfig, QuotaExceededError
 
-API_BASE = "https://api.convilyn.corenovus.com"
+API_BASE = "https://api.convilyn.com"
 
 
 def _quota_exceeded_payload(retry_after_seconds: float | None = None) -> dict:

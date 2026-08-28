@@ -9,7 +9,7 @@ defend.
 ## Where things live
 
 ```
-sdk-consumer/              # PyPI: convilyn (was sdk-client/ before R5)
+sdk/consumer-python/       # PyPI: convilyn (was sdk-client/ before R5, sdk-consumer/ before the sdk/ monorepo layout)
 ├── pyproject.toml          # one source of truth for deps + scripts
 ├── docs/
 │   ├── README.md           # PyPI landing page

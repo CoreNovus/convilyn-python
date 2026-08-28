@@ -14,7 +14,7 @@ class TestClientLogic:
         monkeypatch.delenv("CONVILYN_BASE_URL", raising=False)
         c = Convilyn(api_key="ck_test_explicit")
         try:
-            assert c.base_url == "https://api.convilyn.corenovus.com"
+            assert c.base_url == "https://api.convilyn.com"
             assert c.async_client is not None
         finally:
             c.close()
@@ -22,7 +22,7 @@ class TestClientLogic:
     def test_async_client_from_kwarg(self, monkeypatch):
         monkeypatch.delenv("CONVILYN_BASE_URL", raising=False)
         c = AsyncConvilyn(api_key="ck_test_explicit")
-        assert c.base_url == "https://api.convilyn.corenovus.com"
+        assert c.base_url == "https://api.convilyn.com"
 
     def test_base_url_from_env(self, monkeypatch):
         monkeypatch.setenv("CONVILYN_BASE_URL", "https://dev-api.example")
@@ -76,7 +76,7 @@ class TestClientLifecycle:
     async def test_async_context_manager_closes(self, monkeypatch):
         monkeypatch.delenv("CONVILYN_BASE_URL", raising=False)
         async with AsyncConvilyn(api_key="ck_x") as c:  # pragma: allowlist secret
-            assert c.base_url == "https://api.convilyn.corenovus.com"
+            assert c.base_url == "https://api.convilyn.com"
         # If aclose() didn't run we'd leak the httpx pool; the test fixture
         # would emit a ResourceWarning. Reaching this line cleanly is enough
         # to confirm __aexit__ ran without raising.

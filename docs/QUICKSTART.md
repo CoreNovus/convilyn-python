@@ -319,7 +319,7 @@ $ convilyn doctor
 ✓ [OK] pydantic: 2.13.4
 ✓ [OK] click: 8.3.1
 ✓ [OK] CONVILYN_API_KEY: ck_xx…XXXX
-✓ [OK] CONVILYN_BASE_URL: https://api.convilyn.corenovus.com (default)
+✓ [OK] CONVILYN_BASE_URL: https://api.convilyn.com (default)
 All checks passed.
 ```
 
@@ -795,7 +795,7 @@ the message:
 ```python
 except convilyn.GoalJobFailedError as exc:
     if exc.retryable:
-        job = client.goals.retry(exc.job_spec_id)   # free — same job spec
+        job = client.goals.retry(exc.job_spec_id)   # default mode: no new credits
     else:
         print(exc.suggested_action)   # "upgrade" | "login" | "contact_support" | "none"
 ```

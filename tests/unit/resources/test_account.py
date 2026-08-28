@@ -28,7 +28,7 @@ from convilyn import (
     UsageHistoryEntry,
 )
 
-API_BASE = "https://api.convilyn.corenovus.com"
+API_BASE = "https://api.convilyn.com"
 
 
 def _cost_preview_wire(

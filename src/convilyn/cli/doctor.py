@@ -18,6 +18,7 @@ import click
 import httpx
 
 from convilyn import __version__
+from convilyn._internal import credentials
 from convilyn._internal.auth import ENV_API_KEY
 from convilyn._internal.http import DEFAULT_BASE_URL, ENV_BASE_URL, resolve_base_url
 from convilyn.cli._exit_codes import EXIT_API_ERROR, EXIT_USAGE
@@ -91,13 +92,15 @@ def _collect_checks(*, ping: bool) -> list[Check]:
         checks.append(_check_dependency(module))
     checks.append(_check_api_key())
     checks.append(_check_base_url())
+    checks.append(_check_credentials_file_permissions())
     if ping:
         checks.append(_check_backend_health())
         # Tier check only runs once /api/v1/health has confirmed the
-        # backend is reachable AND an API key is present — otherwise
-        # the round-trip is guaranteed to fail. Mostly advisory, with one
+        # backend is reachable AND some key is resolvable (env var OR the
+        # local credentials file `convilyn setup` writes) — otherwise the
+        # round-trip is guaranteed to fail. Mostly advisory, with one
         # exception: see `_check_account_tier` on 401/403.
-        if os.environ.get(ENV_API_KEY):
+        if os.environ.get(ENV_API_KEY) or credentials.read_credentials():
             checks.append(_check_account_tier())
     else:
         checks.append(
@@ -135,14 +138,52 @@ def _check_dependency(module_name: str) -> Check:
 
 
 def _check_api_key() -> Check:
-    key = os.environ.get(ENV_API_KEY)
-    if not key:
+    """Report which of `resolve_auth`'s three sources actually supplies the key.
+
+    Same precedence as `resolve_auth` (env beats file) so this check can
+    never disagree with what the client itself will do.
+    """
+    env_key = os.environ.get(ENV_API_KEY)
+    if env_key:
+        return Check(ENV_API_KEY, "OK", f"source=env, value={_mask_secret(env_key)}")
+    file_key = credentials.read_credentials()
+    if file_key:
         return Check(
             ENV_API_KEY,
-            "FAIL",
-            f"not set — export {ENV_API_KEY}=ck_… before calling the API",
+            "OK",
+            f"source=file ({credentials.credentials_path()}), value={_mask_secret(file_key)}",
         )
-    return Check(ENV_API_KEY, "OK", _mask_secret(key))
+    return Check(
+        ENV_API_KEY,
+        "FAIL",
+        f"not set — export {ENV_API_KEY}=ck_… or run `convilyn setup` to log in",
+    )
+
+
+def _check_credentials_file_permissions() -> Check:
+    """Warn when the `convilyn setup` credentials file is more permissive
+    than the `0600` it was created with. No-op (SKIP) on Windows, where
+    `os.chmod` does not narrow NTFS ACLs, and where there is nothing this
+    check can meaningfully assert."""
+    path = credentials.credentials_path()
+    if os.name == "nt":
+        return Check("Credentials file", "SKIP", "permissions not checked on Windows (NTFS ACLs)")
+    if not path.exists():
+        return Check(
+            "Credentials file",
+            "SKIP",
+            f"no local credentials file at {path} (run `convilyn setup` to create one)",
+        )
+    mode = credentials.credentials_file_mode()
+    if mode is not None and mode & 0o077:
+        return Check(
+            "Credentials file",
+            "WARN",
+            f"{oct(mode)} at {path} is more permissive than 0600 — run `chmod 600 {path}`",
+        )
+    return Check(
+        "Credentials file", "OK", f"{oct(mode) if mode is not None else 'unknown'} ({path})"
+    )
 
 
 def _check_base_url() -> Check:

@@ -23,7 +23,7 @@ import respx
 from convilyn import AsyncConvilyn, ConvilynError, GoalArtifactUnusableError, GoalJobFailedError
 from convilyn.resources.goals import MAX_EXTRACT_JSON_BYTES
 
-API_BASE = "https://api.convilyn.corenovus.com"
+API_BASE = "https://api.convilyn.com"
 _STORAGE_URL = "https://storage.example.com/bucket/out?sig=xyz"
 
 

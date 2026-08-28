@@ -28,7 +28,7 @@ from convilyn import (
     UnderstandUnavailableError,
 )
 
-API_BASE = "https://api.convilyn.corenovus.com"
+API_BASE = "https://api.convilyn.com"
 
 
 def _job_response(status: str) -> dict:

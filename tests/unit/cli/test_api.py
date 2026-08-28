@@ -21,7 +21,7 @@ from convilyn.cli import api as api_module
 from convilyn.cli._exit_codes import EXIT_API_ERROR, EXIT_OK, EXIT_USAGE
 from convilyn.cli.api import api_command
 
-API_BASE = "https://api.convilyn.corenovus.com"
+API_BASE = "https://api.convilyn.com"
 
 
 @pytest.fixture
@@ -81,7 +81,7 @@ class TestApiLogic:
             return httpx.Response(200, json={"ok": True})
 
         with respx.mock(assert_all_called=True) as mock:
-            mock.get(host="api.convilyn.corenovus.com").mock(side_effect=_capture)
+            mock.get(host="api.convilyn.com").mock(side_effect=_capture)
             result = runner.invoke(
                 api_command,
                 ["GET", "/api/v1/jobs", "--query", "page=2", "--query", "limit=10"],

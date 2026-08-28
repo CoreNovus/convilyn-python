@@ -328,6 +328,16 @@ class TestCsvExtractor:
 
         assert extract_csv(source).warnings == ("empty CSV",)
 
+    def test_the_filename_does_not_become_a_title(self, tmp_path):
+        """The document opened with a heading taken from the file's name, which
+        is not something the CSV says. On the hosted lane that name is a staging
+        temp file, so every converted CSV began with a fabricated `# tmpXXXXXXXX`
+        no reader could account for."""
+        source = tmp_path / "tmppckjbyi7.csv"
+        source.write_text("name,qty\nbolt,4\n", encoding="utf-8")
+
+        assert extract_csv(source).title is None
+
     def test_oversized_file_is_truncated_with_a_warning(self, tmp_path):
         source = tmp_path / "a.csv"
         source.write_text("h\n" + "".join(f"{i}\n" for i in range(MAX_ROWS + 50)), encoding="utf-8")

@@ -17,8 +17,10 @@ backend consumer-key tier never breaks an existing client).
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from typing import Protocol, runtime_checkable
 
+from convilyn._internal import credentials
 from convilyn.exceptions import AuthError
 
 ENV_API_KEY = "CONVILYN_API_KEY"  # pragma: allowlist secret
@@ -107,21 +109,34 @@ def resolve_auth(
     api_key: str | None,
     *,
     env: dict[str, str] | None = None,
+    credentials_reader: Callable[[], str | None] | None = None,
 ) -> AuthStrategy:
-    """Resolve an ``AuthStrategy`` from explicit args + environment.
+    """Resolve an ``AuthStrategy`` from explicit args + environment + local credentials file.
 
     Precedence:
         1. ``api_key`` constructor argument
         2. ``CONVILYN_API_KEY`` environment variable
+        3. the local credentials file written by ``convilyn setup``
+
+    Each source is consulted only when every higher-priority one is absent, so
+    a caller who already has (1) or (2) working sees **no change in
+    behaviour** after running ``convilyn setup`` — the file is a fallback, not
+    an override.
+
+    Args:
+        credentials_reader: test seam mirroring ``env`` — defaults to
+            :func:`convilyn._internal.credentials.read_credentials`.
 
     Raises:
-        AuthError: neither source supplied a credential.
+        AuthError: none of the three sources supplied a credential.
     """
     source = env if env is not None else os.environ
-    key = api_key or source.get(ENV_API_KEY)
+    reader = credentials_reader or credentials.read_credentials
+    key = api_key or source.get(ENV_API_KEY) or reader()
     if not key:
         raise AuthError(
-            f"No API key supplied. Pass api_key=... or set the {ENV_API_KEY} environment variable."
+            f"No API key supplied. Pass api_key=..., set the {ENV_API_KEY} "
+            f"environment variable, or run `convilyn setup` to log in."
         )
     return APIKey(key)
 

@@ -142,7 +142,7 @@ class TestSoftLimitWarning:
     def test_warning_emits_user_warning(self) -> None:
         with warnings.catch_warnings(record=True) as captured:
             warnings.simplefilter("always")
-            emit_soft_limit_warning(source="https://api.convilyn.corenovus.com/foo")
+            emit_soft_limit_warning(source="https://api.convilyn.com/foo")
         assert any("soft_limit" in str(w.message) for w in captured)
 
     def test_warning_includes_source(self) -> None:

@@ -29,6 +29,7 @@ import hashlib
 import io
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +74,34 @@ class ImageFacts:
 def extension_for(media_type: str) -> str:
     """The conventional file extension for a media type, e.g. ``png`` for ``image/png``."""
     return _EXT_BY_MEDIA_TYPE.get(media_type, "bin")
+
+
+def media_type_for(name: str) -> str:
+    """The media type a stored image's filename declares, e.g. ``image/jpeg`` for
+    ``photo.jpg`` — the other direction of ``extension_for``.
+
+    Several extensions name one type (``jpg``/``jpeg``, ``tif``/``tiff``,
+    ``jpx``/``jpf``), so the two directions are written out separately rather than
+    one being inverted.
+
+    An extension this does not recognise answers ``application/octet-stream``, never
+    a guess. Naming an unknown stream ``.png`` produces a file that no viewer opens
+    under a name promising it should.
+    """
+    suffix = Path(name or "").suffix.lower().lstrip(".")
+    return {
+        "png": "image/png",
+        "jpg": "image/jpeg",
+        "jpeg": "image/jpeg",
+        "gif": "image/gif",
+        "webp": "image/webp",
+        "tiff": "image/tiff",
+        "tif": "image/tiff",
+        "bmp": "image/bmp",
+        "jp2": "image/jp2",
+        "jpx": "image/jpx",
+        "jpf": "image/jpx",
+    }.get(suffix, "application/octet-stream")
 
 
 def asset_name(index: int, media_type: str) -> str:

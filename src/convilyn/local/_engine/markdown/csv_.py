@@ -77,7 +77,6 @@ def extract(path: Path, *, max_rows: int = MAX_ROWS) -> MarkdownDoc:
 
     return MarkdownDoc(
         blocks=(Block(kind="table", rows=tuple(rows)),),
-        title=path.stem,
         source_format="csv",
         warnings=tuple(warnings),
     )

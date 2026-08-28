@@ -28,7 +28,7 @@ from convilyn import (
 from convilyn.local import UnsupportedRouteError
 from convilyn.resources import AsyncConvert
 
-API_BASE = "https://api.convilyn.corenovus.com"
+API_BASE = "https://api.convilyn.com"
 S3_DOWNLOAD_URL = "https://example-bucket.s3.amazonaws.com/output.pdf?signature=xyz"
 
 

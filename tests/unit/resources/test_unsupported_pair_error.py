@@ -44,7 +44,7 @@ import respx
 from convilyn import AsyncConvilyn, ConvilynError, File, GoalArtifactUnusableError
 from convilyn.local import UnsupportedRouteError
 
-API_BASE = "https://api.convilyn.corenovus.com"
+API_BASE = "https://api.convilyn.com"
 
 
 def _file(name: str) -> File:

@@ -23,7 +23,7 @@ from convilyn import (
     BuilderTurn,
 )
 
-API_BASE = "https://api.convilyn.corenovus.com"
+API_BASE = "https://api.convilyn.com"
 _UW = "uw_0123456789abcdef01234567"
 
 

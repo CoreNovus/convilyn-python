@@ -3,6 +3,104 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [Semantic Versioning](https://semver.org/).
 
+## [3.3.0] - 2026-08-29
+
+First stable release of the 3.3 line. It contains everything from `3.3.0b1`
+plus the two entries below.
+
+### Added
+
+- **`convilyn setup` — sign in from your browser.** Run it and it opens your
+  browser, you sign in as usual, and an API key is created and saved for you.
+  Nothing to copy and paste.
+
+  ```
+  convilyn setup
+  ```
+
+  Add `--no-browser` to print the URL instead of opening one, which is what you
+  want over SSH.
+
+  Only the API key is written to disk. The login tokens are used once to create
+  that key and then discarded — they are never saved and never logged.
+
+- **A test results page**:
+  [`docs/MEASURED-2026-08-28.md`](docs/MEASURED-2026-08-28.md), linked from both
+  the README and the PyPI page. It reports how well conversion and extraction
+  actually score, on named corpora, together with the known limitations. Every
+  figure comes from [`doc-eval`](https://github.com/CoreNovus/doc-eval), a
+  separate evaluator you can run yourself.
+
+  The filename carries the date it was measured, so a later report cannot be
+  confused with this one.
+
+## [3.3.0b1] - 2026-08-25
+
+### Fixed
+
+- **`convilyn.local`: a running header or footer no longer arrives as body
+  text.** A page number, a document reference or a `CONFIDENTIAL` marker is
+  printed on the page without being part of what the page says, and every one
+  of them was being converted into the Markdown alongside the real content.
+
+  A PDF states none of this, so it is inferred, and all three conditions narrow
+  what is removed: the region has to lie in a band at the very top or bottom of
+  the page, be the first or last in reading order, and be set smaller than the
+  median of what the rest of that page is set in. Where the answer is unclear
+  the text is kept — a repeated page number costs a line, a deleted paragraph
+  cannot be recovered. Measured on a 23-page facing-page textbook: 16 page
+  numbers removed, no body text touched — **on the single-column pages only.
+  On a facing-page (2-up) spread, only the left page's header and the right
+  page's footer are ever reachable** (the reading-order edge condition is
+  evaluated over the whole flattened region list, so the right page's header
+  and the left page's footer sit at interior indices and cannot be first or
+  last); found in code review after this line was first written, tracked as
+  a known gap rather than silently left overclaiming (#4682).
+
+  Only the text goes, and only in a PDF. A logo drawn in the header band is a
+  picture the document contains and PDF still extracts it; the HTML path
+  strips the whole element it was found in, so the same logo inside an HTML
+  `<header>` is lost — an asymmetry also tracked in #4682, not fixed here.
+
+- **`convilyn.local`: a PDF's own title no longer outranks its sections.**
+  Every PDF's title fell to the same outline level as its top-level section
+  headings — `#` for the title, `##` for "1. Introduction", but the title's
+  ACTUAL heading level was also `##`, so the outline read as three siblings
+  rather than a title with sections nested under it. A document with 4
+  headings and 3 outline levels came back with 2.
+
+  The size-ratio tier that decides a line's heading level had no tier for a
+  document title at all, despite carrying that intent in its own comment —
+  every line fell into whichever LOWER tier its font size cleared. Added the
+  missing tier at 1.9x body text (not the more obvious 1.8x: that ratio is
+  one of the most common real heading sizes and would have split ordinary
+  section headings apart instead of catching only titles).
+
+- **`convilyn.local`: a converted CSV no longer opens with a heading made up
+  from the filename.** The extractor titled the document `path.stem`, so a file
+  named `export.csv` gained an `# export` heading the CSV never contained — and
+  through the hosted lane, where the path is a staging temp file, every
+  conversion began with a fabricated `# tmpXXXXXXXX`.
+
+- **`convilyn.local`: a single-sheet XLSX no longer opens with its own sheet
+  name as a heading.** A workbook nobody bothered to rename its one sheet in
+  — the common case, since Excel's own UI default is "Sheet1" — converted
+  with `## Sheet1` as the document's first line, reading as if the workbook
+  itself were titled that. A heading exists to navigate BETWEEN sections; a
+  workbook with only one sheet has nothing to navigate between, so its name
+  is dropped regardless of what it is (not just recognisable defaults —
+  sheet COUNT is the signal, not the name). A workbook with 2+ sheets is
+  unaffected: each sheet still gets its own heading, same as before.
+
+### Changed
+
+- **Default `base_url` is now `https://api.convilyn.com`** (was
+  `https://api.convilyn.corenovus.com`). The old host keeps serving
+  indefinitely — it is an additive CloudFront alias, not a retirement — so
+  this only changes what a client resolves to when neither a constructor
+  argument nor `CONVILYN_BASE_URL` is set. Set `CONVILYN_BASE_URL` (or pass
+  `base_url=` explicitly) to keep using the old host.
+
 ## [3.2.0b3] - 2026-08-23
 
 ### Fixed

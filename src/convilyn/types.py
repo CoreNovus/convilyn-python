@@ -678,6 +678,29 @@ class CostEstimate(BaseModel):
     back-compat; new callers should prefer the explicit
     ``estimated_min_micro_u`` / ``estimated_total_micro_u`` /
     ``estimated_max_micro_u`` triple.
+
+    .. warning::
+
+       **This is not the price of a workflow, and it is not comparable to a
+       credit balance.** Three separate reasons, each sufficient on its own:
+
+       1. ``cost-preview`` estimates a **tool palette** for the chat Builder —
+          ``(sum of per-tool costs + a flat per-iteration LLM cost) ×
+          max_iterations``. It takes no workflow id and knows nothing about
+          which workflow you intend to run.
+       2. Every field here is **µU (micro-USD)**, while a balance is in
+          **credits**. 1 credit = 10,000 µU = $0.01 of insured processing cost
+          — the unit definition, which is stable and safe to rely on.
+       3. These µU are **insured (pre-margin) cost**, not what you are charged.
+          Dividing by 10,000 therefore UNDERSTATES the charge, which is worse
+          than having no number at all: it would tell a caller they can afford
+          a run they cannot.
+
+       **To ask "what will this workflow cost me, and can I afford it", call
+       ``POST /credits/workflow-quote``.** It answers in credits, returns your
+       balance in the same unit, and does the comparison server-side
+       (``costCredits`` / ``balanceCredits`` / ``sufficient``). It accepts a
+       ``ck_`` key. The SDK does not wrap it yet.
     """
 
     model_config = ConfigDict(populate_by_name=True, frozen=True, extra="allow")
@@ -719,7 +742,13 @@ class CreditBalance(BaseModel):
     * :py:attr:`topup_credits` — the persistent wallet. Never expires.
 
     :py:attr:`balance_credits` is their TOTAL and is the authoritative number —
-    compare a quote against this one, not against either bucket.
+    read this one rather than either bucket.
+
+    **Do NOT compare it against :class:`CostEstimate`.** That sentence used to
+    say "compare a quote against this one", and there is no quote in this SDK
+    that it is comparable to: :meth:`get_quota` returns insured µU for a Builder
+    tool palette, and this is charged credits. See :class:`CostEstimate` for the
+    three reasons and for the endpoint that does answer the question.
 
     Both buckets are ``None`` when the server did not send them; read that as
     *unknown*, never as zero, exactly as

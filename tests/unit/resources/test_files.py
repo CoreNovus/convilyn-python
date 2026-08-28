@@ -18,7 +18,7 @@ import respx
 
 from convilyn import APIError, AsyncConvilyn, Convilyn, File, S3UploadError
 
-API_BASE = "https://api.convilyn.corenovus.com"
+API_BASE = "https://api.convilyn.com"
 PRESIGN_URL = "https://example-bucket.s3.amazonaws.com/key?signature=abc"
 S3_KEY = "input/job_test/file_xyz/example.txt"
 

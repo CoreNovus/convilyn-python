@@ -70,10 +70,21 @@ class AsyncAccount:
         Read-only: the call has no side effects. Authenticated callers
         only; the backend rejects anonymous requests with 401.
 
+        This estimates a **tool palette** for the chat Builder, in insured
+        (pre-margin) µU. It is NOT the price of a workflow and is NOT comparable
+        to a credit balance — see :class:`~convilyn.CostEstimate` for why, and
+        for the endpoint that answers that question instead.
+
         Args:
             tools: Fully-qualified tool ids (e.g. ``"pdf-mcp:extract_text"``).
-                Empty list ⇒ zero-cost estimate, useful when you just
-                want the tier signal.
+                An empty list is **not** a zero-cost estimate — this said so
+                for months and it was never true. The estimator has no zero
+                branch: the per-iteration LLM cost is unconditional and is
+                multiplied by the full iteration cap, so ``tools=[]`` with the
+                default cap returns the flat per-iteration cost × that cap
+                (US$1.00 at the backend's current constants). If you want only
+                the tier signal, use :meth:`get_plan`, which passes
+                ``max_iterations=1`` and is 20× cheaper to read.
             max_iterations: Iteration cap from the draft spec. Defaults
                 to the backend's ``DEFAULT_MAX_ITERATIONS`` when None.
 
@@ -151,12 +162,21 @@ class AsyncAccount:
 
         Wraps ``GET /api/v1/credits/balance``. Read
         :py:attr:`~convilyn.CreditBalance.balance_credits` — the two-bucket
-        TOTAL — when comparing against a quote from :meth:`get_quota`; the
-        ``period`` / ``topup`` split is exposed because the buckets behave
-        differently at renewal, not because a caller should add them up.
+        TOTAL; the ``period`` / ``topup`` split is exposed because the buckets
+        behave differently at renewal, not because a caller should add them up.
+
+        **Not comparable to :meth:`get_quota`.** This docstring used to say
+        "when comparing against a quote from :meth:`get_quota`", and that
+        comparison is wrong in unit (credits vs µU), in margin (charged vs
+        insured) and in subject (a workflow vs a Builder tool palette). To ask
+        "can I afford this workflow", call ``POST /credits/workflow-quote``,
+        which returns ``costCredits``, ``balanceCredits`` and a server-computed
+        ``sufficient`` — one unit, one round-trip. The SDK does not wrap it yet.
 
         Read-only, like the rest of this resource: topping up is a website
-        action, not an SDK one.
+        action, not an SDK one. Note that ``/credits/ledger`` is JWT-only, so a
+        key-authenticated caller can read this balance but cannot itemise how it
+        was spent.
 
         Returns:
             A :class:`~convilyn.CreditBalance`.

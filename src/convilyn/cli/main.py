@@ -17,6 +17,7 @@ from convilyn.cli.convert import convert_command
 from convilyn.cli.doctor import doctor_command
 from convilyn.cli.goals import goals_command
 from convilyn.cli.local import local_command
+from convilyn.cli.setup import setup_command
 
 
 @click.group(
@@ -34,6 +35,7 @@ def cli() -> None:
     """
 
 
+cli.add_command(setup_command, name="setup")
 cli.add_command(convert_command, name="convert")
 cli.add_command(doctor_command, name="doctor")
 cli.add_command(api_command, name="api")

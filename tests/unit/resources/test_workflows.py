@@ -22,7 +22,7 @@ from convilyn import (
     WorkflowSearchPage,
 )
 
-API_BASE = "https://api.convilyn.corenovus.com"
+API_BASE = "https://api.convilyn.com"
 
 
 def _workflow_wire(

@@ -72,7 +72,7 @@ uv add convilyn          # or: pip install convilyn
 Pin the version. Do **not** reach for `--pre`:
 
 ```bash
-pip install "convilyn[all]==3.2.0b1"
+pip install "convilyn[all]==3.3.0b1"
 ```
 
 pip already allows a pre-release when the specifier names one explicitly, so the
@@ -92,6 +92,17 @@ pre-release will meet it.
 See **[docs/QUICKSTART.md](docs/QUICKSTART.md)** and the full docs at:
 
 [https://docs.convilyn.com](https://docs.convilyn.com)
+
+## How well does it work?
+
+**[docs/MEASURED-2026-08-28.md](docs/MEASURED-2026-08-28.md)** — the full test
+results, with the corpora, the metrics and the known limitations.
+
+Every figure is produced by [`doc-eval`](https://github.com/CoreNovus/doc-eval),
+a separate deterministic evaluator with no model and no network in its scoring
+path, over named and versioned corpora you can re-run yourself. The filename
+carries the measurement date, so an older report cannot be mistaken for the
+current one.
 
 ## Community
 

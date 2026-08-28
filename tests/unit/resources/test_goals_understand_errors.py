@@ -19,6 +19,32 @@ The defect these cover is a chain, and every link discarded the same sentence:
 Link 2 is deliberately still there — changing the wire shape reaches the
 contract and the frontend. These tests pin links 3 and 4, which is what makes
 the backend's real reason visible to an SDK caller.
+
+## Two corrections added alongside the doc-eval SDK launch harness (PLAN.md / #4660)
+
+Its own negative-case table originally read: "A modality with no pipeline ->
+UnderstandUnavailableError, naming the free path" and "A malformed JSON Schema
+-> TypeError before any spend." Both are true only on a narrower slice than
+stated, checked against live code rather than assumed:
+
+* **The free-path claim is markdown-axis only.** `understand()`'s own
+  unmapped-modality refusal (`understanding_admission._UNMAPPED_MODALITY_MESSAGE`)
+  explicitly does NOT name a free alternative — that module's own comment:
+  "none offers a 'free alternative', because on this axis there is not one and
+  inventing one would repeat the defect these replace."
+  `TestUnmappedModalityDoesNotClaimAFreeAlternative` asserts this against the
+  server's CURRENT wording, which the backend is free to reword — it is not a
+  guard against the mechanism drifting back to the old bug, only a record of
+  what the message says today. `test_the_error_names_the_free_alternative` in
+  `test_goals_to_markdown.py` already covers the markdown-axis half, where the
+  claim IS true.
+* **Only a non-dict `schema` is a `TypeError`.** A syntactically-valid dict
+  that is an invalid JSON Schema round-trips to the server
+  (`output_schema_admission.validate_output_schema`, via `jsonschema`'s
+  `Draft202012Validator.check_schema`) and comes back as
+  `UnderstandUnavailableError`, not `TypeError` — still before `confirm`/billing,
+  but not a client-side check. `TestSchemaValidationErrorShapes` pins both
+  halves.
 """
 
 from __future__ import annotations
@@ -29,7 +55,7 @@ import respx
 
 from convilyn import AsyncConvilyn, UnderstandUnavailableError
 
-API_BASE = "https://api.convilyn.corenovus.com"
+API_BASE = "https://api.convilyn.com"
 
 _SCHEMA = {"type": "object", "properties": {"total": {"type": "number"}}}
 
@@ -133,3 +159,105 @@ class TestTheRaisedTypeIsUnchanged:
             async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
                 with pytest.raises(UnderstandUnavailableError):
                     await client.goals.understand(["file_abc"], schema=_SCHEMA)
+
+
+# ── logic: mixed-modality refusal names the mixed kinds ────────────────
+
+
+class TestMixedModalityRefusal:
+    @pytest.mark.asyncio
+    async def test_a_mixed_modality_refusal_names_the_kinds(self) -> None:
+        """Mirrors the multi-file test above, one refusal reason over — the
+        server's `_MIXED_MODALITY_MESSAGE` mentions the specific kinds mixed,
+        not just a generic count."""
+        async with respx.mock as mock:
+            mock.post(f"{API_BASE}/api/v1/jobs/goal").mock(
+                return_value=httpx.Response(
+                    400,
+                    json={
+                        "detail": (
+                            "Structured understanding currently accepts one kind of "
+                            "file per request, and this request mixes image, video. "
+                            "Send each kind as its own request."
+                        )
+                    },
+                )
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                with pytest.raises(UnderstandUnavailableError, match="mixes image, video"):
+                    await client.goals.understand(["a", "b"], schema=_SCHEMA)
+
+
+# ── logic: the correction — no free-alternative claim on the schema axis ──
+
+
+class TestUnmappedModalityDoesNotClaimAFreeAlternative:
+    """`to_markdown()`'s equivalent refusal DOES name file-conversion as a
+    free alternative (`test_the_error_names_the_free_alternative` in
+    `test_goals_to_markdown.py`). `understand()`'s does not, and must not —
+    there genuinely is no free path to schema-constrained extraction, and
+    claiming one would repeat the defect this whole file's chain describes."""
+
+    @pytest.mark.asyncio
+    async def test_the_refusal_names_no_free_alternative(self) -> None:
+        async with respx.mock as mock:
+            mock.post(f"{API_BASE}/api/v1/jobs/goal").mock(
+                return_value=httpx.Response(
+                    400,
+                    json={
+                        "detail": (
+                            "Structured understanding has no pipeline for archive "
+                            "files yet. Documents, images, audio and video are "
+                            "supported."
+                        )
+                    },
+                )
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                with pytest.raises(UnderstandUnavailableError) as info:
+                    await client.goals.understand(["file_abc"], schema=_SCHEMA)
+
+        message = str(info.value).lower()
+        assert "free" not in message
+        assert "conversion" not in message
+
+
+# ── boundary / error: what "malformed schema" actually raises ─────────────
+
+
+class TestSchemaValidationErrorShapes:
+    """Two distinct failure shapes share the vague name "malformed schema",
+    and only one of them is a client-side `TypeError`."""
+
+    @pytest.mark.asyncio
+    async def test_a_non_dict_schema_raises_typeerror_before_any_network_call(self) -> None:
+        async with respx.mock as mock:
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                with pytest.raises(TypeError, match="JSON Schema dict"):
+                    await client.goals.understand(["file_abc"], schema="not-a-dict")  # type: ignore[arg-type]
+        assert len(mock.calls) == 0
+
+    @pytest.mark.asyncio
+    async def test_a_syntactically_valid_but_invalid_schema_is_not_a_typeerror(self) -> None:
+        """A dict that fails `Draft202012Validator.check_schema` server-side
+        (a bad `type` value, here) passes the client-side dict check, round-
+        trips to the server, and comes back as `UnderstandUnavailableError` —
+        carrying the server's `jsonschema.SchemaError` text — not `TypeError`."""
+        async with respx.mock as mock:
+            mock.post(f"{API_BASE}/api/v1/jobs/goal").mock(
+                return_value=httpx.Response(
+                    400,
+                    json={
+                        "detail": (
+                            "outputSchema is not a valid JSON Schema: "
+                            "'not_a_real_type' is not valid under any of the given schemas"
+                        )
+                    },
+                )
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                with pytest.raises(
+                    UnderstandUnavailableError, match="not a valid JSON Schema"
+                ) as info:
+                    await client.goals.understand(["file_abc"], schema={"type": "not_a_real_type"})
+        assert not isinstance(info.value, TypeError)

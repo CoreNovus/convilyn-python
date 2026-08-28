@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
 
 import httpx
 import pytest
 import respx
 from click.testing import CliRunner
 
+from convilyn._internal import credentials
 from convilyn.cli._exit_codes import EXIT_API_ERROR, EXIT_OK, EXIT_USAGE
 from convilyn.cli.doctor import doctor_command
 
@@ -23,6 +26,17 @@ def runner() -> CliRunner:
 @pytest.fixture
 def env_with_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CONVILYN_API_KEY", "ck_dummy_key_value")  # pragma: allowlist secret
+
+
+@pytest.fixture(autouse=True)
+def isolated_credentials_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Every doctor test gets its own throwaway credentials dir — otherwise a
+    real `~/.config/convilyn/credentials.json` on the machine running the
+    suite (e.g. one left by a manual `convilyn setup` run) would leak into
+    tests that expect "no key configured"."""
+    root = tmp_path / "convilyn-config"
+    monkeypatch.setattr(credentials, "config_root", lambda: root)
+    return root
 
 
 # ── 1. Logic — happy path ────────────────────────────────────────────
@@ -314,3 +328,125 @@ class TestSummaryCountsWarnings:
         result = runner.invoke(doctor_command, ["--json"])
         payload = json.loads(result.output.strip().splitlines()[-1])
         assert payload["summary"] == "All checks passed."
+
+
+# ── 6. The credentials-file source (`convilyn setup`) ────────────────
+
+
+class TestApiKeySourceReporting:
+    """`_check_api_key` reports which of `resolve_auth`'s sources actually
+    supplied the key — same precedence, so this check can never disagree
+    with what the client itself does."""
+
+    def _payload(self, runner: CliRunner) -> dict:
+        result = runner.invoke(doctor_command, ["--json"])
+        return json.loads(result.output.strip().splitlines()[-1])
+
+    def test_file_only_resolves_via_setup(
+        self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("CONVILYN_API_KEY", raising=False)
+        credentials.write_credentials("ck_from_setup")  # pragma: allowlist secret
+        result = runner.invoke(doctor_command, [])
+        assert result.exit_code == EXIT_OK
+        payload = self._payload(runner)
+        key_check = [c for c in payload["checks"] if c["name"] == "CONVILYN_API_KEY"][0]
+        assert key_check["status"] == "OK"
+        assert "source=file" in key_check["detail"]
+
+    def test_env_beats_file_in_the_report_too(self, runner: CliRunner, env_with_key: None) -> None:
+        # A user with CONVILYN_API_KEY already exported sees no change after
+        # running `convilyn setup` — the non-conflict guarantee, verified
+        # from the doctor side too.
+        credentials.write_credentials("ck_from_setup")  # pragma: allowlist secret
+        payload = self._payload(runner)
+        key_check = [c for c in payload["checks"] if c["name"] == "CONVILYN_API_KEY"][0]
+        assert "source=env" in key_check["detail"]
+
+    def test_neither_source_still_suggests_setup(
+        self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("CONVILYN_API_KEY", raising=False)
+        result = runner.invoke(doctor_command, [])
+        assert result.exit_code == EXIT_USAGE
+        assert "convilyn setup" in result.output
+
+    def test_file_key_lets_the_ping_tier_check_run(
+        self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Mirrors `test_account_tier_skipped_without_api_key`'s env-only
+        # case, but for the file source: --ping should attempt the tier
+        # lookup when the ONLY resolvable key is the file one.
+        monkeypatch.delenv("CONVILYN_API_KEY", raising=False)
+        monkeypatch.setenv("CONVILYN_BASE_URL", "https://api.example.com")
+        credentials.write_credentials("ck_from_setup")  # pragma: allowlist secret
+        with respx.mock(assert_all_called=False) as mock:
+            mock.get("https://api.example.com/api/v1/health").mock(
+                return_value=httpx.Response(200, json={"status": "ok"})
+            )
+            mock.post("https://api.example.com/api/v1/workflows/cost-preview").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "estimatedMicroU": 0,
+                        "estimatedUsd": 0.0,
+                        "estimatedTotalMicroU": 0,
+                        "estimatedMinMicroU": 0,
+                        "estimatedMaxMicroU": 0,
+                        "tools": [],
+                        "quotaCheck": {
+                            "state": "ok",
+                            "tier": "free",
+                            "estimatedMicroU": 0,
+                            "thresholdMicroU": 1_000_000,
+                        },
+                    },
+                )
+            )
+            result = runner.invoke(doctor_command, ["--ping", "--json"])
+        payload = json.loads(result.output.strip().splitlines()[-1])
+        names = {c["name"] for c in payload["checks"]}
+        assert "Account tier" in names
+
+
+class TestCredentialsFilePermissionCheck:
+    """`_check_credentials_file_permissions` — WARN on loose perms, SKIP
+    when there's nothing to check."""
+
+    def _payload(self, runner: CliRunner) -> dict:
+        result = runner.invoke(doctor_command, ["--json"])
+        return json.loads(result.output.strip().splitlines()[-1])
+
+    def test_no_file_is_skipped(self, runner: CliRunner, env_with_key: None) -> None:
+        payload = self._payload(runner)
+        check = [c for c in payload["checks"] if c["name"] == "Credentials file"][0]
+        assert check["status"] == "SKIP"
+
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX-only permission model")
+    def test_0600_file_is_ok(self, runner: CliRunner, env_with_key: None) -> None:
+        credentials.write_credentials("ck_from_setup")  # pragma: allowlist secret
+        payload = self._payload(runner)
+        check = [c for c in payload["checks"] if c["name"] == "Credentials file"][0]
+        assert check["status"] == "OK"
+
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX-only permission model")
+    def test_loose_permissions_warn_but_do_not_fail_the_run(
+        self, runner: CliRunner, env_with_key: None
+    ) -> None:
+        path = credentials.write_credentials("ck_from_setup")  # pragma: allowlist secret
+        os.chmod(path, 0o644)
+        result = runner.invoke(doctor_command, [])
+        assert result.exit_code == EXIT_OK  # a WARN never flips the exit code
+        payload = self._payload(runner)
+        check = [c for c in payload["checks"] if c["name"] == "Credentials file"][0]
+        assert check["status"] == "WARN"
+        assert "chmod 600" in check["detail"]
+
+    def test_windows_is_always_skipped(
+        self, runner: CliRunner, env_with_key: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        credentials.write_credentials("ck_from_setup")  # pragma: allowlist secret
+        monkeypatch.setattr(os, "name", "nt")
+        payload = self._payload(runner)
+        check = [c for c in payload["checks"] if c["name"] == "Credentials file"][0]
+        assert check["status"] == "SKIP"

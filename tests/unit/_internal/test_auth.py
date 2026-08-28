@@ -86,6 +86,42 @@ class TestResolveAuth:
             resolve_auth(None, env={"CONVILYN_API_KEY": token})
 
 
+# ── Resolution — the credentials-file source (`convilyn setup`) ──────
+
+
+class TestResolveAuthCredentialsFile:
+    """The third, lowest-priority source. `credentials_reader` mirrors the
+    existing `env` param — a pure test seam, no filesystem monkeypatching."""
+
+    def test_file_only_resolves(self):
+        auth = resolve_auth(None, env={}, credentials_reader=lambda: "ck_from_file")
+        assert auth.headers() == {"Authorization": "Bearer ck_from_file"}
+
+    def test_env_beats_file(self):
+        # A user who already has CONVILYN_API_KEY exported sees NO change
+        # in behaviour after running `convilyn setup` — this is the
+        # non-conflict guarantee.
+        auth = resolve_auth(
+            None,
+            env={"CONVILYN_API_KEY": "ck_env"},  # pragma: allowlist secret
+            credentials_reader=lambda: "ck_from_file",
+        )
+        assert auth.headers() == {"Authorization": "Bearer ck_env"}
+
+    def test_explicit_arg_beats_file(self):
+        auth = resolve_auth("ck_explicit", env={}, credentials_reader=lambda: "ck_from_file")
+        assert auth.headers() == {"Authorization": "Bearer ck_explicit"}
+
+    def test_all_three_absent_still_raises(self):
+        with pytest.raises(AuthError, match="convilyn setup"):
+            resolve_auth(None, env={}, credentials_reader=lambda: None)
+
+    def test_author_key_via_file_rejected(self):
+        token = "cvi_author_token"  # pragma: allowlist secret
+        with pytest.raises(AuthError, match="consumer API key"):
+            resolve_auth(None, env={}, credentials_reader=lambda: token)
+
+
 # ── Forward-compat — unknown prefixes still work ─────────────────────
 
 

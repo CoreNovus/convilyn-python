@@ -41,7 +41,7 @@ from convilyn.local._engine.markdown.model import Block, MarkdownDoc
 
 _INLINE_SPECIAL = re.compile(r"([\\*`\[\]<])")
 
-_LINE_START_MARKER = re.compile(r"^(\s*)([#>|+-]|\d+\.)")
+_LINE_START_MARKER = re.compile(r"^(\s*)(?:([#>|+-])|(\d+)(\.))")
 
 ASSET_DIR = "assets"
 
@@ -53,10 +53,19 @@ def escape_inline(text: str) -> str:
     return _INLINE_SPECIAL.sub(r"\\\1", text)
 
 
+def _escape_line_start(match: re.Match[str]) -> str:
+    indent, marker, digits, dot = match.groups()
+    if marker is not None:
+        return f"{indent}\\{marker}"
+    return f"{indent}{digits}\\{dot}"
+
+
 def escape_block_text(text: str) -> str:
     """Escape a whole paragraph: inline specials, plus line-leading block markers."""
     escaped = escape_inline(text)
-    return "\n".join(_LINE_START_MARKER.sub(r"\1\\\2", line) for line in escaped.split("\n"))
+    return "\n".join(
+        _LINE_START_MARKER.sub(_escape_line_start, line) for line in escaped.split("\n")
+    )
 
 
 def escape_cell(text: str) -> str:

@@ -189,6 +189,9 @@ dependency cost.
 
 - [Quickstart](https://github.com/CoreNovus/convilyn-python/blob/main/docs/QUICKSTART.md)
   — 5 minutes, covering offline conversion, goals, workflows and quota
+- [What has been measured](https://github.com/CoreNovus/convilyn-python/blob/main/docs/MEASURED-2026-08-28.md) — full results, measured 2026-08-28
+  — conversion and extraction scored on three named corpora (685 documents),
+  including where it falls short
 - [Full documentation](https://docs.convilyn.com)
 - [Examples](https://github.com/CoreNovus/convilyn-python/tree/main/examples)
   — runnable Python and shell scripts

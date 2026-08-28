@@ -37,7 +37,7 @@ from convilyn import (
 )
 from convilyn._internal.http import _decode_error
 
-API_BASE = "https://api.convilyn.corenovus.com"
+API_BASE = "https://api.convilyn.com"
 
 
 def _refusal(status: int, code: str, **extra: Any) -> httpx.Response:

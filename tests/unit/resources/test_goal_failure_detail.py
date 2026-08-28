@@ -31,7 +31,7 @@ import respx
 
 from convilyn import AsyncConvilyn, GoalJobFailedError
 
-API_BASE = "https://api.convilyn.corenovus.com"
+API_BASE = "https://api.convilyn.com"
 
 _DETAIL = {"reason": "ITERATION_LIMIT", "limit": 15, "reached": 16}
 

@@ -17,7 +17,7 @@ import respx
 from convilyn import APIError, AsyncConvilyn
 from convilyn._internal.http import DEFAULT_BASE_URL, resolve_base_url
 
-API_BASE = "https://api.convilyn.corenovus.com"
+API_BASE = "https://api.convilyn.com"
 
 
 # ── resolve_base_url — precedence: explicit arg > env > default ──────
@@ -40,7 +40,7 @@ class TestResolveBaseUrl:
 
     def test_default_is_corenovus_host_only(self) -> None:
         # Host root only — resource paths carry their own /api/v1 prefix.
-        assert DEFAULT_BASE_URL == "https://api.convilyn.corenovus.com"
+        assert DEFAULT_BASE_URL == "https://api.convilyn.com"
 
 
 # ── 1. Logic — happy path returns the response ──────────────────────

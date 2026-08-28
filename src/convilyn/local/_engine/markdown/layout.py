@@ -27,11 +27,14 @@ to every document rather than to the ones somebody guessed would need it.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from statistics import median
 from typing import Any, TypeVar
 
 MIN_COLUMN_GAP_RATIO = 0.8
 
 MIN_BAND_GAP_RATIO = 1.2
+
+MIN_COLUMN_WIDTH_RATIO = 2.0
 
 MAX_CUT_DEPTH = 12
 
@@ -58,6 +61,19 @@ def _best_run(runs: Sequence[tuple[float, float]], threshold: float) -> tuple[fl
     return max(qualifying, key=lambda run: run[1] - run[0]) if qualifying else None
 
 
+def _extent(boxes: Sequence[Box]) -> float:
+    if not boxes:
+        return 0.0
+    return max(float(b["x1"]) for b in boxes) - min(float(b["x0"]) for b in boxes)
+
+
+def _separates_columns(boxes: Sequence[Box], gap: tuple[float, float], unit: float) -> bool:
+    split = (gap[0] + gap[1]) / 2
+    near = [b for b in boxes if float(b["x1"]) <= split]
+    far = [b for b in boxes if float(b["x1"]) > split]
+    return min(_extent(near), _extent(far)) >= MIN_COLUMN_WIDTH_RATIO * unit
+
+
 def order_regions(
     boxes: Sequence[Box],
     *,
@@ -72,12 +88,20 @@ def order_regions(
 
     Returns a list of regions, each a list of the boxes inside it. Empty input
     returns no regions rather than one empty region.
+
+    A gap has to clear two tests rather than one: wide enough to be a gutter
+    (MIN_COLUMN_GAP_RATIO) and separating two things that are themselves columns
+    (MIN_COLUMN_WIDTH_RATIO). The second is what keeps a list's markers with the
+    text they belong to — their indent is a clear vertical channel, so the gap
+    test alone reads it as a gutter.
     """
     items = list(boxes)
     if len(items) <= 1 or unit <= 0 or _depth >= MAX_CUT_DEPTH:
         return [items] if items else []
 
     column = _best_run(_background_runs(items, "x0", "x1"), MIN_COLUMN_GAP_RATIO * unit)
+    if column is not None and not _separates_columns(items, column, unit):
+        column = None
     band = _best_run(_background_runs(items, "top", "bottom"), MIN_BAND_GAP_RATIO * unit)
     if column is None and band is None:
         return [items]
@@ -116,3 +140,61 @@ def median_height(boxes: Sequence[Box]) -> float:
     if not heights:
         return 0.0
     return heights[len(heights) // 2]
+
+
+FURNITURE_BAND_RATIO = 0.06
+
+
+def furniture_indices(
+    extents: Sequence[tuple[float, float, float]],
+    *,
+    page_height: float,
+) -> frozenset[int]:
+    """Which of a page's regions are a running header or footer rather than content.
+
+    A page number, a document reference or a confidentiality marker is printed on
+    the page without being part of what the page says. HTML and Word state the
+    distinction outright; a PDF does not, so it has to be inferred, and this is the
+    inference.
+
+    Takes `(top, bottom, largest font size)` per region in reading order, and the
+    page height. Returns the indices to drop; the caller keeps the regions.
+
+    Three conditions, all of which must hold. The region lies wholly inside a band
+    at the top or bottom of the page; it is the first or last region in reading
+    order; and it is set smaller than the median of what the page's other regions
+    are set in. Each one narrows what is removed, and dropping any of them was
+    measured to destroy real content — a whole table, a line of body prose, or the
+    title of a page whose top margin is tight enough to put it inside the band.
+
+    The size comparison is against the page's other regions rather than the
+    document's usual text size, and that is not a detail. Where a page's prose is
+    mostly inside a table, few ordinary lines remain, and the furniture itself can
+    end up defining what "usual" means — at which point nothing can ever be smaller
+    than it.
+
+    A region carrying no font size at all — a table on its own — is never furniture
+    however close to the trim it sits. A page whose every region is a candidate
+    drops nothing, since there is then nothing to be smaller than.
+    """
+    if page_height <= 0 or not extents:
+        return frozenset()
+
+    top_band = page_height * FURNITURE_BAND_RATIO
+    bottom_band = page_height * (1.0 - FURNITURE_BAND_RATIO)
+    last = len(extents) - 1
+    candidates = {
+        index
+        for index, (top, bottom, _) in enumerate(extents)
+        if index in (0, last) and (bottom <= top_band or top >= bottom_band)
+    }
+    neighbours = [
+        largest
+        for index, (_, _, largest) in enumerate(extents)
+        if index not in candidates and largest > 0
+    ]
+    if not neighbours:
+        return frozenset()
+
+    reference = median(neighbours)
+    return frozenset(index for index in candidates if 0 < extents[index][2] < reference)

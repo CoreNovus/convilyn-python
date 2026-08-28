@@ -89,7 +89,7 @@ _BILLING_CONFLICT_ERRORS: dict[str, type[APIError]] = {
     "CHARGE_UNAVAILABLE": ChargeUnavailableError,
 }
 
-DEFAULT_BASE_URL = "https://api.convilyn.corenovus.com"
+DEFAULT_BASE_URL = "https://api.convilyn.com"
 DEFAULT_TIMEOUT = 30.0
 ENV_BASE_URL = "CONVILYN_BASE_URL"
 

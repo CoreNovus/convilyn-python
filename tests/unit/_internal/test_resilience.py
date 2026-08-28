@@ -28,7 +28,7 @@ from convilyn._internal.resilience import (
     generate_idempotency_key,
 )
 
-API_BASE = "https://api.convilyn.corenovus.com"
+API_BASE = "https://api.convilyn.com"
 
 
 # ── 1. Logic — happy path retry + idempotency ───────────────────────

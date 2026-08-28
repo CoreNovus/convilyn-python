@@ -417,9 +417,35 @@ class GoalJobTimeoutError(ConvilynError):
     """An AI workflow polling helper exceeded its ``timeout`` before reaching
     a terminal status (or a ``slots_pending`` HITL stop).
 
-    The job is still alive on the backend — the caller can resume
-    polling with
-    :py:meth:`convilyn.resources.goals.AsyncGoals.retrieve`.
+    The job may still be alive on the backend, and the caller can resume polling
+    with :py:meth:`convilyn.resources.goals.AsyncGoals.retrieve`.
+
+    **This timeout does not refund anything.** The run was charged when you
+    confirmed it — the confirm charge is a reservation taken up front — and
+    there is no refund path for a run that never reaches a terminal state. A
+    successful run reconciles its reservation against actual cost afterwards,
+    and a run the platform records as FAILED is reversed in full; a run that
+    simply stops producing status does neither, because nothing has told the
+    settle path what happened. So the credits are spent whether or not you ever
+    see a result. This paragraph exists because this class previously said only
+    "the job is still alive", and the word "billed" appeared nowhere in the SDK.
+
+    **"Still alive" is a possibility, not a diagnosis — distinguish it before
+    you re-poll.** Compare :py:attr:`convilyn.GoalJob.updated_at` across two
+    ``retrieve()`` calls a few seconds apart:
+
+    * it ADVANCES ⇒ the run is progressing and a longer ``timeout`` is the fix;
+    * it is FROZEN ⇒ the run is wedged, and there is no self-service exit.
+      Re-polling will not unwedge it, and
+      :py:meth:`~convilyn.resources.goals.AsyncGoals.retry` will not either:
+      retry requires the job to be in ``failed`` status, and a wedged run is
+      still ``executing``. Calling ``understand()`` again creates a NEW job
+      spec and is charged again.
+
+    The frozen case is observed, not hypothetical: a real 23-page PDF has been
+    seen with ``updated_at`` static from 6s after creation through 895s, no
+    terminal status, ``code`` and ``suggested_action`` both ``None``, and one
+    credit spent.
     """
 
     def __init__(
