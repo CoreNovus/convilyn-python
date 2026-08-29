@@ -1,11 +1,20 @@
-"""``convilyn setup`` — browser-based login (RFC 8252 brokered PKCE).
+"""``convilyn setup`` — sign in and save a Convilyn API key.
+
+Three ways in, one outcome: a session used EXACTLY ONCE to mint a ``ck_`` key,
+then discarded. ``google`` / ``github`` run the RFC 8252 brokered-PKCE loopback
+flow through a browser; ``email`` posts to ``/api/v1/auth/signin`` with a
+password read from the terminal with echo off.
+
+Originally browser-only; the password path was added because requiring a
+third-party identity provider to use your own Convilyn account is a gap, not a
+policy.
 
 Mints a real ``ck_`` API key the same way the web console does, without the
-user copying anything by hand: opens the system browser at the backend's
-desktop-OAuth authorize endpoint, catches the redirect on a loopback HTTP
-server bound to an ephemeral port, exchanges the resulting code for a
-short-lived session, uses that session **exactly once** to mint a ``ck_``
-key via ``POST /api/v1/console/keys``, then discards the session.
+user copying anything by hand. The browser path opens the system browser at the
+backend's desktop-OAuth authorize endpoint, catches the redirect on a loopback
+HTTP server bound to an ephemeral port, and exchanges the resulting code for a
+short-lived session. Either path then uses that session **exactly once** to mint
+a ``ck_`` key via ``POST /api/v1/console/keys``, and discards it.
 
 **Why mint-then-discard rather than persist the session**: the SDK's only
 credential *kind* stays ``ck_`` — ``resolve_auth`` needed one new, lowest-
@@ -18,12 +27,17 @@ The session access/refresh tokens are NEVER logged and NEVER written to
 disk — only the minted ``ck_`` key is persisted, mirroring the backend's own
 P0-5 discipline in ``app/api/v1/identity/desktop_auth.py``.
 
-**This command requires the backend to have registered a ``convilyn-cli``
-OAuth client** (``Settings.desktop_oauth_clients``) with a loopback redirect
-URI, and ``desktop_oauth_enabled=True`` for the target environment. Until
-that configuration exists, the authorize/token calls fail cleanly with a
-404/400 and this command reports ``EXIT_API_ERROR`` — the SDK code itself
-has no dependency on when that configuration lands.
+**The two browser providers require the backend to have registered a
+``convilyn-cli`` OAuth client** (``Settings.desktop_oauth_clients``) with a
+loopback redirect URI, and ``desktop_oauth_enabled=True`` for the target
+environment. Until that configuration exists, the authorize/token calls fail
+cleanly with a 404/400 and this command reports ``EXIT_API_ERROR`` — the SDK
+code itself has no dependency on when that configuration lands.
+
+``email`` has no such dependency: ``/api/v1/auth/signin`` is the web console's
+own route and is enabled wherever the console is. That makes it the working
+path on an environment where desktop OAuth is switched off — which is not a
+hypothetical, it is exactly the state prod was in until 2026-08-29.
 """
 
 from __future__ import annotations
@@ -47,12 +61,47 @@ from convilyn._internal import credentials
 from convilyn._internal.http import resolve_base_url
 from convilyn.cli._banner import print_banner, should_show_banner
 from convilyn.cli._exit_codes import EXIT_API_ERROR, EXIT_INTERRUPTED, EXIT_USAGE
-from convilyn.cli._output import make_renderer
+from convilyn.cli._output import make_renderer, should_colorize, write_line
 from convilyn.exceptions import APIError
 
 _CLIENT_ID = "convilyn-cli"
 _CALLBACK_PATH = "/callback"
 _DEFAULT_TIMEOUT_SECONDS = 180.0
+
+#: Every way this CLI can obtain a session, in prompt order.
+#:
+#: ``google`` / ``github`` are the two the backend's desktop-OAuth endpoint
+#: accepts (``OAuthProviderLiteral``); ``email`` is not an OAuth provider at all
+#: — it posts to ``/api/v1/auth/signin``, the same route the web console uses
+#: for a Convilyn account with a password.
+#:
+#: Listing all three under one ``--provider`` flag is deliberate: from the
+#: user's side the question is "how do I sign in", and having a separate flag
+#: for the password path would make the answer depend on knowing which of the
+#: three happens to be OAuth. What the three share is the shape that matters
+#: here — each yields a session that is used exactly ONCE to mint a ``ck_`` key
+#: and is then discarded.
+_OAUTH_PROVIDERS = ("google", "github")
+_PROVIDERS = (*_OAUTH_PROVIDERS, "email")
+
+#: Printed after a successful setup. Four, not everything — a wall of links is
+#: read as decoration and skipped, so this is the shortest set that covers what
+#: someone with a brand-new key actually has to decide: which lane to use, that
+#: offline conversion needs no key at all, what costs credits, and how to manage
+#: the key that was just written to their disk.
+#:
+#: `test_setup.py::test_every_welcome_link_is_a_real_docs_page` pins each path
+#: against `frontend-docs/content/en/`, so a page renamed or removed there fails
+#: here rather than shipping a 404 to every new user. That check is offline —
+#: it reads the repo, not the network — because a gate that needs the internet
+#: is a gate that gets skipped.
+_DOCS_BASE = "https://docs.convilyn.com/en"
+_WELCOME_LINKS: tuple[tuple[str, str], ...] = (
+    ("Choosing a lane", f"{_DOCS_BASE}/usage-guide"),
+    ("Convert offline", f"{_DOCS_BASE}/local-conversion"),
+    ("Credits & pricing", f"{_DOCS_BASE}/credits"),
+    ("Managing API keys", f"{_DOCS_BASE}/api-keys"),
+)
 
 # Same allowlist as the backend's `_NAME_PATTERN` (app/schemas/console/keys.py)
 # — anything else is replaced with '-' so the mint request never 422s on the
@@ -68,13 +117,17 @@ _CALLBACK_HTML = (
 
 
 @click.command(
-    help="Log in via your browser and save a Convilyn API key locally (no manual key copy-paste).",
+    help="Log in and save a Convilyn API key locally (no manual key copy-paste).",
 )
 @click.option(
     "--provider",
-    type=click.Choice(["google", "github"]),
+    type=click.Choice(_PROVIDERS),
     default=None,
-    help="OAuth provider to sign in with. Prompted interactively when omitted on a TTY.",
+    help=(
+        "How to sign in: 'google' or 'github' open a browser; 'email' asks for "
+        "your Convilyn email and password here in the terminal. Prompted "
+        "interactively when omitted on a TTY."
+    ),
 )
 @click.option(
     "--no-browser",
@@ -90,6 +143,11 @@ _CALLBACK_HTML = (
     help="Seconds to wait for the browser login to complete.",
 )
 @click.option(
+    "--force",
+    is_flag=True,
+    help="Sign in again even if a working key is already saved (mints a new key).",
+)
+@click.option(
     "--json",
     "json_output",
     is_flag=True,
@@ -99,23 +157,168 @@ def setup_command(
     provider: str | None,
     no_browser: bool,
     timeout_seconds: float,
+    force: bool,
     json_output: bool,
 ) -> None:
-    """Browser-based login: mint a `ck_` API key and save it for future commands."""
+    """Sign in, mint a `ck_` API key, and save it for future commands."""
     renderer = make_renderer(json_output=json_output)
 
+    if not force and _reuse_existing_key(renderer=renderer, json_output=json_output):
+        return
+
     if provider is None:
-        if not sys.stdin.isatty():
+        if not _stdin_is_interactive():
             raise click.UsageError("--provider is required when not running interactively")
-        provider = click.prompt(
-            "Sign in with", type=click.Choice(["google", "github"]), default="google"
-        )
+        provider = click.prompt("Sign in with", type=click.Choice(_PROVIDERS), default="google")
     assert provider is not None  # narrows for type-checking; guaranteed by the branch above
 
     if should_show_banner(json_output=json_output):
         print_banner()
 
     base_url = resolve_base_url(None)
+
+    if provider == "email":
+        access_token = _password_session(base_url=base_url)
+    else:
+        access_token = _browser_session(
+            base_url=base_url,
+            provider=provider,
+            no_browser=no_browser,
+            timeout_seconds=timeout_seconds,
+        )
+
+    try:
+        key = _mint_key(base_url=base_url, access_token=access_token)
+    except (httpx.HTTPError, APIError) as exc:
+        click.echo(f"Login failed: {exc}", err=True)
+        raise SystemExit(EXIT_API_ERROR) from exc
+
+    path = credentials.write_credentials(key, source="setup")
+
+    tier = _verify_key(base_url=base_url, key=key)
+    _print_welcome(tier=tier, json_output=json_output)
+    renderer.final(
+        {
+            "command": "setup",
+            "status": "ok",
+            "provider": provider,
+            "tier": tier,
+            "credentials_path": str(path),
+            # Complements the welcome block rather than repeating it: the
+            # headline above already says setup succeeded, so this line
+            # carries the one fact it does not — where the key landed.
+            "summary": f"Key saved to {path} (signed in with {provider})",
+        }
+    )
+
+
+def _reuse_existing_key(*, renderer: Any, json_output: bool) -> bool:
+    """Short-circuit when a saved key still works. Returns True if we did.
+
+    Re-running ``convilyn setup`` should not cost the user another sign-in.
+    But "a credentials file exists" is the wrong question — a key that has been
+    revoked from the console, or that belongs to an account the user has since
+    left, is exactly the case where they need to log in again and the file tells
+    you nothing. So the key is **used** before it is trusted: one call to the
+    same tier lookup that already runs after a fresh mint. If it does not
+    authenticate, this returns False and the normal login proceeds.
+
+    The failure direction is chosen deliberately. `_verify_key` is best-effort
+    and returns ``None`` on any failure, network outages included, so an offline
+    machine falls through to a login it also cannot complete — annoying, and the
+    right way round: the alternative is telling someone they are set up when
+    nothing has confirmed it, and then failing on their first real command with
+    an error that points at the wrong thing.
+
+    ``--force`` skips this entirely, which is the escape hatch for "I want a new
+    key on this machine" (a shared box, a rotated credential, switching account).
+
+    The key itself is never printed — not here, not in the JSON payload. What is
+    reported is that one exists and that it works.
+    """
+    existing = credentials.read_credentials()
+    if not existing:
+        return False
+
+    tier = _verify_key(base_url=resolve_base_url(None), key=existing)
+    if tier is None:
+        click.echo(
+            "A saved key was found but it did not authenticate — signing in again.",
+            err=True,
+        )
+        return False
+
+    _print_welcome(tier=tier, json_output=json_output, returning=True)
+    renderer.final(
+        {
+            "command": "setup",
+            "status": "ok",
+            "provider": None,
+            "tier": tier,
+            "credentials_path": str(credentials.credentials_path()),
+            "reused_existing_key": True,
+            "summary": f"Key at {credentials.credentials_path()} (nothing changed)",
+        }
+    )
+    return True
+
+
+def _stdin_is_interactive() -> bool:
+    """Whether we can prompt the user at all.
+
+    One implementation because two call sites ask it: choosing a provider when
+    --provider was omitted, and reading a password for --provider email.
+    Both must refuse rather than block on a prompt nothing will answer.
+    """
+    return sys.stdin.isatty()
+
+
+def _print_welcome(*, tier: str | None, json_output: bool, returning: bool = False) -> None:
+    """Confirm success in green and point at what to read next.
+
+    Suppressed in ``--json`` mode, where stdout must stay a single valid
+    object. Otherwise it always PRINTS — only the colour is conditional. That
+    split is deliberate and is the opposite of the banner's: the banner is
+    decoration and disappears when it cannot be rendered as intended, whereas
+    these four links are the answer to "I have a key, now what?", which a user
+    reading a captured log needs just as much as one at a terminal.
+
+    Every URL is verified to resolve before being shipped. A welcome message
+    that hands someone four 404s is worse than one that hands them none — it
+    reads as a product that has been abandoned.
+
+    ``returning=True`` is the "you were already signed in" wording. Saying
+    "setup complete" to someone who did not just complete anything reads as a
+    command that ignored them — and it hides the one fact they need if they ran
+    this BECAUSE something was wrong: that nothing changed, and ``--force`` is
+    how to change it.
+    """
+    if json_output:
+        return
+
+    green, dim, reset = ("\x1b[1;32m", "\x1b[2m", "\x1b[0m") if should_colorize() else ("", "", "")
+    plan = f" You are on the {tier} plan." if tier else ""
+    headline = (
+        "Already signed in — your saved key works."
+        if returning
+        else "Setup complete — welcome to Convilyn."
+    )
+
+    write_line("", sys.stdout)
+    write_line(f"{green}{headline}{reset}{plan}", sys.stdout)
+    if returning:
+        write_line(f"{dim}Run `convilyn setup --force` to sign in again.{reset}", sys.stdout)
+    write_line("", sys.stdout)
+    write_line("Where to go next:", sys.stdout)
+    for label, url in _WELCOME_LINKS:
+        write_line(f"  {label:<22} {dim}{url}{reset}", sys.stdout)
+    write_line("", sys.stdout)
+
+
+def _browser_session(
+    *, base_url: str, provider: str, no_browser: bool, timeout_seconds: float
+) -> str:
+    """Run the RFC 8252 loopback OAuth flow; return a short-lived access token."""
     verifier, challenge = _generate_pkce()
     state = secrets.token_urlsafe(32)
 
@@ -163,30 +366,61 @@ def setup_command(
         raise SystemExit(EXIT_USAGE)
 
     try:
-        access_token = _exchange_token(
+        return _exchange_token(
             base_url=base_url,
             code=result.code,
             code_verifier=verifier,
             state=state,
         )
-        key = _mint_key(base_url=base_url, access_token=access_token)
     except (httpx.HTTPError, APIError) as exc:
         click.echo(f"Login failed: {exc}", err=True)
         raise SystemExit(EXIT_API_ERROR) from exc
 
-    path = credentials.write_credentials(key, source="setup")
 
-    tier = _verify_key(base_url=base_url, key=key)
-    renderer.final(
-        {
-            "command": "setup",
-            "status": "ok",
-            "provider": provider,
-            "tier": tier,
-            "credentials_path": str(path),
-            "summary": f"✓ Logged in ({provider}) — key saved to {path}",
-        }
-    )
+def _password_session(*, base_url: str) -> str:
+    """Sign in with a Convilyn email + password; return a short-lived access token.
+
+    Not an OAuth leg — this posts to ``/api/v1/auth/signin``, the same route the
+    web console uses. No loopback server, no browser, no PKCE: there is no
+    third party to redirect through, so there is nothing for those to protect.
+
+    The password is read with echo off and is **never** stored, logged, or
+    retried — it exists only for the duration of this one request, and the
+    session it returns is discarded the moment a ``ck_`` key is minted, exactly
+    as in the browser path.
+    """
+    if not _stdin_is_interactive():
+        raise click.UsageError(
+            "--provider email needs an interactive terminal to ask for your "
+            "password. On a headless host use --provider google or github with "
+            "--no-browser, which prints a URL you can open anywhere."
+        )
+
+    email = click.prompt("Email", type=str)
+    password = click.prompt("Password", type=str, hide_input=True)
+
+    try:
+        response = httpx.post(
+            f"{base_url.rstrip('/')}/api/v1/auth/signin",
+            json={"email": email, "password": password},
+            timeout=30.0,
+        )
+    except httpx.HTTPError as exc:
+        click.echo(f"Login failed: {exc}", err=True)
+        raise SystemExit(EXIT_API_ERROR) from exc
+
+    if response.status_code >= 400:
+        # Deliberately relays the server's own message rather than flattening
+        # every 4xx to "wrong password". The backend distinguishes cases the
+        # user must act on differently — an unverified email, a locked account
+        # after repeated failures — and collapsing them sends someone retyping
+        # a password that was never the problem.
+        click.echo(f"Login failed: {_error_message(response)}", err=True)
+        raise SystemExit(EXIT_API_ERROR)
+
+    # `response_model_by_alias` default — the wire is camelCase, matching
+    # `_exchange_token` above and `docs/contracts/auth/auth_openapi.yaml`.
+    return response.json()["accessToken"]
 
 
 # ── Helpers (each testable in isolation; SRP) ─────────────────────────

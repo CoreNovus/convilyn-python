@@ -36,10 +36,9 @@ Printed ONLY from ``convilyn setup`` — no other command's output changes.
 
 from __future__ import annotations
 
-import os
 import sys
 
-from convilyn.cli._output import write_line
+from convilyn.cli._output import should_colorize, write_line
 
 _RESET = "\x1b[0m"
 
@@ -100,8 +99,14 @@ def should_show_banner(*, json_output: bool) -> bool:
     Suppressed entirely (not merely de-colored) in ``--json`` mode, when
     stdout is not a TTY (piped/CI output), or when ``NO_COLOR`` is set — a
     static-art banner in captured output is noise, not a partial win.
+
+    The TTY / ``NO_COLOR`` half is :func:`convilyn.cli._output.should_colorize`,
+    shared with the welcome block rather than copied. The two differ in what
+    they do when it says no, and that difference is the point: the banner is
+    art, so it goes away; the welcome block is information, so it stays and
+    merely loses its colour.
     """
-    return not json_output and sys.stdout.isatty() and not os.environ.get("NO_COLOR")
+    return not json_output and should_colorize()
 
 
 def print_banner() -> None:

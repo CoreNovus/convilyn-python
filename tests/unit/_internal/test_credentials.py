@@ -106,6 +106,7 @@ class TestCredentialsErrors:
 # ── 4. Object-state — per-platform path resolution ───────────────────
 
 
+@pytest.mark.uses_real_config_root
 class TestConfigRoot:
     """The REAL `config_root()` — deliberately not using `isolated_root`.
 

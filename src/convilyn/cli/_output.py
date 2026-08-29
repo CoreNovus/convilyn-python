@@ -18,6 +18,7 @@ a future YAML / table format is a new renderer class, no change to
 from __future__ import annotations
 
 import json
+import os
 import sys
 from typing import IO, Any, Protocol, runtime_checkable
 
@@ -59,6 +60,21 @@ class HumanRenderer:
         # ``> result.txt`` still captures a sensible one-liner.
         summary = payload.get("summary") or _format_summary(payload)
         write_line(summary, self._stdout)
+
+
+def should_colorize() -> bool:
+    """Whether ANSI escapes may be emitted on stdout.
+
+    One implementation of the question, because there are now two callers with
+    the same answer: the ``convilyn setup`` banner and its welcome block. A
+    second copy would drift the moment one of them learned about a new
+    suppression signal (``TERM=dumb``, ``--no-color``, a CI variable) and the
+    other did not.
+
+    ``NO_COLOR`` is honoured per https://no-color.org — presence alone, whatever
+    the value.
+    """
+    return sys.stdout.isatty() and not os.environ.get("NO_COLOR")
 
 
 def write_line(line: str, stream: IO[str]) -> None:

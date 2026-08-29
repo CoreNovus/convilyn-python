@@ -3,6 +3,37 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [Semantic Versioning](https://semver.org/).
 
+## [3.4.0] - 2026-08-29
+
+### Added
+
+- **Sign in with your Convilyn email and password**, not only Google or GitHub.
+
+  ```
+  convilyn setup --provider email
+  ```
+
+  It asks for your email and password in the terminal (the password is not
+  shown as you type) and never opens a browser. Google and GitHub work exactly
+  as before.
+
+- **A welcome message after a successful sign-in**, with links to the pages
+  worth reading first: choosing a lane, converting offline, credits and
+  pricing, and managing your API keys.
+
+### Changed
+
+- **`convilyn setup` no longer makes you sign in again if you already have a
+  working key.** It checks the saved key first and stops there if it works.
+
+  It checks by *using* the key, not by looking for the file — a key you revoked
+  from the console leaves the file exactly as it was, and in that case you do
+  need to sign in again. If the key no longer works, it says so and continues
+  to the normal login.
+
+  Use `convilyn setup --force` to sign in again anyway — for a shared machine,
+  a rotated key, or a different account.
+
 ## [3.3.0] - 2026-08-29
 
 First stable release of the 3.3 line. It contains everything from `3.3.0b1`

@@ -11,4 +11,4 @@ Bump this file in CHANGELOG-bumping commits — never edit the
 hardcoded constant in two places.
 """
 
-__version__ = "3.3.0"
+__version__ = "3.4.0"
