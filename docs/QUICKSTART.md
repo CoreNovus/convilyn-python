@@ -290,21 +290,53 @@ if not route.available:
     # need no external program: csv, docx, pdf, pptx, txt, xlsx, xml.
 ```
 
-## 2. Get an API key
+## 1c. Let your AI coding assistant do it (no API key)
 
-Sign up at <https://convilyn.com>, then mint your `ck_…` API key from
-**Settings → API** (the API Console) at
-<https://convilyn.com/en/settings/api> — the page is auth-gated and is
-also where you manage billing, usage, and quota. Export it once so the
-SDK and CLI both pick it up:
+Everything in 1b is also available to Claude Code and Codex as tools, so the
+assistant converts the file itself instead of asking you to paste text:
 
 ```bash
-export CONVILYN_API_KEY=ck_...
+uv tool install "convilyn[all,mcp]"   # or: pip install --user "convilyn[all,mcp]"
+convilyn agent install
 ```
 
-> The CLI also accepts an explicit `--api-key` flag, but the
-> environment variable is the recommended default — it works for both
-> Python scripts and one-off shell commands.
+**Install it where your editor can find it.** Your editor starts the MCP server,
+not your shell, so it has to reach `convilyn` on `PATH` — and a project
+virtualenv is not on the editor's `PATH`. `uv add` inside a project will not do.
+
+The two hosts look in different places, so both are written:
+
+| Host | Where | Picked up |
+|---|---|---|
+| Claude Code | `~/.claude/skills/convilyn/` (a plugin, no marketplace needed) | next session, or `/reload-plugins` |
+| Codex | `~/.agents/skills/convilyn/`, `~/.codex/config.toml` | next run |
+
+Three of the five tools — `convilyn_convert`, `convilyn_capabilities`,
+`convilyn_pdf` — are local and need no account, so you can stop here. The other
+two reach the platform and need step 2.
+
+## 2. Get an API key
+
+Two ways in, and they land in different places:
+
+```bash
+convilyn setup                  # browser sign-in; stores the key where the CLI finds it
+export CONVILYN_API_KEY=ck_...  # explicit, for CI and one-off shells
+```
+
+**Use `convilyn setup` if you are here for the MCP tools.** Your editor spawns
+the MCP server, and a variable exported in your shell profile is frequently not
+in that process's environment — the plugin config deliberately carries no `env`
+block, because a config file gets copied between machines and pasted into
+issues. `convilyn setup` writes the key to the credential store the CLI reads on
+its own, which works for both.
+
+To mint a key by hand instead, sign up at <https://convilyn.com>, then use
+**Settings → API** (the API Console) at <https://convilyn.com/en/settings/api> —
+the page is auth-gated and is also where you manage billing, usage, and quota.
+
+> The CLI also accepts an explicit `--api-key` flag. Resolution order is
+> `--api-key` → `CONVILYN_API_KEY` → the file `convilyn setup` wrote.
 
 ## 3. Verify your setup
 

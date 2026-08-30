@@ -58,10 +58,12 @@ from pathlib import Path
 from typing import Any
 
 from convilyn.local._engine.markdown.headings import (
+    DEGENERATE_POPULATION_RATIO,
     HEADING_RATIO,
     body_size,
     heading_level,
     is_bare_number,
+    population_is_degenerate,
 )
 from convilyn.local._engine.markdown.heuristics import (
     SENTENCE_END,
@@ -387,7 +389,9 @@ def _styled_heading_texts(pages: list[list[_Region]], body: float) -> frozenset[
     )
 
 
-def _region_blocks(region: _Region, body: float, styled: frozenset[str]) -> list[Block]:
+def _region_blocks(
+    region: _Region, body: float, styled: frozenset[str], *, min_ratio: float
+) -> list[Block]:
     blocks: list[Block] = []
     for chunk, placed in _chunk_at_blocks(region):
         for text, size, bullet in _merge_wrapped([(t, s) for t, s, _ in chunk], body):
@@ -396,7 +400,7 @@ def _region_blocks(region: _Region, body: float, styled: frozenset[str]) -> list
             if bullet:
                 blocks.append(Block(kind="list_item", text=text))
                 continue
-            level = heading_level(size, body)
+            level = heading_level(size, body, min_ratio=min_ratio)
             if level is None and text not in styled and looks_like_heading(text):
                 level = 3
             if level is not None and is_bare_number(text):
@@ -432,7 +436,11 @@ def extract(path: Path) -> MarkdownDoc:
         for index, page in enumerate(pdf.pages[:MAX_PAGES]):
             pages.append(_read_page(page, image_sources.get(index, {}), collector))
 
-    body = body_size([line for regions in pages for region in regions for line in region.lines])
+    prose_lines = [line for regions in pages for region in regions for line in region.lines]
+    body = body_size(prose_lines)
+    min_ratio = (
+        DEGENERATE_POPULATION_RATIO if population_is_degenerate(prose_lines) else HEADING_RATIO
+    )
     styled = _styled_heading_texts(pages, body)
 
     blocks: list[Block] = []
@@ -441,7 +449,7 @@ def extract(path: Path) -> MarkdownDoc:
             blocks.append(Block(kind="page_break"))
 
         for region in regions:
-            blocks.extend(_region_blocks(region, body, styled))
+            blocks.extend(_region_blocks(region, body, styled, min_ratio=min_ratio))
 
     if not blocks:
         warnings.append("no text layer found — this PDF is probably a scan")

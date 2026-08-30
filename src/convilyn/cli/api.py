@@ -8,6 +8,12 @@ directly without waiting for an SDK release. Auth, retries, and
 so the escape hatch carries the same reliability story as the wrapped
 resources.
 
+PATH is always **relative to the configured base URL**. An absolute URL is
+refused before anything is sent: auth is inherited too, so a full address
+would hand the caller's API key to whatever host it named. Reaching an
+external address is the download/upload paths' job — they do not attach our
+``Authorization`` and they validate the address first.
+
 Examples::
 
     convilyn api GET /api/v1/jobs/job_xyz
@@ -39,6 +45,8 @@ HTTP_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD")
 @click.command(
     help=(
         "Call any Convilyn API endpoint (gh-style escape hatch).\n\n"
+        "PATH is relative to the configured base URL; an absolute URL is "
+        "refused because this command sends your API key with every request.\n\n"
         "Examples:\n"
         "  convilyn api GET /api/v1/jobs/job_xyz\n"
         '  convilyn api POST /api/v1/upload/presign --data \'{"fileName":"x.docx"}\'\n'
@@ -121,6 +129,13 @@ def api_command(
         )
     except AuthError as exc:
         click.echo(f"Authentication failed: {exc}", err=True)
+        raise SystemExit(EXIT_USAGE) from exc
+    except ValueError as exc:
+        # The transport refuses an absolute URL here, because this command
+        # attaches the API key to whatever it dials. That is a usage error the
+        # caller can fix, not a crash — so it exits like one instead of
+        # printing a traceback at the person who typed the wrong argument.
+        click.echo(f"{exc}", err=True)
         raise SystemExit(EXIT_USAGE) from exc
 
     _render_response(

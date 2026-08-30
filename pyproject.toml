@@ -73,6 +73,13 @@ xml = ["defusedxml>=0.7.0"]
 images = ["Pillow>=12.2.0"]
 documents = ["convilyn[pdf,docx,pptx,xlsx,xml]"]
 all = ["convilyn[documents,images]"]
+# The MCP transport, and deliberately NOT part of `all`. `all` means "every
+# offline format"; this means "expose those formats over a protocol". They are
+# orthogonal, which is what makes `convilyn[all,mcp]` read correctly instead of
+# redundantly. Pinned >=2.0 because 2.x renamed FastMCP to MCPServer and the
+# server module uses the new name — supporting both would be a compatibility
+# branch, and nobody holds a 1.x lock on this package yet.
+mcp = ["mcp>=2.0.0,<3.0.0"]
 
 [project.urls]
 Homepage = "https://convilyn.com"
@@ -89,11 +96,12 @@ convilyn = "convilyn.cli.main:cli"
 # installs it by default). Kept out of the wheel/sdist METADATA.
 [dependency-groups]
 dev = [
+    "mcp>=2.0.0",
     "pytest>=7.0.0",
     "pytest-asyncio>=0.23.0",
     "pytest-cov>=4.1.0",
     "respx>=0.22.0",
-    "ruff==0.16.3",
+    "ruff==0.16.4",
     # The `typecheck` gate's checker (#3917). Specifier deliberately identical
     # to the one already in scripts/oss/templates/pyproject.toml: this repo's
     # cross-file agreement ratchet compares specifier STRINGS, and a new

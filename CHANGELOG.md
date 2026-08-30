@@ -3,6 +3,149 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [Semantic Versioning](https://semver.org/).
 
+## [3.5.0] - 2026-08-30
+
+### Added
+
+- **Your AI coding assistant can now use convilyn directly.** One command sets
+  it up:
+
+  ```bash
+  uv tool install "convilyn[all,mcp]"   # or: pip install --user "convilyn[all,mcp]"
+  convilyn agent install
+  ```
+
+  After that, an assistant working in your project can convert a `.docx`,
+  `.pptx` or `.pdf` to Markdown by itself, without you copying text around. The
+  conversion still happens on your machine and still costs nothing.
+
+  Claude Code and Codex look in different places, so both are written: Claude
+  Code gets a plugin at `~/.claude/skills/convilyn/` that loads on the next
+  session with no marketplace and no install step; Codex gets
+  `~/.agents/skills/convilyn/SKILL.md` and an `[mcp_servers.convilyn]` table
+  merged into `~/.codex/config.toml`.
+
+  **Install it where your editor can find it.** The MCP server is started by the
+  editor rather than by your shell, so it has to reach `convilyn` on `PATH`, and
+  a project virtualenv is not on the editor's `PATH`.
+
+  `convilyn agent install` is safe to re-run, supports `--dry-run`, and merges
+  into your existing config rather than replacing it. If your config is in a
+  shape it cannot safely edit, it says so and changes nothing.
+
+- **`convilyn mcp serve`** — speak the Model Context Protocol on stdin/stdout,
+  which is how coding assistants talk to outside tools. It offers five:
+  `convilyn_convert`, `convilyn_capabilities` and `convilyn_pdf` (local and
+  free), `convilyn_quota` (prices a hosted run and reports your tier — it is not
+  a balance check; the balance is `client.account.get_balance()`), and
+  `convilyn_understand`
+  (structured extraction — this one spends credits, and its description says so
+  where the assistant will read it).
+
+  Only those last two need an account. The three local tools work with no
+  `convilyn setup` at all.
+
+  Needs the new `mcp` extra: `pip install "convilyn[mcp]"`. It is not part of
+  `[all]`, because `[all]` is about file formats and this is not.
+
+- **A plugin for editors that install plugins from a marketplace.** Point yours
+  at `CoreNovus/convilyn-python` and it gets both the guidance and the five
+  tools. This is the route for handing convilyn to a team; on your own machine
+  `convilyn agent install` already sets Claude Code up directly.
+
+- **Guidance that says when *not* to use convilyn.** The skill file tells your
+  assistant to read `.md`, `.txt`, `.csv` and source files directly, because
+  that is genuinely faster and costs the same nothing. It is there so the tool
+  gets reached for when it actually helps.
+
+### Security
+
+- **No API key is written into any assistant config file.** `convilyn setup`
+  already stores your key where the CLI finds it, so the MCP setup carries no
+  credentials at all — nothing to leak when a config file gets copied to another
+  machine or pasted into a bug report.
+
+- **`convilyn api` no longer accepts an absolute URL, and that closes a way your
+  API key could leave your machine.** Every request this client makes carries
+  your key in an `Authorization` header, and the underlying HTTP library ignores
+  the configured API host the moment it is handed a full `https://…` address —
+  so `convilyn api GET https://somewhere-else/…` sent your key to
+  `somewhere-else`. It now refuses before anything is sent, and tells you to
+  pass a path like `/api/v1/jobs` instead.
+
+  This matters most where the path is not typed by you: the command is
+  documented for AI assistants to use, and the skill this package ships grants
+  an assistant permission to run any `convilyn` command — so the argument could
+  come from a document the assistant was asked to read. Reaching an external
+  address is still supported where it always was, on the download/upload paths,
+  which do not attach your key and already validate the address.
+
+- **`convilyn_understand` only reads files from the folder your editor opened,
+  and never a credential file.** It is the one tool here that sends your files
+  to us, and it used to accept any path that existed — so an assistant that had
+  just read a document telling it to "check `~/.ssh/id_rsa`" could have uploaded
+  it. It now resolves each path first (so a shortcut cannot point outside the
+  folder) and refuses anything credential-shaped — `.env`, `*.pem`, private
+  keys, `.npmrc`, and this tool's own `credentials.json` — even inside your
+  project.
+
+- **Nothing is uploaded or charged until you say yes.** The tool used to ask
+  your assistant, in writing, to check with you first. That is a request to the
+  same assistant it is trying to restrain. Your editor now shows you a real
+  prompt naming the files and the price before anything leaves your machine, and
+  an assistant cannot answer it for you. If your editor cannot show such a
+  prompt, the tool declines rather than proceeding — nothing is sent, and
+  nothing is billed.
+
+- **`convilyn_pdf` answers instead of crashing when an argument is missing.** It
+  raised a `KeyError` that reached your assistant as a stack trace; it now
+  returns which argument it needs, which is something the assistant can act on.
+
+- **`convilyn agent install --dry-run` no longer says it changed your machine.**
+  It reported `created: …` for each destination while writing nothing, so the
+  one command whose entire job is to show you what *would* happen described it
+  in the past tense. It now says `would create:`.
+
+- **A billing link from the server is checked before your browser is opened.**
+  When a job stops for want of credits, the response carries a top-up link, and
+  the CLI offered to open it. On Windows that path will open a local file or run
+  a program just as readily as a web page, so the link is now required to be a
+  real `https://` address first. It is still always printed, so a legitimate
+  link is never lost.
+
+## [3.4.1] - 2026-08-29
+
+### Changed
+
+- **The browser page you land on after signing in now explains what was set
+  up**: that a key is being created for this machine, that your sign-in session
+  is used once and then discarded, and that the key never passes through the
+  browser. It used to say only "you can close this window".
+
+### Fixed
+
+- **The browser no longer shows "Signed in" when the sign-in was rejected.** If
+  the callback failed a security check, the page said it had succeeded while the
+  terminal said it had failed. It now says what went wrong and that nothing was
+  saved.
+
+- **`convilyn doctor` now checks the credentials file's permissions on Windows
+  too.** It used to skip the check entirely there, so it reported nothing either
+  way.
+
+  On Windows the file is protected by the permissions it inherits from
+  `%APPDATA%`, which by default let only you, Administrators and the system read
+  it — the same protection as on macOS and Linux. That default is fine, and
+  `doctor` now confirms it rather than staying silent:
+
+  ```
+  ✓ [OK] Credentials file: ACL grants no broad principal (C:\...\credentials.json)
+  ```
+
+  If the file ends up somewhere more permissive — a redirected `%APPDATA%`, a
+  network share, a restored backup — `doctor` says so and names who can read it,
+  instead of skipping.
+
 ## [3.4.0] - 2026-08-29
 
 ### Added

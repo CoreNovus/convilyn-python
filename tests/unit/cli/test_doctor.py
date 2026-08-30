@@ -442,11 +442,56 @@ class TestCredentialsFilePermissionCheck:
         assert check["status"] == "WARN"
         assert "chmod 600" in check["detail"]
 
-    def test_windows_is_always_skipped(
+    def test_windows_reads_the_acl_and_reports_a_clean_one_as_ok(
         self, runner: CliRunner, env_with_key: None, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """This asserted `SKIP` until #4823, and the SKIP was the defect.
+
+        It was justified as "nothing this check can meaningfully assert on
+        Windows", which is true of Unix permission bits and false of the
+        question the check is named after. The ACL was always readable; nobody
+        was reading it, and every Windows user got a status indistinguishable
+        from a pass.
+        """
         credentials.write_credentials("ck_from_setup")  # pragma: allowlist secret
         monkeypatch.setattr(os, "name", "nt")
+        monkeypatch.setattr(credentials, "broad_principals_with_access", frozenset)
+        payload = self._payload(runner)
+        check = [c for c in payload["checks"] if c["name"] == "Credentials file"][0]
+        assert check["status"] == "OK"
+
+    def test_windows_warns_and_names_who_can_read_it(
+        self, runner: CliRunner, env_with_key: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The finding must say WHO, not just that something is wrong.
+
+        The remedy differs by principal — `Users` means a redirected
+        `%APPDATA%`, `Everyone` means something else again — so a bare "your
+        permissions are wrong" leaves the user with nowhere to go.
+        """
+        credentials.write_credentials("ck_from_setup")  # pragma: allowlist secret
+        monkeypatch.setattr(os, "name", "nt")
+        monkeypatch.setattr(
+            credentials, "broad_principals_with_access", lambda: frozenset({"users"})
+        )
+        payload = self._payload(runner)
+        check = [c for c in payload["checks"] if c["name"] == "Credentials file"][0]
+        assert check["status"] == "WARN"
+        assert "users" in check["detail"]
+
+    def test_windows_skips_when_the_acl_cannot_be_read(
+        self, runner: CliRunner, env_with_key: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`None` (not measured) must not render as OK.
+
+        This is the distinction the original code could not make. An empty set
+        means "read it, it is clean"; `None` means "could not read it". A check
+        that shows those the same way has a green that means nothing.
+        """
+        credentials.write_credentials("ck_from_setup")  # pragma: allowlist secret
+        monkeypatch.setattr(os, "name", "nt")
+        monkeypatch.setattr(credentials, "broad_principals_with_access", lambda: None)
         payload = self._payload(runner)
         check = [c for c in payload["checks"] if c["name"] == "Credentials file"][0]
         assert check["status"] == "SKIP"
+        assert "icacls" in check["detail"]

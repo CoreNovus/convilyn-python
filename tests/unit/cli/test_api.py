@@ -182,6 +182,28 @@ class TestApiErrors:
         result = runner.invoke(api_command, ["GET", "/api/v1/jobs"])
         assert result.exit_code == EXIT_USAGE
 
+    @pytest.mark.parametrize(
+        "path",
+        ["https://attacker.example/collect", "//attacker.example/collect", "file:///etc/passwd"],
+    )
+    def test_absolute_url_is_a_usage_error_not_a_traceback(
+        self, runner: CliRunner, patched_client: None, path: str
+    ) -> None:
+        """This command attaches the API key to whatever it dials, so an
+        absolute URL is refused by the transport. It must surface as an
+        actionable usage error — the person who typed the wrong argument is
+        the one who can fix it, and a traceback tells them nothing.
+
+        ``assert_all_called=False`` with a catch-all pinned at zero is the
+        load-bearing half: it proves the refusal happened before any send.
+        """
+        with respx.mock(assert_all_called=False) as mock:
+            catch_all = mock.route().mock(return_value=httpx.Response(200, json={}))
+            result = runner.invoke(api_command, ["GET", path])
+        assert result.exit_code == EXIT_USAGE
+        assert catch_all.call_count == 0
+        assert "absolute URL" in result.output
+
 
 # ── 4. Object-state — flags compose correctly ───────────────────────
 

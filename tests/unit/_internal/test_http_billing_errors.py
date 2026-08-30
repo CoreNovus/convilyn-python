@@ -129,6 +129,21 @@ class TestInsufficientCreditsCarriesTheNumbers:
 
         assert decoded.details["somethingNew"] == "kept"
 
+    def test_insufficient_credits_upgrade_url_is_read_from_the_nested_details(self) -> None:
+        """Unlike ``FreeTierBlockedError.upgrade_url`` (read off the top-level
+        envelope), this one rides INSIDE ``details`` alongside the credit
+        numbers — same reason ``requiredCredits``/``availableCredits`` do:
+        the refusal is built as ``detail={code, message, details={...}}``."""
+        decoded = _decode_error(
+            _refusal(
+                402,
+                "INSUFFICIENT_CREDITS",
+                details={"requiredCredits": 6, "availableCredits": 2, "upgradeUrl": "/billing"},
+            )
+        )
+
+        assert decoded.upgrade_url == "/billing"  # type: ignore[union-attr]
+
     def test_free_tier_blocked_carries_the_upgrade_url(self) -> None:
         decoded = _decode_error(
             _refusal(403, "free_cost_cap_exceeded", upgradeUrl="/pricing"),
@@ -185,6 +200,13 @@ class TestBillingRefusalBoundaries:
         decoded = _decode_error(_refusal(402, "INSUFFICIENT_CREDITS"))
 
         assert decoded.shortfall_credits is None  # type: ignore[union-attr]
+
+    def test_absent_upgrade_url_is_none(self) -> None:
+        """A refusal built before this field existed must not crash decoding —
+        read as unknown, same discipline as the credit operands above."""
+        decoded = _decode_error(_refusal(402, "INSUFFICIENT_CREDITS"))
+
+        assert decoded.upgrade_url is None  # type: ignore[union-attr]
 
     def test_the_shortfall_never_goes_negative(self) -> None:
         """A refusal whose operands disagree with itself still renders a number

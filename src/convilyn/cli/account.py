@@ -20,7 +20,15 @@ from typing import Any
 
 import click
 
-from convilyn import APIError, AuthError, Convilyn, PlanRequiredError, QuotaExceededError
+from convilyn import (
+    APIError,
+    AuthError,
+    Convilyn,
+    InsufficientCreditsError,
+    PlanRequiredError,
+    QuotaExceededError,
+)
+from convilyn.cli._browser import open_url_with_fallback
 from convilyn.cli._exit_codes import EXIT_API_ERROR, EXIT_USAGE
 from convilyn.cli._output import OutputRenderer, make_renderer
 
@@ -158,6 +166,15 @@ def _run_account_action(
             f"(used {exc.estimated_micro_u}/{exc.threshold_micro_u} micro-U)",
             err=True,
         )
+        raise SystemExit(EXIT_USAGE) from exc
+    except InsufficientCreditsError as exc:
+        click.echo(
+            f"Insufficient credits: {exc.message} "
+            f"(need {exc.required_credits}, have {exc.available_credits})",
+            err=True,
+        )
+        if exc.upgrade_url:
+            open_url_with_fallback(exc.upgrade_url, intro="Opening your browser to top up credits…")
         raise SystemExit(EXIT_USAGE) from exc
     except AuthError as exc:
         click.echo(f"Authentication failed: {exc}", err=True)

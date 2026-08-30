@@ -38,6 +38,7 @@ from convilyn import (
     GoalArtifactUnusableError,
     GoalJobFailedError,
     GoalJobTimeoutError,
+    InsufficientCreditsError,
     UnderstandUnavailableError,
 )
 
@@ -48,6 +49,7 @@ from convilyn import (
 # silently escape that patch — the sub-command would dial the real network
 # while its siblings used the fake.
 from convilyn.cli import goals as _goals
+from convilyn.cli._browser import open_url_with_fallback
 from convilyn.cli._exit_codes import (
     EXIT_API_ERROR,
     EXIT_JOB_FAILED,
@@ -268,6 +270,14 @@ def _run_understand(
         # The run happened and was charged; there is simply nothing to print.
         # NOT `EXIT_USAGE` — the invocation was fine.
         raise SystemExit(EXIT_JOB_FAILED) from _goals._print_error(exc, "No usable result")
+    except InsufficientCreditsError as exc:
+        _goals._print_error(
+            exc,
+            f"Insufficient credits (need {exc.required_credits}, have {exc.available_credits})",
+        )
+        if exc.upgrade_url:
+            open_url_with_fallback(exc.upgrade_url, intro="Opening your browser to top up credits…")
+        raise SystemExit(EXIT_USAGE) from exc
     except APIError as exc:
         raise SystemExit(EXIT_API_ERROR) from _goals._print_error(exc, "API error")
     except (TypeError, ValueError) as exc:

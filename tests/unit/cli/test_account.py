@@ -16,6 +16,7 @@ from click.testing import CliRunner
 from convilyn import (
     APIError,
     CostEstimate,
+    InsufficientCreditsError,
     Plan,
     PlanRequiredError,
     QuotaCheck,
@@ -133,6 +134,41 @@ class TestErrors:
         mock_factory.account.get_quota.side_effect = APIError(500, "INTERNAL", "Server error")
         result = runner.invoke(account_command, ["quota"])
         assert result.exit_code == EXIT_API_ERROR
+
+    def test_insufficient_credits_exits_usage_and_opens_the_link(
+        self, runner: CliRunner, mock_factory: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        opened: list[str] = []
+        monkeypatch.setattr("convilyn.cli._browser.webbrowser.open", opened.append)
+        mock_factory.account.get_quota.side_effect = InsufficientCreditsError(
+            402,
+            "INSUFFICIENT_CREDITS",
+            "Not enough credits to run this workflow.",
+            required_credits=12,
+            available_credits=3,
+            upgrade_url="https://app.test.example/billing",
+        )
+        result = runner.invoke(account_command, ["quota"])
+        assert result.exit_code == EXIT_USAGE
+        assert "Insufficient credits" in result.output
+        assert "https://app.test.example/billing" in result.output
+        assert opened == ["https://app.test.example/billing"]
+
+    def test_insufficient_credits_without_a_link_does_not_try_to_open_one(
+        self, runner: CliRunner, mock_factory: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        opened: list[str] = []
+        monkeypatch.setattr("convilyn.cli._browser.webbrowser.open", opened.append)
+        mock_factory.account.get_quota.side_effect = InsufficientCreditsError(
+            402,
+            "INSUFFICIENT_CREDITS",
+            "Not enough credits to run this workflow.",
+            required_credits=12,
+            available_credits=3,
+        )
+        result = runner.invoke(account_command, ["quota"])
+        assert result.exit_code == EXIT_USAGE
+        assert opened == []
 
 
 # ── 4. Object-state — main CLI registers `account` group ────────────

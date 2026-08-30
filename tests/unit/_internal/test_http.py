@@ -244,6 +244,64 @@ class TestBaseUrlHttpsGuard:
         assert resolve_base_url("https://api.example.com", env={}) == "https://api.example.com"
 
 
+class TestAbsoluteUrlRefusedOnAuthenticatedPath:
+    """The authenticated transport must never dial a host it was not configured for.
+
+    ``_default_headers`` attaches the API key to every request this client
+    issues, and httpx ignores ``base_url`` the moment it is handed an absolute
+    URL. Those two facts together are a key-exfil primitive, and ``convilyn
+    api`` takes its path straight from argv — which is what makes it reachable
+    rather than theoretical.
+
+    **The assertion that matters is that no request was issued**, not merely
+    that a ``ValueError`` surfaced. A guard that raised *after* the send would
+    satisfy the exception check and still have delivered the key, so every case
+    below pins ``call_count == 0`` on a catch-all route.
+    """
+
+    FOREIGN = [
+        "https://attacker.example/collect",
+        "http://attacker.example/collect",
+        "//attacker.example/collect",  # protocol-relative: no scheme, but a netloc
+        "file:///etc/passwd",
+    ]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("path", FOREIGN)
+    async def test_request_refuses_and_sends_nothing(self, path: str) -> None:
+        async with respx.mock(assert_all_called=False) as mock:
+            catch_all = mock.route().mock(return_value=httpx.Response(200, json={}))
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                with pytest.raises(ValueError, match="absolute URL"):
+                    await client._http.request("GET", path)
+            assert catch_all.call_count == 0
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("path", FOREIGN)
+    async def test_raw_request_refuses_and_sends_nothing(self, path: str) -> None:
+        """``raw_request`` is the one ``convilyn api`` uses, and it swallows
+        HTTP status — so it needs its own case rather than inheriting
+        ``request``'s."""
+        async with respx.mock(assert_all_called=False) as mock:
+            catch_all = mock.route().mock(return_value=httpx.Response(200, json={}))
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                with pytest.raises(ValueError, match="absolute URL"):
+                    await client._http.raw_request("GET", path)
+            assert catch_all.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_a_relative_path_still_reaches_the_configured_host(self) -> None:
+        """Non-vacuity. Without this, a guard that rejected *every* path would
+        pass every case above while breaking the whole client."""
+        async with respx.mock(assert_all_called=True) as mock:
+            mock.get(f"{API_BASE}/api/v1/test").mock(
+                return_value=httpx.Response(200, json={"ok": True})
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                response = await client._http.raw_request("GET", "/api/v1/test")
+        assert response.status_code == 200
+
+
 class TestExternalDownloadCap:
     """external_get_to_file streams with a byte cap; oversize aborts."""
 

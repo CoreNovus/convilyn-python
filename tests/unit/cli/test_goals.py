@@ -21,12 +21,14 @@ from convilyn import (
     GoalJob,
     GoalJobFailedError,
     GoalJobTimeoutError,
+    InsufficientCreditsError,
 )
 from convilyn.cli import goals as goals_module
 from convilyn.cli._exit_codes import (
     EXIT_API_ERROR,
     EXIT_JOB_FAILED,
     EXIT_OK,
+    EXIT_USAGE,
 )
 from convilyn.cli.goals import (
     _parse_file_ids,
@@ -441,6 +443,28 @@ class TestErrorMapping:
         mock_factory.goals.retrieve.side_effect = APIError(500, "INTERNAL", "server down")
         result = runner.invoke(goals_command, ["status", "job_test"])
         assert result.exit_code == EXIT_API_ERROR
+
+    def test_insufficient_credits_exits_usage_and_opens_the_link(
+        self,
+        runner: CliRunner,
+        mock_factory: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        opened: list[str] = []
+        monkeypatch.setattr("convilyn.cli._browser.webbrowser.open", opened.append)
+        mock_factory.goals.wait.side_effect = InsufficientCreditsError(
+            402,
+            "INSUFFICIENT_CREDITS",
+            "Not enough credits to run this workflow.",
+            required_credits=12,
+            available_credits=3,
+            upgrade_url="https://app.test.example/billing",
+        )
+        result = runner.invoke(goals_command, ["status", "job_test", "--watch"])
+        assert result.exit_code == EXIT_USAGE
+        assert "Insufficient credits" in result.output
+        assert "https://app.test.example/billing" in result.output
+        assert opened == ["https://app.test.example/billing"]
 
 
 # ── 4. Object-state — sync client lifecycle ─────────────────────────

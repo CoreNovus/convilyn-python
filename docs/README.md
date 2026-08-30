@@ -113,6 +113,50 @@ Also on the CLI: `convilyn local pdf {merge,select,split,rotate,compress,protect
 `protect` and `unlock` prompt for the password when you omit it, so it stays out
 of your shell history.
 
+## Working with an AI coding assistant
+
+If you use Claude Code or Codex, one command lets the assistant do the
+conversions itself instead of asking you to paste text:
+
+```bash
+uv tool install "convilyn[all,mcp]"   # or: pip install --user "convilyn[all,mcp]"
+convilyn agent install
+```
+
+**Install it where your editor can find it.** The MCP server is started by the
+editor, not by your shell, so it has to reach `convilyn` on `PATH` — a project
+virtualenv is not on the editor's `PATH`. `uv tool install` and
+`pip install --user` both put it somewhere that works.
+
+That installs a skill describing when local conversion helps — and, just as
+importantly, when reading the file directly is the better move — and registers
+an MCP server offering five tools: `convilyn_convert`, `convilyn_capabilities`
+and `convilyn_pdf` (local, free), `convilyn_quota`, and `convilyn_understand`
+(hosted, spends credits, and says so where the assistant reads it).
+
+Each host looks in its own place, so the command writes to both:
+
+| Host | What it gets | Where |
+|---|---|---|
+| Claude Code | a plugin carrying the skill and the MCP server, loaded with no marketplace and no install step | `~/.claude/skills/convilyn/` |
+| Codex | the skill, and an `[mcp_servers.convilyn]` table merged into your config | `~/.agents/skills/convilyn/`, `~/.codex/config.toml` |
+
+Claude Code picks it up on the next session (or `/reload-plugins` now); Codex on
+the next run. It merges into your existing config rather than replacing it, is
+safe to re-run, and takes `--dry-run`. **No API key is written into any config
+file** — `convilyn setup` already stores it where the CLI looks.
+
+Only two of the five tools need an account: `convilyn_understand` and
+`convilyn_quota` reach the platform. The three local ones work with no `convilyn
+setup` at all.
+
+To hand the same thing to a team from a marketplace instead:
+
+```
+/plugin marketplace add CoreNovus/convilyn-python
+/plugin install convilyn@convilyn
+```
+
 ## The platform half — AI workflows
 
 With an API key, the same package reaches the hosted workflows: conversions that

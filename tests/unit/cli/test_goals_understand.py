@@ -27,6 +27,7 @@ from convilyn import (
     GoalArtifactUnusableError,
     GoalJobFailedError,
     GoalJobTimeoutError,
+    InsufficientCreditsError,
     UnderstandUnavailableError,
 )
 from convilyn.cli import goals as goals_module
@@ -392,6 +393,34 @@ class TestUnderstandErrorMapping:
         )
 
         assert result.exit_code == EXIT_USAGE
+
+    def test_insufficient_credits_exits_usage_and_opens_the_link(
+        self,
+        runner: CliRunner,
+        mock_factory: MagicMock,
+        schema_file: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        opened: list[str] = []
+        monkeypatch.setattr("convilyn.cli._browser.webbrowser.open", opened.append)
+        mock_factory.goals.understand.side_effect = InsufficientCreditsError(
+            402,
+            "INSUFFICIENT_CREDITS",
+            "Not enough credits to run this workflow.",
+            required_credits=12,
+            available_credits=3,
+            upgrade_url="https://app.test.example/billing",
+        )
+
+        result = runner.invoke(
+            goals_command,
+            ["understand", "--files", "file_a", "--schema-file", str(schema_file)],
+        )
+
+        assert result.exit_code == EXIT_USAGE
+        assert "Insufficient credits" in result.output
+        assert "https://app.test.example/billing" in result.output
+        assert opened == ["https://app.test.example/billing"]
 
     def test_slot_stop_value_error_exits_usage(
         self,

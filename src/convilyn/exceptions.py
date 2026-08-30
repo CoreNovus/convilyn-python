@@ -165,6 +165,10 @@ class InsufficientCreditsError(APIError):
     the server did not send them — read them as *unknown*, never as zero, and
     keep :attr:`APIError.details` as the untyped fallback for anything this
     build does not model.
+
+    :attr:`upgrade_url` points at the account's top-up page when the server
+    sends one, mirroring :attr:`PlanRequiredError.upgrade_url` — the SDK does
+    not construct or guess it.
     """
 
     def __init__(
@@ -176,10 +180,12 @@ class InsufficientCreditsError(APIError):
         *,
         required_credits: int | None = None,
         available_credits: int | None = None,
+        upgrade_url: str | None = None,
     ) -> None:
         super().__init__(status_code, code, message, details)
         self.required_credits = required_credits
         self.available_credits = available_credits
+        self.upgrade_url = upgrade_url
 
     @property
     def shortfall_credits(self) -> int | None:

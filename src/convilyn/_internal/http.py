@@ -148,6 +148,41 @@ def _require_https_base_url(base_url: str) -> None:
     )
 
 
+def _require_relative_path(path: str) -> None:
+    """Reject an absolute URL where a base-URL-relative path is required.
+
+    ``_default_headers`` attaches the caller's API key to **every** request this
+    client issues, and httpx resolves an absolute URL against no base at all —
+    it ignores ``base_url`` entirely. So a ``path`` carrying its own scheme and
+    host does not reach the configured API; it delivers the key to that host.
+
+    This is the authenticated path's only caller-steerable input. ``convilyn
+    api`` takes its path straight from argv, and that command's own docstring
+    invites AI agents to use it, while the skill shipped in this package grants
+    an agent blanket ``Bash(convilyn:*)`` — so the string can come from a
+    document the agent just read.
+
+    Absolute URLs are not blocked outright anywhere in this module; they are
+    dialled by :py:meth:`external_get` / :py:meth:`external_post_form`, which
+    deliberately do NOT attach our ``Authorization`` and which run
+    :func:`_require_safe_external_url` first. This guard keeps those two paths
+    from collapsing into one.
+
+    Raises:
+        ValueError: ``path`` carries a scheme or a network location. A
+            protocol-relative ``//host/x`` is rejected by the ``netloc`` half.
+    """
+    parts = urlsplit(path)
+    if not parts.scheme and not parts.netloc:
+        return
+    raise ValueError(
+        f"Refusing to send an authenticated request to an absolute URL ({path!r}). "
+        "This client attaches your API key to every request it issues, so a "
+        "foreign host would receive it. Pass a path relative to the configured "
+        "base URL instead, e.g. /api/v1/jobs."
+    )
+
+
 def _require_safe_external_url(url: str) -> None:
     """Guard an externally-supplied absolute URL before the SDK dials it.
 
@@ -367,7 +402,13 @@ class HTTPClient:
         = retries fired). The caller decides what to do with non-2xx
         responses: :py:meth:`request` raises, :py:meth:`raw_request`
         returns. This split is the SRP / OCP seam for the transport.
+
+        The path guard lives HERE rather than on the two public methods
+        because this is the single point both of them funnel through — and
+        because it must run before ``_default_headers`` attaches the key,
+        not merely before the send.
         """
+        _require_relative_path(path)
         merged_headers = self._default_headers()
         if headers:
             merged_headers.update(headers)
@@ -602,12 +643,12 @@ def _decode_error(response: httpx.Response) -> APIError:
                 upgrade_url=upgrade_url,
             )
         if code == "INSUFFICIENT_CREDITS":
-            # These two ride INSIDE `details`, not beside it — the refusal is
-            # built as `detail={code, message, details={requiredCredits, ...}}`
-            # (`api/v1/goal_lane/_charging.py`), so `inner` holds the dict and
-            # not the numbers. Reading them off `inner` would silently produce
-            # None on every real refusal while looking exactly like the
-            # QUOTA_EXCEEDED branch above.
+            # These ride INSIDE `details`, not beside it — the refusal is built
+            # as `detail={code, message, details={requiredCredits, ...}}`
+            # (`app/services/billing/goal_lane_confirm.py::charge_confirmed_run`),
+            # so `inner` holds the dict and not the numbers. Reading them off
+            # `inner` would silently produce None on every real refusal while
+            # looking exactly like the QUOTA_EXCEEDED branch above.
             credit_detail = details if isinstance(details, dict) else {}
             return InsufficientCreditsError(
                 status,
@@ -620,6 +661,7 @@ def _decode_error(response: httpx.Response) -> APIError:
                 available_credits=_coerce_int(
                     _first_present(credit_detail, "availableCredits", "available_credits")
                 ),
+                upgrade_url=_first_present(credit_detail, "upgradeUrl", "upgrade_url"),
             )
 
     if status == 403 and code in _FREE_TIER_BLOCKED_CODES:

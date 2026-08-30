@@ -72,7 +72,7 @@ uv add convilyn          # or: pip install convilyn
 Pin the version. Do **not** reach for `--pre`:
 
 ```bash
-pip install "convilyn[all]==3.3.0b1"
+pip install "convilyn[all]==<the exact pre-release you want>"
 ```
 
 pip already allows a pre-release when the specifier names one explicitly, so the
@@ -92,6 +92,39 @@ pre-release will meet it.
 See **[docs/QUICKSTART.md](docs/QUICKSTART.md)** and the full docs at:
 
 [https://docs.convilyn.com](https://docs.convilyn.com)
+
+## Use it from an AI coding assistant
+
+```bash
+uv tool install "convilyn[all,mcp]"   # or: pip install --user "convilyn[all,mcp]"
+convilyn agent install
+```
+
+Installs a skill and registers an MCP server, so an assistant working in your
+project can convert `.docx`, `.pptx` or `.pdf` itself. Safe to re-run, supports
+`--dry-run`, merges into an existing config rather than replacing it, and writes
+no credentials anywhere.
+
+**Install it where your editor can find it** — the MCP server is started by the
+editor rather than by your shell, and a project virtualenv is not on the
+editor's `PATH`.
+
+Each host looks in its own place, so both are written: Claude Code gets a plugin
+at `~/.claude/skills/convilyn/` that loads with no marketplace and no install
+step; Codex gets `~/.agents/skills/convilyn/SKILL.md` plus an
+`[mcp_servers.convilyn]` table merged into `~/.codex/config.toml`.
+
+To hand the same thing to a team from a marketplace instead, this repository is
+one:
+
+```
+/plugin marketplace add CoreNovus/convilyn-python
+/plugin install convilyn@convilyn
+```
+
+The skill deliberately tells the assistant *not* to reach for convilyn on files
+that are already text — `.md`, `.txt`, `.csv`, source code — where reading them
+directly is faster and costs the same nothing.
 
 ## How well does it work?
 

@@ -13,6 +13,7 @@ import os
 import platform
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 
 import click
 import httpx
@@ -161,13 +162,29 @@ def _check_api_key() -> Check:
 
 
 def _check_credentials_file_permissions() -> Check:
-    """Warn when the `convilyn setup` credentials file is more permissive
-    than the `0600` it was created with. No-op (SKIP) on Windows, where
-    `os.chmod` does not narrow NTFS ACLs, and where there is nothing this
-    check can meaningfully assert."""
+    """Warn when the `convilyn setup` credentials file is readable by more than
+    its owner.
+
+    Two mechanisms, because the platforms protect the file differently:
+
+    * **POSIX** — the file is created `0600`; this warns if the mode has since
+      widened.
+    * **Windows** — `os.chmod` cannot narrow an NTFS ACL, so the file's
+      protection is the ACL it inherits from `%APPDATA%`. That default is
+      measured-equivalent to `0600` (user + Administrators + SYSTEM), but it is
+      inheritance rather than a guarantee: a redirected `%APPDATA%` on a share
+      or a roaming profile can hand the file a permissive ACL. This reads the
+      real ACL and names any broadly-scoped principal on it.
+
+    This used to be an unconditional `SKIP` on Windows, described as "nothing
+    this check can meaningfully assert". That was true of *Unix permission
+    bits* and false of the question the check is named after — the ACL was
+    always readable, nobody was reading it, and the SKIP was indistinguishable
+    from a pass for every Windows user.
+    """
     path = credentials.credentials_path()
     if os.name == "nt":
-        return Check("Credentials file", "SKIP", "permissions not checked on Windows (NTFS ACLs)")
+        return _check_windows_credentials_acl(path)
     if not path.exists():
         return Check(
             "Credentials file",
@@ -184,6 +201,42 @@ def _check_credentials_file_permissions() -> Check:
     return Check(
         "Credentials file", "OK", f"{oct(mode) if mode is not None else 'unknown'} ({path})"
     )
+
+
+def _check_windows_credentials_acl(path: Path) -> Check:
+    """The Windows half of the check above.
+
+    Three outcomes, kept distinct on purpose. WARN names the offending
+    principals, OK says the ACL was read and is clean, and SKIP says it could
+    not be read at all — a check that renders "I looked and it is fine" the same
+    as "I did not look" has a green that means nothing.
+    """
+    if not path.exists():
+        return Check(
+            "Credentials file",
+            "SKIP",
+            f"no local credentials file at {path} (run `convilyn setup` to create one)",
+        )
+
+    broad = credentials.broad_principals_with_access()
+    if broad is None:
+        return Check(
+            "Credentials file",
+            "SKIP",
+            f"could not read the NTFS ACL for {path} (icacls unavailable)",
+        )
+    if broad:
+        names = ", ".join(sorted(broad))
+        return Check(
+            "Credentials file",
+            "WARN",
+            (
+                f"{path} is readable by {names} — your API key is exposed to other "
+                "accounts on this machine. Move it back under the default %APPDATA% "
+                "location, or remove those entries from the ACL."
+            ),
+        )
+    return Check("Credentials file", "OK", f"ACL grants no broad principal ({path})")
 
 
 def _check_base_url() -> Check:

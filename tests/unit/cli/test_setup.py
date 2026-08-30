@@ -21,6 +21,7 @@ import respx
 from click.testing import CliRunner
 
 from convilyn._internal import credentials
+from convilyn.cli import _browser as browser_cli
 from convilyn.cli import setup as setup_cli
 from convilyn.cli._exit_codes import EXIT_API_ERROR, EXIT_USAGE
 from convilyn.cli.setup import setup_command
@@ -128,7 +129,7 @@ class TestSetupLogic:
     def test_full_flow_mints_and_persists_a_key(
         self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch, isolated_credentials_root: Path
     ) -> None:
-        monkeypatch.setattr(setup_cli.webbrowser, "open", _real_browser())
+        monkeypatch.setattr(browser_cli.webbrowser, "open", _real_browser())
         with respx.mock(assert_all_called=False) as mock:
             _mock_token_and_key_endpoints(mock)
             result = runner.invoke(setup_command, ["--provider", "google"])
@@ -138,7 +139,7 @@ class TestSetupLogic:
     def test_json_output_reports_the_result(
         self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(setup_cli.webbrowser, "open", _real_browser())
+        monkeypatch.setattr(browser_cli.webbrowser, "open", _real_browser())
         with respx.mock(assert_all_called=False) as mock:
             _mock_token_and_key_endpoints(mock, tier="pro")
             result = runner.invoke(setup_command, ["--provider", "github", "--json"])
@@ -153,7 +154,7 @@ class TestSetupLogic:
     def test_session_tokens_are_never_persisted(
         self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch, isolated_credentials_root: Path
     ) -> None:
-        monkeypatch.setattr(setup_cli.webbrowser, "open", _real_browser())
+        monkeypatch.setattr(browser_cli.webbrowser, "open", _real_browser())
         with respx.mock(assert_all_called=False) as mock:
             _mock_token_and_key_endpoints(mock)
             runner.invoke(setup_command, ["--provider", "google"])
@@ -170,7 +171,7 @@ class TestSetupBoundary:
         self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         calls: list[str] = []
-        monkeypatch.setattr(setup_cli.webbrowser, "open", calls.append)
+        monkeypatch.setattr(browser_cli.webbrowser, "open", calls.append)
         result = runner.invoke(
             setup_command, ["--provider", "google", "--no-browser", "--timeout", "0.05"]
         )
@@ -180,7 +181,7 @@ class TestSetupBoundary:
     def test_json_mode_suppresses_the_banner(
         self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(setup_cli.webbrowser, "open", _real_browser())
+        monkeypatch.setattr(browser_cli.webbrowser, "open", _real_browser())
         with respx.mock(assert_all_called=False) as mock:
             _mock_token_and_key_endpoints(mock)
             result = runner.invoke(setup_command, ["--provider", "google", "--json"])
@@ -199,7 +200,7 @@ class TestSetupErrors:
         self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(
-            setup_cli.webbrowser, "open", _real_browser(state_override="wrong-state")
+            browser_cli.webbrowser, "open", _real_browser(state_override="wrong-state")
         )
         result = runner.invoke(setup_command, ["--provider", "google"])
         assert result.exit_code == EXIT_USAGE
@@ -208,7 +209,7 @@ class TestSetupErrors:
     def test_token_exchange_rejected_exits_api_error(
         self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(setup_cli.webbrowser, "open", _real_browser())
+        monkeypatch.setattr(browser_cli.webbrowser, "open", _real_browser())
         with respx.mock(assert_all_called=False) as mock:
             _allow_loopback_passthrough(mock)
             mock.post(f"{BASE}/api/v1/auth/desktop/token").mock(
@@ -220,7 +221,7 @@ class TestSetupErrors:
     def test_key_mint_failure_exits_api_error(
         self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch, isolated_credentials_root: Path
     ) -> None:
-        monkeypatch.setattr(setup_cli.webbrowser, "open", _real_browser())
+        monkeypatch.setattr(browser_cli.webbrowser, "open", _real_browser())
         with respx.mock(assert_all_called=False) as mock:
             _allow_loopback_passthrough(mock)
             mock.post(f"{BASE}/api/v1/auth/desktop/token").mock(
@@ -256,7 +257,7 @@ class TestSetupObjectState:
     def test_written_credentials_are_source_setup(
         self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch, isolated_credentials_root: Path
     ) -> None:
-        monkeypatch.setattr(setup_cli.webbrowser, "open", _real_browser())
+        monkeypatch.setattr(browser_cli.webbrowser, "open", _real_browser())
         with respx.mock(assert_all_called=False) as mock:
             _mock_token_and_key_endpoints(mock)
             runner.invoke(setup_command, ["--provider", "google"])
@@ -309,7 +310,7 @@ class TestPasswordSignIn:
     def test_no_browser_is_opened(self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch) -> None:
         """The point of this path: it works where a browser cannot be reached."""
         calls: list[str] = []
-        monkeypatch.setattr(setup_cli.webbrowser, "open", calls.append)
+        monkeypatch.setattr(browser_cli.webbrowser, "open", calls.append)
         monkeypatch.setattr(setup_cli, "_stdin_is_interactive", lambda: True)
         with respx.mock(assert_all_called=False) as mock:
             _mock_signin_and_key_endpoints(mock)
@@ -376,7 +377,7 @@ class TestPasswordSignIn:
 
 class TestWelcomeBlock:
     def test_it_names_every_link(self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(setup_cli.webbrowser, "open", _real_browser())
+        monkeypatch.setattr(browser_cli.webbrowser, "open", _real_browser())
         with respx.mock(assert_all_called=False) as mock:
             _mock_token_and_key_endpoints(mock, tier="pro")
             result = runner.invoke(setup_command, ["--provider", "google"])
@@ -393,7 +394,7 @@ class TestWelcomeBlock:
         `JsonRenderer` exists so a caller can pipe stdout to `jq`; prose
         printed beside it breaks that whatever it says.
         """
-        monkeypatch.setattr(setup_cli.webbrowser, "open", _real_browser())
+        monkeypatch.setattr(browser_cli.webbrowser, "open", _real_browser())
         with respx.mock(assert_all_called=False) as mock:
             _mock_token_and_key_endpoints(mock)
             result = runner.invoke(setup_command, ["--provider", "google", "--json"])
@@ -411,7 +412,7 @@ class TestWelcomeBlock:
         NO_COLOR the text stays and only the escapes go.
         """
         monkeypatch.setenv("NO_COLOR", "1")
-        monkeypatch.setattr(setup_cli.webbrowser, "open", _real_browser())
+        monkeypatch.setattr(browser_cli.webbrowser, "open", _real_browser())
         with respx.mock(assert_all_called=False) as mock:
             _mock_token_and_key_endpoints(mock)
             result = runner.invoke(setup_command, ["--provider", "google"])
@@ -463,7 +464,7 @@ class TestReRunWithASavedKey:
     ) -> None:
         credentials.write_credentials("ck_existing", source="setup")  # pragma: allowlist secret
         opened: list[str] = []
-        monkeypatch.setattr(setup_cli.webbrowser, "open", opened.append)
+        monkeypatch.setattr(browser_cli.webbrowser, "open", opened.append)
 
         with respx.mock(assert_all_called=False) as mock:
             _mock_tier_lookup(mock, tier="pro")
@@ -479,7 +480,7 @@ class TestReRunWithASavedKey:
     def test_it_never_prints_the_saved_key(
         self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(setup_cli.webbrowser, "open", lambda _url: True)
+        monkeypatch.setattr(browser_cli.webbrowser, "open", lambda _url: True)
         credentials.write_credentials(
             "ck_super_secret_value",  # pragma: allowlist secret
             source="setup",
@@ -500,7 +501,7 @@ class TestReRunWithASavedKey:
         command, pointing at the wrong thing.
         """
         credentials.write_credentials("ck_revoked", source="setup")  # pragma: allowlist secret
-        monkeypatch.setattr(setup_cli.webbrowser, "open", _real_browser())
+        monkeypatch.setattr(browser_cli.webbrowser, "open", _real_browser())
 
         with respx.mock(assert_all_called=False) as mock:
             # The tier lookup 401s for the OLD key, so the short-circuit
@@ -520,7 +521,7 @@ class TestReRunWithASavedKey:
         different account. Without it, a user with a valid key has no way to
         replace it from the CLI."""
         credentials.write_credentials("ck_existing", source="setup")  # pragma: allowlist secret
-        monkeypatch.setattr(setup_cli.webbrowser, "open", _real_browser())
+        monkeypatch.setattr(browser_cli.webbrowser, "open", _real_browser())
 
         with respx.mock(assert_all_called=False) as mock:
             _mock_token_and_key_endpoints(mock, tier="pro")
@@ -534,7 +535,7 @@ class TestReRunWithASavedKey:
     ) -> None:
         """A machine caller has to be able to tell the two outcomes apart —
         both are `status: ok`, but only one of them signed anybody in."""
-        monkeypatch.setattr(setup_cli.webbrowser, "open", lambda _url: True)
+        monkeypatch.setattr(browser_cli.webbrowser, "open", lambda _url: True)
         credentials.write_credentials("ck_existing", source="setup")  # pragma: allowlist secret
         with respx.mock(assert_all_called=False) as mock:
             _mock_tier_lookup(mock, tier="pro")
@@ -543,3 +544,75 @@ class TestReRunWithASavedKey:
         assert payload["reused_existing_key"] is True
         assert payload["tier"] == "pro"
         assert "ck_existing" not in result.output  # pragma: allowlist secret
+
+
+# ── 8. The browser callback page ─────────────────────────────────────
+
+
+class TestCallbackPage:
+    """What the user is looking at when the redirect lands."""
+
+    def test_a_rejected_callback_does_not_render_a_success_page(self) -> None:
+        """The defect this replaced.
+
+        One constant said "Signed in to Convilyn" and was served
+        unconditionally — including when the state check rejected the callback.
+        The terminal reported failure while the browser reported success, and
+        the browser is where the user is looking at that moment.
+        """
+        page = setup_cli._callback_html("state mismatch (unexpected or forged callback)")
+        assert "Signed in to Convilyn" not in page
+        assert "not completed" in page
+        assert "state mismatch" in page
+
+    def test_a_successful_callback_says_what_was_approved(self) -> None:
+        """ "You can close this window" alone does not tell the user what they
+        just agreed to. The three facts that matter are that the credential is
+        a machine-scoped key rather than a stored password, that the sign-in
+        session is discarded, and that the key does not pass through the
+        browser."""
+        page = setup_cli._callback_html(None)
+        assert "Signed in to Convilyn" in page
+        assert "this machine" in page
+        assert "discarded" in page
+        assert "does not pass through this browser" in page
+
+    def test_the_error_text_is_html_escaped(self) -> None:
+        """The reason string is ours today, but it is rendered into a page the
+        browser executes — escaping it is the cheap half of never having to
+        re-audit that."""
+        page = setup_cli._callback_html("<script>alert(1)</script>")
+        assert "<script>alert(1)</script>" not in page
+        assert "&lt;script&gt;" in page
+
+    def test_the_page_needs_no_network(self) -> None:
+        """It is served by a loopback server with no outbound access, so an
+        external stylesheet, font or image would render as a broken page on the
+        one screen that has to reassure."""
+        page = setup_cli._callback_html(None)
+        for scheme in ("http://", "https://", "//fonts.", "src="):
+            assert scheme not in page, scheme
+
+    def test_a_rejected_callback_answers_400(
+        self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The status code is the half a script or a proxy can see, and it has
+        to agree with the page."""
+        seen: dict[str, int] = {}
+
+        def _forge(url: str) -> bool:
+            query = parse_qs(urlsplit(url).query)
+            redirect_uri = query["redirect_uri"][0]
+            response = httpx.get(
+                redirect_uri, params={"code": "x", "state": "wrong-state"}, timeout=5.0
+            )
+            seen["status"] = response.status_code
+            return True
+
+        monkeypatch.setattr(browser_cli.webbrowser, "open", _forge)
+        with respx.mock(assert_all_called=False) as mock:
+            _mock_token_and_key_endpoints(mock)
+            result = runner.invoke(setup_command, ["--provider", "google"])
+
+        assert seen["status"] == 400
+        assert result.exit_code == EXIT_USAGE

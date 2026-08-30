@@ -34,7 +34,9 @@ from convilyn import (
     GoalJob,
     GoalJobFailedError,
     GoalJobTimeoutError,
+    InsufficientCreditsError,
 )
+from convilyn.cli._browser import open_url_with_fallback
 from convilyn.cli._exit_codes import (
     EXIT_API_ERROR,
     EXIT_JOB_FAILED,
@@ -431,6 +433,14 @@ def _run_sync_action(
         raise SystemExit(EXIT_API_ERROR) from _print_error(exc, "Polling timed out")
     except AuthError as exc:
         raise SystemExit(EXIT_USAGE) from _print_error(exc, "Authentication failed")
+    except InsufficientCreditsError as exc:
+        _print_error(
+            exc,
+            f"Insufficient credits (need {exc.required_credits}, have {exc.available_credits})",
+        )
+        if exc.upgrade_url:
+            open_url_with_fallback(exc.upgrade_url, intro="Opening your browser to top up credits…")
+        raise SystemExit(EXIT_USAGE) from exc
     except APIError as exc:
         raise SystemExit(EXIT_API_ERROR) from _print_error(exc, "API error")
     finally:

@@ -20,6 +20,11 @@ HEADING_RATIO = 1.15
 HEADING_TIERS = ((1.9, 1), (1.6, 2), (1.35, 3), (HEADING_RATIO, 4))
 
 
+_MIN_POPULATION_FOR_MODE = 4
+
+DEGENERATE_POPULATION_RATIO = 1.6
+
+
 def body_size(all_lines: list[tuple[str, float, float]]) -> float:
     """The document's body text size: the most common line size, not the mean.
 
@@ -31,7 +36,19 @@ def body_size(all_lines: list[tuple[str, float, float]]) -> float:
     sizes = Counter(round(line[1], 1) for line in all_lines if line[1] > 0)
     if not sizes:
         return 0.0
+    if sum(sizes.values()) < _MIN_POPULATION_FOR_MODE:
+        return min(sizes)
     return sizes.most_common(1)[0][0]
+
+
+def population_is_degenerate(all_lines: list[tuple[str, float, float]]) -> bool:
+    """Whether the document gave `body_size` too few lines to measure a body size,
+    leaving it to guess.
+
+    A caller that cares about the difference uses this to demand clearer evidence
+    before treating a line as a heading.
+    """
+    return 0 < sum(1 for line in all_lines if line[1] > 0) < _MIN_POPULATION_FOR_MODE
 
 
 BARE_NUMBER = re.compile(r"^[\d\s]+$")
@@ -49,11 +66,18 @@ def is_bare_number(text: str) -> bool:
     return bool(BARE_NUMBER.match(text))
 
 
-def heading_level(size: float, body: float) -> int | None:
-    """The heading level a line's size earns, or nothing when it earns none."""
+def heading_level(size: float, body: float, *, min_ratio: float = HEADING_RATIO) -> int | None:
+    """The heading level a line's size earns, or nothing when it earns none.
+
+    `min_ratio` raises the bar for what counts as a heading at all, without moving
+    the levels themselves. A line that clears it lands on exactly the level it
+    always would have.
+    """
     if body <= 0 or size <= 0:
         return None
     ratio = size / body
+    if ratio < min_ratio:
+        return None
     for threshold, level in HEADING_TIERS:
         if ratio >= threshold:
             return level

@@ -154,3 +154,119 @@ class TestConfigRoot:
     ) -> None:
         monkeypatch.setattr(credentials, "config_root", lambda: tmp_path)
         assert credentials.credentials_path() == tmp_path / "credentials.json"
+
+
+# ── Windows ACL detection ────────────────────────────────────────────
+
+
+#: Captured verbatim from `icacls` on a zh-TW Windows 11 machine. The ACE lines
+#: are ASCII even there; only the trailing summary is localised, which is why
+#: the parser keys on line SHAPE rather than trying to recognise the trailer.
+_REAL_ICACLS_OUTPUT = (
+    r"C:\Users\USER\AppData\Roaming\convilyn\credentials.json NT AUTHORITY\SYSTEM:(I)(F)"
+    "\n"
+    r"                                                        BUILTIN\Administrators:(I)(F)"
+    "\n"
+    r"                                                        DESKTOP-EBV6SRK\USER:(I)(F)"
+    "\n\n"
+    "已成功處理 1 個檔案; 處理 0 個檔案時失敗\n"
+)
+
+_REAL_TARGET = r"C:\Users\USER\AppData\Roaming\convilyn\credentials.json"
+
+
+class TestIcaclsParsing:
+    """Parsing is the part that can be wrong, so it is tested on every OS.
+
+    `broad_principals_with_access` shells out and is Windows-only; pinning the
+    parser behind that would mean it ran on nobody's CI.
+    """
+
+    def test_it_reads_every_principal_from_real_output(self) -> None:
+        assert credentials.parse_icacls_principals(_REAL_ICACLS_OUTPUT, target=_REAL_TARGET) == {
+            "system",
+            "administrators",
+            "user",
+        }
+
+    def test_the_localised_summary_line_is_not_a_principal(self) -> None:
+        """The trailer contains no `NAME:(` shape, so it must be skipped —
+        including on a machine whose display language nobody anticipated."""
+        parsed = credentials.parse_icacls_principals(_REAL_ICACLS_OUTPUT, target=_REAL_TARGET)
+        assert not any("處理" in p for p in parsed)
+
+    def test_a_principal_containing_a_space_survives_intact(self) -> None:
+        r"""`NT AUTHORITY\Authenticated Users` must not become `users`.
+
+        A first implementation trimmed the leading path by splitting on
+        whitespace, which silently ate the first word of any multi-word
+        principal. It still matched the blocklist here — for the wrong reason —
+        which is exactly the kind of accidental pass that survives review.
+        """
+        output = (
+            r"C:\x\credentials.json NT AUTHORITY\Authenticated Users:(I)(F)"
+            "\n"
+            r"                      BUILTIN\Users:(I)(RX)"
+            "\n"
+        )
+        assert credentials.parse_icacls_principals(output, target=r"C:\x\credentials.json") == {
+            "authenticated users",
+            "users",
+        }
+
+    def test_a_path_containing_a_space_does_not_leak_into_the_principal(self) -> None:
+        """The other direction of the same defect."""
+        target = r"C:\Program Files\thing\credentials.json"
+        output = target + r" BUILTIN\Users:(I)(F)" + "\n"
+        assert credentials.parse_icacls_principals(output, target=target) == {"users"}
+
+    def test_a_raw_sid_is_kept(self) -> None:
+        """`icacls` prints a SID when it cannot resolve the name — the case a
+        name-only blocklist would miss, and the one that does not translate."""
+        target = r"C:\x\c.json"
+        output = target + " S-1-5-32-545:(I)(F)\n"
+        assert credentials.parse_icacls_principals(output, target=target) == {"s-1-5-32-545"}
+
+    def test_empty_output_yields_nothing_rather_than_raising(self) -> None:
+        assert credentials.parse_icacls_principals("", target=r"C:\x") == frozenset()
+
+
+class TestBroadPrincipalClassification:
+    """The blocklist is what turns parsed names into a finding."""
+
+    @pytest.mark.parametrize(
+        "principal",
+        ["everyone", "users", "authenticated users", "guests", "s-1-1-0", "s-1-5-32-545"],
+    )
+    def test_broad_principals_are_recognised(self, principal: str) -> None:
+        assert principal in credentials._BROAD_PRINCIPALS
+
+    @pytest.mark.parametrize("principal", ["system", "administrators", "user", "trustedinstaller"])
+    def test_the_default_windows_acl_raises_no_finding(self, principal: str) -> None:
+        """The measured default — user + Administrators + SYSTEM — must be
+        clean. A check that warns on the out-of-the-box configuration warns on
+        everybody, and a warning everybody sees is one nobody reads.
+        """
+        assert principal not in credentials._BROAD_PRINCIPALS
+
+    def test_the_real_default_output_produces_no_finding(self) -> None:
+        """End-to-end over the captured real ACL: parse, then classify."""
+        parsed = credentials.parse_icacls_principals(_REAL_ICACLS_OUTPUT, target=_REAL_TARGET)
+        assert not (parsed & credentials._BROAD_PRINCIPALS)
+
+    def test_a_widened_acl_produces_a_finding(self) -> None:
+        r"""The reverse direction — reproduced from a real probe, not invented:
+        writing credentials under a directory granted to `BUILTIN\Users`
+        produced exactly this line."""
+        output = _REAL_TARGET + r" BUILTIN\Users:(I)(F)" + "\n"
+        parsed = credentials.parse_icacls_principals(output, target=_REAL_TARGET)
+        assert parsed & credentials._BROAD_PRINCIPALS == {"users"}
+
+
+class TestBroadPrincipalsWithAccess:
+    def test_it_returns_none_off_windows(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """`None` means "not measured", and is rendered differently from an
+        empty set by `doctor` — a check that cannot tell "I looked and it is
+        fine" from "I did not look" has a green that means nothing."""
+        monkeypatch.setattr(os, "name", "posix")
+        assert credentials.broad_principals_with_access() is None

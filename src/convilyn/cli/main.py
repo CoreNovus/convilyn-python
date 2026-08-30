@@ -12,11 +12,13 @@ import click
 
 from convilyn._version import __version__
 from convilyn.cli.account import account_command
+from convilyn.cli.agent import agent_command
 from convilyn.cli.api import api_command
 from convilyn.cli.convert import convert_command
 from convilyn.cli.doctor import doctor_command
 from convilyn.cli.goals import goals_command
 from convilyn.cli.local import local_command
+from convilyn.cli.mcp import mcp_command
 from convilyn.cli.setup import setup_command
 
 
@@ -42,6 +44,8 @@ cli.add_command(api_command, name="api")
 cli.add_command(goals_command, name="goals")
 cli.add_command(account_command, name="account")
 cli.add_command(local_command, name="local")
+cli.add_command(mcp_command, name="mcp")
+cli.add_command(agent_command, name="agent")
 
 
 if __name__ == "__main__":

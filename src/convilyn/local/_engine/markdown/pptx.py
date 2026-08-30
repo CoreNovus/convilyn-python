@@ -20,6 +20,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from convilyn.local._engine.markdown.headings import is_bare_number
+from convilyn.local._engine.markdown.heuristics import SENTENCE_END
 from convilyn.local._engine.markdown.image_collector import ImageCollector
 from convilyn.local._engine.markdown.model import (
     Block,
@@ -30,13 +32,6 @@ from convilyn.local._engine.markdown.model import (
 logger = logging.getLogger(__name__)
 
 MAX_SLIDES = 500
-
-
-def _is_title(shape: Any, slide: Any) -> bool:
-    try:
-        return slide.shapes.title is not None and shape == slide.shapes.title
-    except (AttributeError, ValueError):
-        return False
 
 
 def _table_rows(shape: Any) -> tuple[tuple[str, ...], ...]:
@@ -71,6 +66,38 @@ def _notes(slide: Any) -> str:
         return ""
 
 
+_MAX_SLIDE_HEADING_CHARS = 80
+
+SLIDE_TITLE_LEVEL = 1
+SLIDE_SECTION_LEVEL = 2
+
+
+def _is_heading_like(paragraphs: list[str]) -> bool:
+    if len(paragraphs) != 1:
+        return False
+    text = paragraphs[0]
+    if not text or len(text) > _MAX_SLIDE_HEADING_CHARS or text[-1] in SENTENCE_END:
+        return False
+    return not is_bare_number(text)
+
+
+def _tabbed_table(
+    paragraphs: list[str],
+) -> tuple[list[str], tuple[tuple[str, ...], ...]] | None:
+    tabbed = [index for index, text in enumerate(paragraphs) if "\t" in text]
+    if not tabbed:
+        return None
+    start = tabbed[0]
+    if tabbed != list(range(start, len(paragraphs))):
+        return None
+
+    rows = [tuple(text.split("\t")) for text in paragraphs[start:]]
+    width = len(rows[0])
+    if len(rows) < 2 or width < 2 or any(len(row) != width for row in rows):
+        return None
+    return paragraphs[:start], tuple(rows)
+
+
 def extract(path: Path) -> MarkdownDoc:
     """Read a presentation into a ``MarkdownDoc``.
 
@@ -100,19 +127,23 @@ def extract(path: Path) -> MarkdownDoc:
             title_shape = None
 
         heading = (title_shape.text or "").strip() if title_shape is not None else ""
-        blocks.append(Block(kind="heading", text=heading or f"Slide {number}", level=2))
+        if heading:
+            blocks.append(Block(kind="heading", text=heading, level=SLIDE_TITLE_LEVEL))
+
+        slide_blocks: list[Block] = []
+        seen_heading_on_slide = bool(heading)
 
         for shape in slide.shapes:
             if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
                 image = _picture(shape, collector)
                 if image is not None:
-                    blocks.append(Block(kind="image", image=image))
+                    slide_blocks.append(Block(kind="image", image=image))
                 continue
 
             if getattr(shape, "has_table", False):
                 rows = _table_rows(shape)
                 if rows:
-                    blocks.append(Block(kind="table", rows=rows))
+                    slide_blocks.append(Block(kind="table", rows=rows))
                 continue
 
             if not getattr(shape, "has_text_frame", False):
@@ -124,11 +155,40 @@ def extract(path: Path) -> MarkdownDoc:
             if text_frame is None:
                 continue
 
-            for paragraph in text_frame.paragraphs:
-                text = "".join(run.text for run in paragraph.runs).strip()
+            paragraphs = [
+                ("".join(run.text for run in paragraph.runs).strip(), max(paragraph.level, 0))
+                for paragraph in text_frame.paragraphs
+            ]
+            texts = [text for text, _ in paragraphs if text]
+            if not texts:
+                continue
+
+            tabbed = _tabbed_table(texts)
+            if tabbed is not None:
+                leading, rows = tabbed
+                slide_blocks.extend(Block(kind="list_item", text=text) for text in leading)
+                slide_blocks.append(Block(kind="table", rows=rows))
+                continue
+
+            if _is_heading_like(texts) and not getattr(shape, "is_placeholder", False):
+                slide_blocks.append(
+                    Block(
+                        kind="heading",
+                        text=texts[0],
+                        level=SLIDE_SECTION_LEVEL if seen_heading_on_slide else SLIDE_TITLE_LEVEL,
+                    )
+                )
+                seen_heading_on_slide = True
+                continue
+
+            for text, indent in paragraphs:
                 if not text:
                     continue
-                blocks.append(Block(kind="list_item", text=text, level=max(paragraph.level, 0)))
+                slide_blocks.append(Block(kind="list_item", text=text, level=indent))
+
+        if not seen_heading_on_slide:
+            blocks.append(Block(kind="heading", text=f"Slide {number}", level=SLIDE_TITLE_LEVEL))
+        blocks.extend(slide_blocks)
 
         notes = _notes(slide)
         if notes:

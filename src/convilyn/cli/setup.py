@@ -44,12 +44,12 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import html
 import http.server
 import platform
 import secrets
 import sys
 import threading
-import webbrowser
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlsplit
 
@@ -60,6 +60,7 @@ from convilyn import Convilyn
 from convilyn._internal import credentials
 from convilyn._internal.http import resolve_base_url
 from convilyn.cli._banner import print_banner, should_show_banner
+from convilyn.cli._browser import open_url_with_fallback
 from convilyn.cli._exit_codes import EXIT_API_ERROR, EXIT_INTERRUPTED, EXIT_USAGE
 from convilyn.cli._output import make_renderer, should_colorize, write_line
 from convilyn.exceptions import APIError
@@ -108,12 +109,71 @@ _WELCOME_LINKS: tuple[tuple[str, str], ...] = (
 # name alone.
 _NAME_ALLOWED = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_- ")
 
-_CALLBACK_HTML = (
-    "<html><body style='font-family: sans-serif; text-align: center; padding-top: 4rem;'>"
-    "<h2>Signed in to Convilyn</h2>"
-    "<p>You can close this window and return to the terminal.</p>"
-    "</body></html>"
+_PAGE_CSS = (
+    "body{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;"
+    "background:#0b0b0f;color:#e7e7ea;margin:0;"
+    "display:flex;align-items:center;justify-content:center;min-height:100vh}"
+    ".card{max-width:32rem;padding:2.5rem;text-align:left;line-height:1.6}"
+    "h1{font-size:1.4rem;margin:0 0 .25rem}"
+    ".rule{height:3px;border-radius:2px;margin:0 0 1.5rem;width:4rem;"
+    "background:linear-gradient(90deg,#7c3aed,#a855f7 25%,#e11d48 55%,#f59e0b)}"
+    "p{margin:.6rem 0;color:#b9b9c2}"
+    "ul{margin:.6rem 0 0;padding-left:1.1rem;color:#b9b9c2}"
+    "li{margin:.35rem 0}"
+    "code{background:#1a1a22;padding:.15rem .4rem;border-radius:4px;color:#e7e7ea}"
+    ".ok{color:#4ade80}.bad{color:#fb7185}"
 )
+
+
+def _callback_html(error: str | None) -> str:
+    """The page the browser lands on, reflecting what actually happened.
+
+    This used to be one constant reading "Signed in to Convilyn", served
+    unconditionally — **including when the callback was rejected**. A state
+    mismatch or a missing code set the error and the browser was still told it
+    had succeeded, while the terminal said the opposite. The browser is where
+    the user is looking at that moment, so that is the surface that has to be
+    right.
+
+    It also said nothing beyond "you can close this window". The user has just
+    approved something; what they cannot see from here is *what* was approved —
+    that a machine-scoped API key is being created rather than a password being
+    stored, and that the key never travels through this browser. Saying so is
+    the difference between an OAuth screen that reassures and one that just
+    ends.
+
+    Self-contained by necessity: this is served by a loopback HTTP server with
+    no network access and no assets, so the styling is inline and the brand
+    gradient is the same four stops the terminal banner uses.
+    """
+    if error:
+        body = (
+            f"<h1 class='bad'>Sign-in was not completed</h1><div class='rule'></div>"
+            f"<p>{html.escape(error)}</p>"
+            "<p>Nothing was saved. Return to your terminal — it has the details, "
+            "and you can run <code>convilyn setup</code> again.</p>"
+        )
+    else:
+        body = (
+            "<h1 class='ok'>Signed in to Convilyn</h1><div class='rule'></div>"
+            "<p>You can close this window and return to your terminal.</p>"
+            "<ul>"
+            "<li>An API key is being created for <strong>this machine</strong>, "
+            "named after it so you can recognise and revoke it later.</li>"
+            "<li>The key is written to a local credentials file. Your sign-in "
+            "session is used once to create it and then discarded — it is never "
+            "saved.</li>"
+            "<li>The key does not pass through this browser page.</li>"
+            "<li>Run <code>convilyn doctor</code> any time to see which key is in "
+            "use and where it is stored.</li>"
+            "</ul>"
+        )
+    return (
+        "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
+        "<title>Convilyn</title>"
+        f"<style>{_PAGE_CSS}</style></head>"
+        f"<body><div class='card'>{body}</div></body></html>"
+    )
 
 
 @click.command(
@@ -335,20 +395,18 @@ def _browser_session(
         redirect_uri=redirect_uri,
     )
 
-    # Always shown, in BOTH human and --json mode, and always to stderr — this
-    # is operator-essential information (the fallback when a browser can't be
-    # launched, mirroring what `modal setup` prints), not structured event
-    # data, so it is not gated behind the renderer's json/human split.
-    click.echo(f"Opening your browser to sign in with {provider}…", err=True)
-    click.echo(
-        f"If it doesn't open automatically, visit this URL:\n\n  {authorize_url}\n", err=True
-    )
-
     try:
         callback_thread.start()
-        if not no_browser:
-            webbrowser.open(authorize_url)
-
+        # The thread must be listening BEFORE the browser (or, in tests, a
+        # synchronous fake that completes the whole redirect inline) can fire
+        # its request — `HTTPServer.__init__` already bound + listened, but
+        # nothing calls `accept()` until this thread runs `handle_request()`.
+        # Opening first raced the callback and cost a real BrokenPipeError.
+        open_url_with_fallback(
+            authorize_url,
+            intro=f"Opening your browser to sign in with {provider}…",
+            attempt_open=not no_browser,
+        )
         callback_thread.join(timeout=timeout_seconds)
         if callback_thread.is_alive():
             click.echo("Timed out waiting for the browser login to complete.", err=True)
@@ -467,10 +525,13 @@ def _make_handler(expected_state: str) -> type[http.server.BaseHTTPRequestHandle
             else:
                 result.code = code
                 result.state = returned_state
-            self.send_response(200)
+            # 400 on rejection, not 200. The browser page and the terminal must
+            # agree about what happened, and the status code is the half a
+            # script or a proxy can see.
+            self.send_response(200 if result.error is None else 400)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
-            self.wfile.write(_CALLBACK_HTML.encode("utf-8"))
+            self.wfile.write(_callback_html(result.error).encode("utf-8"))
 
         def log_message(self, format: str, *args: Any) -> None:
             return  # silence BaseHTTPRequestHandler's default stderr access log

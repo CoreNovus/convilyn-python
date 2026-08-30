@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "convilyn": {
+      "command": "convilyn",
+      "args": ["mcp", "serve"]
+    }
+  }
+}

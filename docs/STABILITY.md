@@ -46,12 +46,31 @@ The public, semver-covered surface of this package is:
    `--json` output shape, and the exit codes (`0` ok, `1` usage,
    `2` API error, `3` job failed, `130` interrupted). This includes the
    `convilyn local` group (`convert`, `batch`, `formats`, `doctor`, and the
-   `pdf` sub-group).
+   `pdf` sub-group), `convilyn setup`, `convilyn mcp serve`, and
+   `convilyn agent install`.
+
+   **What `agent install` writes is part of the contract, not an
+   implementation detail.** A destination is a path on the user's machine that
+   another program reads; moving one silently breaks a working setup that
+   nobody re-runs. The destinations are `~/.claude/skills/convilyn/`
+   (Claude Code), `~/.agents/skills/convilyn/SKILL.md` and the
+   `[mcp_servers.convilyn]` table in `~/.codex/config.toml` (Codex). They track
+   what those hosts document; a host moving its own directory is not a breaking
+   change in this package, and the release note says so when it happens.
+
+   **The MCP tool names are covered too** — `convilyn_convert`,
+   `convilyn_capabilities`, `convilyn_pdf`, `convilyn_quota`,
+   `convilyn_understand`. A renamed tool breaks every saved prompt that names
+   it, which is the same kind of break as a renamed CLI command.
 3. **The authentication contract** — a consumer API key (canonical prefix
    `ck_`, minted in the API Console / Settings → API) passed as
-   `api_key=` or `CONVILYN_API_KEY`. Author-SDK / developer-portal tokens
+   `api_key=`, `CONVILYN_API_KEY`, or the credential file `convilyn setup`
+   writes, resolved in that order. Author-SDK / developer-portal tokens
    (`cvl_` / `cvi_`) are **rejected** with a precise error — they are not
    consumer keys; any other prefix is accepted (forward-compat).
+
+   The file's **location** is covered; its **format** is not — it is read only
+   by this package, and nothing else should parse it.
 
    **`convilyn.local` is outside this clause entirely.** It reads no
    credential, opens no connection, and consumes no quota. Everything else in
