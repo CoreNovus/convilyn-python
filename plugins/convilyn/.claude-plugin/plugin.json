@@ -1,7 +1,7 @@
 {
   "name": "convilyn",
   "displayName": "Convilyn — local document conversion",
-  "version": "3.6.0",
+  "version": "3.6.1",
   "description": "Convert .docx, .pptx, .xlsx, .odt, .pdf, .epub and 50+ more to Markdown on your own machine — zero tokens, no network, same bytes every run. Requires the convilyn package: pip install \"convilyn[all,mcp]\".",
   "author": {
     "name": "CoreNovus",

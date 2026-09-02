@@ -65,7 +65,7 @@ dependencies = [
 # is one more thing to keep in step across nine manifests, and the repo's
 # convention is a floor.
 [project.optional-dependencies]
-pdf = ["pdfplumber>=0.11.9", "pypdf>=6.10.2"]
+pdf = ["pdfplumber>=0.11.9", "pypdf>=6.16.1"]
 docx = ["python-docx>=1.0.0"]
 pptx = ["python-pptx>=1.0.0"]
 xlsx = ["openpyxl>=3.1.0"]
@@ -118,7 +118,7 @@ dev = [
     # `scripts/ci/tests/test_sdk_local_extras_policy.py`, so the duplication is
     # machine-checked rather than remembered.
     "pdfplumber>=0.11.9",
-    "pypdf>=6.10.2",
+    "pypdf>=6.16.1",
     "python-docx>=1.0.0",
     "python-pptx>=1.0.0",
     "openpyxl>=3.1.0",

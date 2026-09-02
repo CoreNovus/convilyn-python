@@ -3,6 +3,17 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [Semantic Versioning](https://semver.org/).
 
+## [3.6.1] - 2026-09-02
+
+### Security
+
+- Raised the `pdf` extra's `pypdf` floor from `>=6.10.2` to `>=6.16.1`, closing
+  three GHSAs disclosed against pypdf on 2026-09-01: an infinite loop in
+  `TreeObject.insert_child` on a crafted PDF (GHSA-jp53-mhqp-8xcg), and two
+  long-runtime/high-memory amplification issues in outline and XForm-object
+  handling (GHSA-23w6-3w8w-8484, GHSA-763m-79hh-57f2). No code in this package
+  changed — resolving `pypdf>=6.16.1` (or newer) is the whole fix.
+
 ## [3.6.0] - 2026-08-31
 
 ### Added

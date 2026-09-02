@@ -13,7 +13,7 @@ allowed-tools: Bash(convilyn:*)
 license: Apache-2.0
 metadata:
   author: CoreNovus
-  version: "3.6.0"
+  version: "3.6.1"
 ---
 
 # Reading documents without spending tokens
