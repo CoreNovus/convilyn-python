@@ -13,7 +13,7 @@ allowed-tools: Bash(convilyn:*)
 license: Apache-2.0
 metadata:
   author: CoreNovus
-  version: "3.5.0"
+  version: "3.6.0"
 ---
 <!-- Generated from src/convilyn/agent/SKILL.md. Edit that file and run
      python scripts/build_plugin.py -- this copy is checked in CI. -->

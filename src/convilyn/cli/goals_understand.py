@@ -106,7 +106,14 @@ def understand_command(
     json_output: bool,
     dry_run: bool,
 ) -> None:
-    """Grounded, schema-constrained understanding of file(s).
+    """Grounded, schema-constrained understanding of ONE file.
+
+    ``--files`` still takes a comma-separated list, but the platform currently
+    serves ONE file per request and refuses more by name, at no credit cost.
+    The count is not checked here for the reason given on
+    ``goals.understand()``: the limit is the platform's and is being lifted, so
+    a copy of it here would go stale in the direction where this CLI refuses
+    work the platform would have done.
 
     Returns a result that conforms to the supplied JSON Schema and is grounded
     by the platform before it is returned. The schema is read and validated as
@@ -276,7 +283,7 @@ def _run_understand(
             f"Insufficient credits (need {exc.required_credits}, have {exc.available_credits})",
         )
         if exc.upgrade_url:
-            open_url_with_fallback(exc.upgrade_url, intro="Opening your browser to top up credits…")
+            open_url_with_fallback(exc.upgrade_url, purpose="top up credits")
         raise SystemExit(EXIT_USAGE) from exc
     except APIError as exc:
         raise SystemExit(EXIT_API_ERROR) from _goals._print_error(exc, "API error")

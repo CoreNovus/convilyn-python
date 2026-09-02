@@ -47,9 +47,11 @@ import hashlib
 import html
 import http.server
 import platform
+import re
 import secrets
 import sys
 import threading
+import time
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlsplit
 
@@ -108,6 +110,32 @@ _WELCOME_LINKS: tuple[tuple[str, str], ...] = (
 # — anything else is replaced with '-' so the mint request never 422s on the
 # name alone.
 _NAME_ALLOWED = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_- ")
+
+#: The console's own limits, mirrored so a bad `--key-name` fails here rather
+#: than as a 422 after a completed browser sign-in.
+_NAME_MAX_LEN = 50
+_NAME_RE = re.compile(r"^[A-Za-z0-9_\- ]+$")
+
+
+def _validate_key_name(ctx: Any, param: Any, value: str | None) -> str | None:
+    """Reject a ``--key-name`` the console would reject, before the browser opens.
+
+    Mirrors ``app/schemas/console/keys.py`` (``^[A-Za-z0-9_\\- ]+$``, 1-50). The
+    server would catch it anyway — with a 422 at the END of a full sign-in round
+    trip, which is the most expensive possible moment to find a typo.
+    """
+    if value is None:
+        return None
+    if not 1 <= len(value) <= _NAME_MAX_LEN:
+        raise click.BadParameter(
+            f"--key-name must be 1-{_NAME_MAX_LEN} characters (got {len(value)})."
+        )
+    if not _NAME_RE.match(value):
+        raise click.BadParameter(
+            "--key-name may contain only letters, digits, spaces, '-' and '_'."
+        )
+    return value
+
 
 _PAGE_CSS = (
     "body{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;"
@@ -208,6 +236,16 @@ def _callback_html(error: str | None) -> str:
     help="Sign in again even if a working key is already saved (mints a new key).",
 )
 @click.option(
+    "--key-name",
+    default=None,
+    callback=_validate_key_name,
+    help=(
+        "Name for the API key this creates, as it will appear in the web "
+        "console. Defaults to cli-<hostname>. Use it when that name is already "
+        "taken and you would rather choose than accept a timestamped one."
+    ),
+)
+@click.option(
     "--json",
     "json_output",
     is_flag=True,
@@ -218,6 +256,7 @@ def setup_command(
     no_browser: bool,
     timeout_seconds: float,
     force: bool,
+    key_name: str | None,
     json_output: bool,
 ) -> None:
     """Sign in, mint a `ck_` API key, and save it for future commands."""
@@ -248,7 +287,7 @@ def setup_command(
         )
 
     try:
-        key = _mint_key(base_url=base_url, access_token=access_token)
+        key = _mint_key(base_url=base_url, access_token=access_token, key_name=key_name)
     except (httpx.HTTPError, APIError) as exc:
         click.echo(f"Login failed: {exc}", err=True)
         raise SystemExit(EXIT_API_ERROR) from exc
@@ -404,7 +443,7 @@ def _browser_session(
         # Opening first raced the callback and cost a real BrokenPipeError.
         open_url_with_fallback(
             authorize_url,
-            intro=f"Opening your browser to sign in with {provider}…",
+            purpose=f"sign in with {provider}",
             attempt_open=not no_browser,
         )
         callback_thread.join(timeout=timeout_seconds)
@@ -586,18 +625,69 @@ def _exchange_token(*, base_url: str, code: str | None, code_verifier: str, stat
     return response.json()["accessToken"]
 
 
-def _mint_key(*, base_url: str, access_token: str) -> str:
-    """Mint a `ck_` key scoped to this machine, then let the caller discard
-    the session token that authorized it."""
-    response = httpx.post(
-        f"{base_url.rstrip('/')}/api/v1/console/keys",
-        headers={"Authorization": f"Bearer {access_token}"},
-        json={"name": _sanitize_key_name(platform.node())},
-        timeout=30.0,
-    )
+def _mint_key(*, base_url: str, access_token: str, key_name: str | None = None) -> str:
+    """Mint a `ck_` key, then let the caller discard the session that authorized it.
+
+    ``key_name`` is ``--key-name``; ``None`` falls back to :func:`_default_key_name`
+    (``cli-<hostname>``). The flag exists because the name used to be hardcoded
+    with no way to change it, which left a colliding name with no local remedy:
+    ``--force`` skips only the LOCAL saved-key reuse and then mints under the same
+    name, and there is no ``convilyn keys`` subcommand to revoke with.
+
+    **Retries once under a disambiguated name on 409.** The default name derives
+    from ``platform.node()``, which is deterministic, so it collides on every
+    re-run from the same machine — and the console rejects a duplicate active
+    name with ``409``. That made ``convilyn setup`` a one-shot command: anyone
+    whose first run half-completed (browser closed, token exchange fine, write
+    interrupted) hit ``Login failed: HTTP 409 ... An active key with this name
+    already exists`` on every subsequent attempt, with no way forward that the
+    message named.
+
+    A 409 cannot be treated as "already authorized". The console shows a key's
+    secret exactly once, at mint, so the existing key's value is not recoverable
+    here — reporting success without writing a credential produces precisely the
+    state this defect leaves behind: a machine that believes it is set up and
+    has no usable key. Minting under a distinct name is what actually ends with
+    the user authorized, and it is the same collision-avoidance the repo's own
+    e2e harness already uses (``e2e-doceval-<epoch>``).
+
+    The pre-existing key is left ALONE rather than revoked. It may be in use by
+    CI, another checkout, or a teammate on a shared box, and silently killing a
+    live credential to tidy a name is not a trade this command gets to make.
+    """
+    name = key_name or _default_key_name()
+    response = _post_key(base_url=base_url, access_token=access_token, name=name)
+    if response.status_code == 409:
+        response = _post_key(
+            base_url=base_url, access_token=access_token, name=_disambiguated(name)
+        )
+        if response.status_code == 409:
+            # Both names taken. The server's own message ends "Revoke it or pick
+            # another name", and until `--key-name` existed the second half was
+            # not doable from a terminal at all: the name was hardcoded and there
+            # is no `convilyn keys` subcommand to revoke with. Say what to do.
+            raise APIError(
+                response.status_code,
+                "key_mint_failed",
+                f"{_error_message(response)} "
+                f"Both '{name}' and a timestamped variant are taken. "
+                "Re-run with `--key-name <something else>`, or revoke the "
+                "existing key in the web console under Settings > API keys.",
+            )
     if response.status_code >= 400:
         raise APIError(response.status_code, "key_mint_failed", _error_message(response))
     return response.json()["key"]
+
+
+def _post_key(*, base_url: str, access_token: str, name: str) -> httpx.Response:
+    """One POST to the key-mint endpoint. Split out so :func:`_mint_key` can
+    issue the retry above without duplicating the request shape."""
+    return httpx.post(
+        f"{base_url.rstrip('/')}/api/v1/console/keys",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={"name": name},
+        timeout=30.0,
+    )
 
 
 def _verify_key(*, base_url: str, key: str) -> str | None:
@@ -611,9 +701,35 @@ def _verify_key(*, base_url: str, key: str) -> str | None:
         return None
 
 
-def _sanitize_key_name(hostname: str) -> str:
-    cleaned = "".join(c if c in _NAME_ALLOWED else "-" for c in hostname).strip() or "cli"
-    return f"cli-{cleaned}"[:50]
+def _sanitize_key_name(raw: str) -> str:
+    """Coerce ``raw`` into a name the console will accept. Sanitize ONLY.
+
+    This used to also prepend ``cli-``, and doing both in one function is what
+    produced ``cli-cli-<host>-<epoch>`` when :func:`_mint_key` fed it a name that
+    already carried the prefix. Naming and sanitizing are separate jobs; the
+    caller composes, this clamps.
+    """
+    cleaned = "".join(c if c in _NAME_ALLOWED else "-" for c in raw).strip() or "cli"
+    return cleaned[:_NAME_MAX_LEN]
+
+
+def _default_key_name() -> str:
+    """The name used when ``--key-name`` is not given."""
+    return _sanitize_key_name(f"cli-{platform.node()}")
+
+
+def _disambiguated(name: str) -> str:
+    """``name`` with a timestamp suffix that SURVIVES the length clamp.
+
+    The suffix is the only part making the retry unique, so the base is trimmed
+    to make room for it rather than the whole string being clipped from the
+    right. Clipping the whole string is what the first version of this retry
+    did, and past ~42 characters of hostname it removed the timestamp entirely —
+    leaving a deterministic name that collides exactly like the one it was
+    retrying, which is the failure the retry exists to prevent.
+    """
+    suffix = f"-{int(time.time())}"
+    return f"{name[: _NAME_MAX_LEN - len(suffix)]}{suffix}"
 
 
 def _device_label() -> str:

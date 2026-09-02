@@ -15,7 +15,7 @@ from pathlib import Path
 
 import click
 
-from convilyn.agent.install import install, mcp_extra_installed
+from convilyn.agent.install import PAST_TENSE_ACTIONS, install, mcp_extra_installed
 from convilyn.cli._exit_codes import EXIT_OK, EXIT_USAGE
 from convilyn.cli._extras import install_command as extra_install_hint
 from convilyn.cli._output import make_renderer
@@ -29,11 +29,31 @@ from convilyn.cli._output import make_renderer
 #: produced exactly that, and the first test written for it passed anyway:
 #: `"would create" in "would created"` is True. Substring assertions on rendered
 #: text do not check what they look like they check.
-_CONDITIONAL = {"created": "would create", "updated": "would update"}
+#:
+#: Keyed on `install.PAST_TENSE_ACTIONS`, and required to cover it exactly. This
+#: map used to be a hand-kept pair that omitted `appended`, so a `--dry-run` on
+#: any machine that already had a `~/.codex/config.toml` announced a change it
+#: had not made.
+_CONDITIONAL = {
+    "created": "would create",
+    "updated": "would update",
+    "appended": "would append",
+}
 
 
 def _phrase(action: str, *, dry_run: bool) -> str:
-    return _CONDITIONAL.get(action, action) if dry_run else action
+    """What a real run DID, or what a dry run WOULD do.
+
+    Total over `install.ACTIONS` by construction: `Step` refuses any action
+    outside it, every past-tense one has an entry above, and the tense-neutral
+    ones are returned as they are. Deliberately no `.get(action, action)`
+    fallback — a default cannot tell "needs no conditional form" from "nobody
+    wrote one", and answering the second as though it were the first is exactly
+    how a dry run came to speak in the past tense.
+    """
+    if not dry_run:
+        return action
+    return _CONDITIONAL[action] if action in PAST_TENSE_ACTIONS else action
 
 
 @click.group(name="agent", help="Register convilyn with the AI coding agents on this machine.")

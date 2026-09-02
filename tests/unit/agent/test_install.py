@@ -13,7 +13,10 @@ import pytest
 from click.testing import CliRunner
 
 from convilyn.agent.install import (
+    PAST_TENSE_ACTIONS,
     SECTION,
+    TENSELESS_ACTIONS,
+    Step,
     claude_plugin_root,
     codex_config,
     install,
@@ -25,6 +28,7 @@ from convilyn.agent.install import (
     skill_destination,
     skill_source,
 )
+from convilyn.cli import agent as agent_cli
 from convilyn.cli.main import cli
 
 #: A config with unrelated content in it, in the two shapes Codex actually
@@ -413,3 +417,66 @@ class TestADryRunReportsInTheConditional:
         actions = {step["action"] for step in json.loads(result.stdout)["steps"]}
         assert actions, "no steps reported"
         assert not any(action.startswith("would ") for action in actions), actions
+
+
+class TestTheConditionalCoversTheWholeVocabulary:
+    """Every action a real run can report has to be renderable in the conditional.
+
+    `_CONDITIONAL` was a hand-kept pair living beside the renderer, and it
+    covered two of the three past-tense actions. The third, `appended`, is what
+    `install_codex_mcp` returns when `~/.codex/config.toml` ALREADY EXISTS — so
+    the case it got wrong is not a rare one, it is every Codex user, and the
+    class above never saw it because all four of its tests start from an empty
+    `home`.
+
+    So these tests derive from `install.PAST_TENSE_ACTIONS` rather than naming
+    words, and the rendering test starts from a config that is already there.
+    """
+
+    def test_it_maps_exactly_the_past_tense_actions(self) -> None:
+        assert set(agent_cli._CONDITIONAL) == PAST_TENSE_ACTIONS
+
+    @pytest.mark.parametrize("action", sorted(PAST_TENSE_ACTIONS))
+    def test_every_past_tense_action_gets_an_infinitive(self, action: str) -> None:
+        phrase = agent_cli._phrase(action, dry_run=True)
+
+        assert phrase.startswith("would ")
+        assert not phrase.endswith(("ed", "ted")), f"{phrase!r} is not an infinitive"
+
+    @pytest.mark.parametrize("action", sorted(TENSELESS_ACTIONS))
+    def test_a_tenseless_action_is_left_alone(self, action: str) -> None:
+        assert agent_cli._phrase(action, dry_run=True) == action
+
+    def test_the_two_sets_do_not_overlap(self) -> None:
+        """Vacuity guard for both parametrized tests above: an action in both
+        sets would let each of them pass on the other's expectation."""
+        assert PAST_TENSE_ACTIONS and TENSELESS_ACTIONS
+        assert not (PAST_TENSE_ACTIONS & TENSELESS_ACTIONS)
+
+    def test_a_step_cannot_carry_an_unclassified_action(self, home) -> None:
+        """The whole scheme rests on the vocabulary being closed."""
+        with pytest.raises(ValueError, match="unknown Step action"):
+            Step(home, "vaporised", True)
+
+    def test_a_dry_run_over_an_existing_codex_config_says_would_append(self, home) -> None:
+        """The case the class above structurally could not reach."""
+        config = codex_config(home)
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text(EXISTING, encoding="utf-8")
+
+        result = CliRunner().invoke(cli, ["agent", "install", "--home", str(home), "--dry-run"])
+
+        assert "would append:" in result.stderr, result.stderr
+        assert "\nappended:" not in result.stderr
+        assert config.read_text(encoding="utf-8") == EXISTING
+
+    def test_a_real_run_over_an_existing_codex_config_still_says_appended(self, home) -> None:
+        """Vacuity guard: a renderer that always says "would" is equally wrong."""
+        config = codex_config(home)
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text(EXISTING, encoding="utf-8")
+
+        result = CliRunner().invoke(cli, ["agent", "install", "--home", str(home)])
+
+        assert "appended:" in result.stderr, result.stderr
+        assert "would append" not in result.stderr

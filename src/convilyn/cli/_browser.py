@@ -48,7 +48,7 @@ def _is_dispatchable(url: str) -> bool:
     return True
 
 
-def open_url_with_fallback(url: str, *, intro: str, attempt_open: bool = True) -> None:
+def open_url_with_fallback(url: str, *, purpose: str, attempt_open: bool = True) -> None:
     """Best-effort ``webbrowser.open(url)``, with the URL always printed too.
 
     Always shown to stderr, in both human and ``--json`` mode — this is
@@ -59,24 +59,43 @@ def open_url_with_fallback(url: str, *, intro: str, attempt_open: bool = True) -
     ``attempt_open=False`` skips the launch attempt entirely (mirrors
     ``setup.py``'s ``--no-browser`` for headless/SSH sessions) while still
     printing the URL. Otherwise, ``webbrowser.open`` failures (no display, no
-    registered handler) are swallowed: the printed URL above is the real
-    fallback, and a launch failure must never crash the command that is
-    reporting an unrelated billing refusal.
+    registered handler) are swallowed: the printed URL is the real fallback, and
+    a launch failure must never crash the command that is reporting an unrelated
+    billing refusal.
 
-    **The URL is validated before it is dispatched**, because two of the three
+    **Callers pass a PURPOSE, not a finished sentence** -- ``"sign in with
+    google"``, ``"top up credits"``. The preamble is composed here because this
+    is where ``attempt_open`` is known, and a caller writing the sentence itself
+    can contradict it: ``convilyn setup --no-browser`` announced *"Opening your
+    browser to sign in with google"* and then deliberately opened nothing, so on
+    the headless sessions that flag exists for, the user waited for a browser
+    that was never coming. Both lines were wrong, not just the first -- "if it
+    doesn't open automatically" also promises an attempt.
+
+    **The URL is validated before it is dispatched**, because three of the four
     call sites pass ``exc.upgrade_url`` — a string out of the SERVER's 402
     response body, which this client does not get to assume is well-formed. It
     was handed straight to ``webbrowser.open``; on Windows that reaches
     ``os.startfile``, which opens a local path or a UNC share as readily as a
     web page. A refused URL is still PRINTED, so a legitimate link with an
     unexpected shape is never silently lost — only never launched.
+
+    ASCII only in what is echoed. ``_output.write_line`` degrades an
+    unencodable character to a visible backslash escape rather than raising, so
+    an ellipsis here does not crash — it renders as mojibake on the cp950 /
+    cp932 consoles this package's Windows users have, in the one line telling
+    them where to sign in. Same call ``doctor.py`` makes for the same reason.
     """
-    click.echo(intro, err=True)
-    click.echo(f"If it doesn't open automatically, visit this URL:\n\n  {url}\n", err=True)
     if not attempt_open:
+        click.echo(
+            f"Open this URL to {purpose} (this machine will not launch a browser):\n\n  {url}\n",
+            err=True,
+        )
         return
+    click.echo(f"Opening your browser to {purpose}...", err=True)
+    click.echo(f"If it doesn't open automatically, visit this URL:\n\n  {url}\n", err=True)
     if not _is_dispatchable(url):
-        click.echo("(not opening it automatically — unexpected link format)", err=True)
+        click.echo("(not opening it automatically - unexpected link format)", err=True)
         return
     try:
         webbrowser.open(url)

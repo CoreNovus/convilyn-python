@@ -12,7 +12,7 @@ import respx
 from click.testing import CliRunner
 
 from convilyn._internal import credentials
-from convilyn.cli._exit_codes import EXIT_API_ERROR, EXIT_OK, EXIT_USAGE
+from convilyn.cli._exit_codes import EXIT_API_ERROR, EXIT_OK
 from convilyn.cli.doctor import doctor_command
 
 # ── Fixtures ─────────────────────────────────────────────────────────
@@ -80,13 +80,26 @@ class TestDoctorPing:
 
 
 class TestDoctorErrors:
-    def test_missing_api_key_exits_usage(
+    def test_missing_api_key_is_not_an_error(
         self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """No key exits 0. This test asserted `EXIT_USAGE` until it was flipped.
+
+        The offline half of this package — ``convilyn local convert``,
+        ``convilyn local capabilities``, the three local MCP tools — needs no
+        account, no key and no network. Exiting non-zero told every one of those
+        users their install was broken, and printed ``1 failed`` to prove it.
+        A red line on a working setup is how a diagnostic stops being read.
+
+        The half worth keeping is that the run still SAYS something: WARN, and
+        the remedy is named. Asserting only the exit code would pass on a doctor
+        that had gone silent about the key entirely.
+        """
         monkeypatch.delenv("CONVILYN_API_KEY", raising=False)
         result = runner.invoke(doctor_command, [])
-        assert result.exit_code == EXIT_USAGE
+        assert result.exit_code == EXIT_OK
         assert "CONVILYN_API_KEY" in result.output
+        assert "WARN" in result.output
 
     def test_ping_unreachable_exits_api_error(
         self, runner: CliRunner, env_with_key: None, monkeypatch: pytest.MonkeyPatch
@@ -368,8 +381,48 @@ class TestApiKeySourceReporting:
     ) -> None:
         monkeypatch.delenv("CONVILYN_API_KEY", raising=False)
         result = runner.invoke(doctor_command, [])
-        assert result.exit_code == EXIT_USAGE
+        assert result.exit_code == EXIT_OK
         assert "convilyn setup" in result.output
+
+    def test_a_file_that_yields_no_key_says_so_rather_than_not_set(
+        self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The two no-key cases need opposite actions, so they read differently.
+
+        A credentials file that exists but parses to nothing — a half-finished
+        ``convilyn setup``, a truncated or hand-edited JSON — used to report
+        ``not set``, which sends the reader hunting for an environment variable
+        while a broken file sits at a path this check already knows. It is also
+        the case that made the previous FAIL actively misleading: the sibling
+        `Credentials file perms` line reported OK for that same file (its ACL
+        really was clean), so the run said "your credentials file is fine" and
+        "your key is not set" in the same breath.
+        """
+        monkeypatch.delenv("CONVILYN_API_KEY", raising=False)
+        credentials.credentials_path().parent.mkdir(parents=True, exist_ok=True)
+        credentials.credentials_path().write_text("{}", encoding="utf-8")
+
+        result = runner.invoke(doctor_command, [])
+
+        assert "holds no usable key" in result.output
+
+    def test_the_perms_check_does_not_claim_to_be_an_auth_check(
+        self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guard the rename. This check reads an ACL / mode, never a key.
+
+        It was called ``Credentials file``, so an OK from it read as "credentials
+        are fine" — on a file holding no key at all. The name now says which
+        question it answers; if it reverts, this fails.
+        """
+        monkeypatch.delenv("CONVILYN_API_KEY", raising=False)
+        credentials.write_credentials("ck_x")  # pragma: allowlist secret
+
+        payload = json.loads(runner.invoke(doctor_command, ["--json"]).output)
+        names = [c["name"] for c in payload["checks"]]
+
+        assert "Credentials file perms" in names
+        assert "Credentials file" not in names
 
     def test_file_key_lets_the_ping_tier_check_run(
         self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
@@ -419,14 +472,14 @@ class TestCredentialsFilePermissionCheck:
 
     def test_no_file_is_skipped(self, runner: CliRunner, env_with_key: None) -> None:
         payload = self._payload(runner)
-        check = [c for c in payload["checks"] if c["name"] == "Credentials file"][0]
+        check = [c for c in payload["checks"] if c["name"] == "Credentials file perms"][0]
         assert check["status"] == "SKIP"
 
     @pytest.mark.skipif(os.name == "nt", reason="POSIX-only permission model")
     def test_0600_file_is_ok(self, runner: CliRunner, env_with_key: None) -> None:
         credentials.write_credentials("ck_from_setup")  # pragma: allowlist secret
         payload = self._payload(runner)
-        check = [c for c in payload["checks"] if c["name"] == "Credentials file"][0]
+        check = [c for c in payload["checks"] if c["name"] == "Credentials file perms"][0]
         assert check["status"] == "OK"
 
     @pytest.mark.skipif(os.name == "nt", reason="POSIX-only permission model")
@@ -438,7 +491,7 @@ class TestCredentialsFilePermissionCheck:
         result = runner.invoke(doctor_command, [])
         assert result.exit_code == EXIT_OK  # a WARN never flips the exit code
         payload = self._payload(runner)
-        check = [c for c in payload["checks"] if c["name"] == "Credentials file"][0]
+        check = [c for c in payload["checks"] if c["name"] == "Credentials file perms"][0]
         assert check["status"] == "WARN"
         assert "chmod 600" in check["detail"]
 
@@ -457,7 +510,7 @@ class TestCredentialsFilePermissionCheck:
         monkeypatch.setattr(os, "name", "nt")
         monkeypatch.setattr(credentials, "broad_principals_with_access", frozenset)
         payload = self._payload(runner)
-        check = [c for c in payload["checks"] if c["name"] == "Credentials file"][0]
+        check = [c for c in payload["checks"] if c["name"] == "Credentials file perms"][0]
         assert check["status"] == "OK"
 
     def test_windows_warns_and_names_who_can_read_it(
@@ -475,7 +528,7 @@ class TestCredentialsFilePermissionCheck:
             credentials, "broad_principals_with_access", lambda: frozenset({"users"})
         )
         payload = self._payload(runner)
-        check = [c for c in payload["checks"] if c["name"] == "Credentials file"][0]
+        check = [c for c in payload["checks"] if c["name"] == "Credentials file perms"][0]
         assert check["status"] == "WARN"
         assert "users" in check["detail"]
 
@@ -492,6 +545,6 @@ class TestCredentialsFilePermissionCheck:
         monkeypatch.setattr(os, "name", "nt")
         monkeypatch.setattr(credentials, "broad_principals_with_access", lambda: None)
         payload = self._payload(runner)
-        check = [c for c in payload["checks"] if c["name"] == "Credentials file"][0]
+        check = [c for c in payload["checks"] if c["name"] == "Credentials file perms"][0]
         assert check["status"] == "SKIP"
         assert "icacls" in check["detail"]

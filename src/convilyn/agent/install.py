@@ -64,6 +64,28 @@ args = ["mcp", "serve"]
 _INLINE_TABLE = re.compile(r"^\s*mcp_servers\s*=", re.MULTILINE)
 
 
+#: Actions describing something this module DID, so a dry run has to restate
+#: them in the conditional before printing them.
+#:
+#: Declared here, beside the code that produces them, rather than beside the
+#: renderer that rewrites them. ``cli/agent.py`` kept its own map and it covered
+#: two of these three: ``appended`` -- the action returned on **any machine that
+#: already has a** ``~/.codex/config.toml``, i.e. every Codex user -- fell
+#: through and a ``--dry-run`` reported a change it had not made. A map
+#: maintained next to its consumer is a map that only covers the cases its
+#: author happened to think of; deriving it from this set makes the coverage a
+#: property a test can check.
+PAST_TENSE_ACTIONS: frozenset[str] = frozenset({"created", "updated", "appended"})
+
+#: Already tense-neutral. "unchanged" and "refused" read identically whether the
+#: run was real or a rehearsal, so they need no conditional form -- and that is
+#: a statement about these two words, not a default for words nobody classified.
+TENSELESS_ACTIONS: frozenset[str] = frozenset({"unchanged", "refused"})
+
+#: Every value :attr:`Step.action` may take.
+ACTIONS: frozenset[str] = PAST_TENSE_ACTIONS | TENSELESS_ACTIONS
+
+
 @dataclass(frozen=True)
 class Step:
     """One destination, and what happened to it.
@@ -76,6 +98,20 @@ class Step:
     action: str
     changed: bool
     detail: str = ""
+
+    def __post_init__(self) -> None:
+        """Reject an action outside :data:`ACTIONS`.
+
+        The vocabulary is small and closed, and every consumer that renders it
+        has to know the whole of it. Catching a new word here -- at the point it
+        is invented -- is the difference between a failing test and a CLI line
+        that reads wrong to a user.
+        """
+        if self.action not in ACTIONS:
+            raise ValueError(
+                f"unknown Step action {self.action!r}; add it to PAST_TENSE_ACTIONS "
+                "or TENSELESS_ACTIONS in this module"
+            )
 
 
 def payload(name: str) -> Path:

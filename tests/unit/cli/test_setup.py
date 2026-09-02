@@ -7,6 +7,14 @@ simulated by monkeypatching `webbrowser.open` to a function that reads
 open and immediately GETs the callback, exactly as a real browser redirect
 would — this way the test never has to guess the internally-generated PKCE
 values.
+
+Split from `test_setup_reuse_and_key_name.py` (#4707 file-size ratchet:
+extract a module rather than raise the 800-line ceiling). This file keeps the
+first sign-in path — happy path, boundary, errors, object-state, password
+sign-in, the welcome block. The saved-key reuse path, the callback page, and
+the `--key-name` flag live in the sibling file, each with its own copy of the
+shared fixtures/mocks (matching this test directory's existing convention:
+every `test_*.py` here is self-contained, no shared `conftest.py`).
 """
 
 from __future__ import annotations
@@ -23,7 +31,7 @@ from click.testing import CliRunner
 from convilyn._internal import credentials
 from convilyn.cli import _browser as browser_cli
 from convilyn.cli import setup as setup_cli
-from convilyn.cli._exit_codes import EXIT_API_ERROR, EXIT_USAGE
+from convilyn.cli._exit_codes import EXIT_API_ERROR, EXIT_OK, EXIT_USAGE
 from convilyn.cli.setup import setup_command
 
 BASE = "https://api.example.com"
@@ -69,6 +77,45 @@ def _allow_loopback_passthrough(mock: respx.MockRouter) -> None:
     fake browser's real GET to the loopback callback server — let that one
     hit the real (local) network instead of raising `AllMockedAssertionError`."""
     mock.route(host="127.0.0.1").pass_through()
+
+
+def _mock_token_only(mock: respx.MockRouter, *, tier: str | None = "free") -> None:
+    """Everything `_mock_token_and_key_endpoints` does EXCEPT the key mint.
+
+    The key-name tests each need their own mint route — to read the request body,
+    or to drive a 409 then a success — and respx takes the first matching route,
+    so a shared mint mock would shadow theirs.
+    """
+    mock.post(f"{BASE}/api/v1/auth/desktop/token").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "accessToken": "session-access-token",  # pragma: allowlist secret
+                "refreshToken": "session-refresh-token",  # pragma: allowlist secret
+                "expiresAt": "2026-01-01T00:00:00Z",
+            },
+        )
+    )
+    if tier is not None:
+        mock.post(f"{BASE}/api/v1/workflows/cost-preview").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "estimatedMicroU": 0,
+                    "estimatedUsd": 0.0,
+                    "estimatedTotalMicroU": 0,
+                    "estimatedMinMicroU": 0,
+                    "estimatedMaxMicroU": 0,
+                    "tools": [],
+                    "quotaCheck": {
+                        "state": "ok",
+                        "tier": tier,
+                        "estimatedMicroU": 0,
+                        "thresholdMicroU": 1_000_000,
+                    },
+                },
+            )
+        )
 
 
 def _mock_token_and_key_endpoints(mock: respx.MockRouter, *, tier: str | None = "free") -> None:
@@ -240,6 +287,83 @@ class TestSetupErrors:
             result = runner.invoke(setup_command, ["--provider", "google"])
         assert result.exit_code == EXIT_API_ERROR
         # A failed mint must not leave a credentials file behind.
+        assert credentials.read_credentials() is None
+
+    def test_duplicate_key_name_retries_under_a_distinct_name(
+        self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch, isolated_credentials_root: Path
+    ) -> None:
+        """A 409 on the machine-named key must end with the user authorized.
+
+        The key is named after ``platform.node()``, which is deterministic, so
+        the name collides on every re-run from the same machine and the console
+        refuses a duplicate active name with 409. That made ``convilyn setup``
+        a one-shot command: anyone whose first run half-completed hit
+        ``Login failed: HTTP 409 ... An active key with this name already
+        exists`` forever after, with no way forward that the message named.
+
+        Asserted on the OUTCOME (a key was written) rather than on the message,
+        because the tempting cheap fix here — print the 409 in green and call it
+        "already authorized" — passes any message-shaped assertion while leaving
+        the user with no credential at all. The console shows a key's secret
+        once, at mint, so a 409 cannot hand back the existing key's value.
+        """
+        monkeypatch.setattr(browser_cli.webbrowser, "open", _real_browser())
+        with respx.mock(assert_all_called=False) as mock:
+            _allow_loopback_passthrough(mock)
+            mock.post(f"{BASE}/api/v1/auth/desktop/token").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "accessToken": "session-access-token",  # pragma: allowlist secret
+                        "refreshToken": "session-refresh-token",  # pragma: allowlist secret
+                        "expiresAt": "2026-01-01T00:00:00Z",
+                    },
+                )
+            )
+            mint = mock.post(f"{BASE}/api/v1/console/keys")
+            mint.side_effect = [
+                httpx.Response(
+                    409,
+                    json={"detail": "An active key with this name already exists."},
+                ),
+                httpx.Response(200, json={"key": "ck_second_name"}),  # pragma: allowlist secret
+            ]
+            result = runner.invoke(setup_command, ["--provider", "google"])
+
+        assert result.exit_code == EXIT_OK
+        assert credentials.read_credentials() == "ck_second_name"  # pragma: allowlist secret
+        assert mint.call_count == 2
+        first, second = (call.request for call in mint.calls)
+        assert json.loads(first.content)["name"] != json.loads(second.content)["name"]
+
+    def test_a_second_duplicate_still_fails_rather_than_looping(
+        self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch, isolated_credentials_root: Path
+    ) -> None:
+        """The retry is ONE retry. A server refusing both attempts is a real
+        error and must surface as one — otherwise the fix above converts a loud
+        failure into an unbounded retry loop, which is strictly worse."""
+        monkeypatch.setattr(browser_cli.webbrowser, "open", _real_browser())
+        with respx.mock(assert_all_called=False) as mock:
+            _allow_loopback_passthrough(mock)
+            mock.post(f"{BASE}/api/v1/auth/desktop/token").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "accessToken": "session-access-token",  # pragma: allowlist secret
+                        "refreshToken": "session-refresh-token",  # pragma: allowlist secret
+                        "expiresAt": "2026-01-01T00:00:00Z",
+                    },
+                )
+            )
+            mint = mock.post(f"{BASE}/api/v1/console/keys").mock(
+                return_value=httpx.Response(
+                    409, json={"detail": "An active key with this name already exists."}
+                )
+            )
+            result = runner.invoke(setup_command, ["--provider", "google"])
+
+        assert result.exit_code == EXIT_API_ERROR
+        assert mint.call_count == 2
         assert credentials.read_credentials() is None
 
     def test_provider_required_when_noninteractive(self, runner: CliRunner) -> None:
@@ -418,201 +542,3 @@ class TestWelcomeBlock:
             result = runner.invoke(setup_command, ["--provider", "google"])
         assert "welcome to Convilyn" in result.output
         assert "\x1b[" not in result.output
-
-
-# ── 7. Re-running when a key is already saved ────────────────────────
-
-
-def _mock_tier_lookup(mock: respx.MockRouter, *, tier: str | None) -> None:
-    """`_verify_key`'s only network call, isolated.
-
-    `tier=None` mocks the *failure* — a key that no longer authenticates,
-    which is the case the short-circuit must not mistake for success.
-    """
-    _allow_loopback_passthrough(mock)
-    if tier is None:
-        mock.post(f"{BASE}/api/v1/workflows/cost-preview").mock(
-            return_value=httpx.Response(401, json={"detail": "Invalid API key"})
-        )
-        return
-    mock.post(f"{BASE}/api/v1/workflows/cost-preview").mock(
-        return_value=httpx.Response(
-            200,
-            json={
-                "estimatedMicroU": 0,
-                "estimatedUsd": 0.0,
-                "estimatedTotalMicroU": 0,
-                "estimatedMinMicroU": 0,
-                "estimatedMaxMicroU": 0,
-                "tools": [],
-                "quotaCheck": {
-                    "state": "ok",
-                    "tier": tier,
-                    "estimatedMicroU": 0,
-                    "thresholdMicroU": 1_000_000,
-                },
-            },
-        )
-    )
-
-
-class TestReRunWithASavedKey:
-    """Re-running `setup` must not cost the user another sign-in."""
-
-    def test_a_working_saved_key_short_circuits(
-        self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        credentials.write_credentials("ck_existing", source="setup")  # pragma: allowlist secret
-        opened: list[str] = []
-        monkeypatch.setattr(browser_cli.webbrowser, "open", opened.append)
-
-        with respx.mock(assert_all_called=False) as mock:
-            _mock_tier_lookup(mock, tier="pro")
-            mint = mock.post(f"{BASE}/api/v1/console/keys")
-            result = runner.invoke(setup_command, ["--provider", "google"])
-
-        assert result.exit_code == 0, result.output
-        assert "Already signed in" in result.output
-        assert opened == [], "no browser should open when the saved key works"
-        assert not mint.called, "no new key should be minted"
-        assert credentials.read_credentials() == "ck_existing"  # pragma: allowlist secret
-
-    def test_it_never_prints_the_saved_key(
-        self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(browser_cli.webbrowser, "open", lambda _url: True)
-        credentials.write_credentials(
-            "ck_super_secret_value",  # pragma: allowlist secret
-            source="setup",
-        )
-        with respx.mock(assert_all_called=False) as mock:
-            _mock_tier_lookup(mock, tier="free")
-            result = runner.invoke(setup_command, ["--provider", "google"])
-        assert "ck_super_secret_value" not in result.output  # pragma: allowlist secret
-
-    def test_a_saved_key_that_no_longer_authenticates_falls_through_to_login(
-        self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The case the whole check exists for.
-
-        "A credentials file exists" is the wrong question — a key revoked from
-        the console leaves the file exactly as it was. Trusting the file would
-        tell the user they are set up and then fail on their first real
-        command, pointing at the wrong thing.
-        """
-        credentials.write_credentials("ck_revoked", source="setup")  # pragma: allowlist secret
-        monkeypatch.setattr(browser_cli.webbrowser, "open", _real_browser())
-
-        with respx.mock(assert_all_called=False) as mock:
-            # The tier lookup 401s for the OLD key, so the short-circuit
-            # declines; the rest of the flow then mints a fresh one.
-            _mock_token_and_key_endpoints(mock, tier=None)
-            _mock_tier_lookup(mock, tier=None)
-            result = runner.invoke(setup_command, ["--provider", "google"])
-
-        assert result.exit_code == 0, result.output
-        assert "did not authenticate" in result.output
-        assert credentials.read_credentials() == "ck_minted_test_key"  # pragma: allowlist secret
-
-    def test_force_signs_in_again_even_when_the_saved_key_works(
-        self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The escape hatch: a shared machine, a rotated credential, a
-        different account. Without it, a user with a valid key has no way to
-        replace it from the CLI."""
-        credentials.write_credentials("ck_existing", source="setup")  # pragma: allowlist secret
-        monkeypatch.setattr(browser_cli.webbrowser, "open", _real_browser())
-
-        with respx.mock(assert_all_called=False) as mock:
-            _mock_token_and_key_endpoints(mock, tier="pro")
-            result = runner.invoke(setup_command, ["--provider", "google", "--force"])
-
-        assert result.exit_code == 0, result.output
-        assert credentials.read_credentials() == "ck_minted_test_key"  # pragma: allowlist secret
-
-    def test_json_mode_reports_that_the_key_was_reused(
-        self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """A machine caller has to be able to tell the two outcomes apart —
-        both are `status: ok`, but only one of them signed anybody in."""
-        monkeypatch.setattr(browser_cli.webbrowser, "open", lambda _url: True)
-        credentials.write_credentials("ck_existing", source="setup")  # pragma: allowlist secret
-        with respx.mock(assert_all_called=False) as mock:
-            _mock_tier_lookup(mock, tier="pro")
-            result = runner.invoke(setup_command, ["--provider", "google", "--json"])
-        payload = json.loads(result.output.strip().splitlines()[-1])
-        assert payload["reused_existing_key"] is True
-        assert payload["tier"] == "pro"
-        assert "ck_existing" not in result.output  # pragma: allowlist secret
-
-
-# ── 8. The browser callback page ─────────────────────────────────────
-
-
-class TestCallbackPage:
-    """What the user is looking at when the redirect lands."""
-
-    def test_a_rejected_callback_does_not_render_a_success_page(self) -> None:
-        """The defect this replaced.
-
-        One constant said "Signed in to Convilyn" and was served
-        unconditionally — including when the state check rejected the callback.
-        The terminal reported failure while the browser reported success, and
-        the browser is where the user is looking at that moment.
-        """
-        page = setup_cli._callback_html("state mismatch (unexpected or forged callback)")
-        assert "Signed in to Convilyn" not in page
-        assert "not completed" in page
-        assert "state mismatch" in page
-
-    def test_a_successful_callback_says_what_was_approved(self) -> None:
-        """ "You can close this window" alone does not tell the user what they
-        just agreed to. The three facts that matter are that the credential is
-        a machine-scoped key rather than a stored password, that the sign-in
-        session is discarded, and that the key does not pass through the
-        browser."""
-        page = setup_cli._callback_html(None)
-        assert "Signed in to Convilyn" in page
-        assert "this machine" in page
-        assert "discarded" in page
-        assert "does not pass through this browser" in page
-
-    def test_the_error_text_is_html_escaped(self) -> None:
-        """The reason string is ours today, but it is rendered into a page the
-        browser executes — escaping it is the cheap half of never having to
-        re-audit that."""
-        page = setup_cli._callback_html("<script>alert(1)</script>")
-        assert "<script>alert(1)</script>" not in page
-        assert "&lt;script&gt;" in page
-
-    def test_the_page_needs_no_network(self) -> None:
-        """It is served by a loopback server with no outbound access, so an
-        external stylesheet, font or image would render as a broken page on the
-        one screen that has to reassure."""
-        page = setup_cli._callback_html(None)
-        for scheme in ("http://", "https://", "//fonts.", "src="):
-            assert scheme not in page, scheme
-
-    def test_a_rejected_callback_answers_400(
-        self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The status code is the half a script or a proxy can see, and it has
-        to agree with the page."""
-        seen: dict[str, int] = {}
-
-        def _forge(url: str) -> bool:
-            query = parse_qs(urlsplit(url).query)
-            redirect_uri = query["redirect_uri"][0]
-            response = httpx.get(
-                redirect_uri, params={"code": "x", "state": "wrong-state"}, timeout=5.0
-            )
-            seen["status"] = response.status_code
-            return True
-
-        monkeypatch.setattr(browser_cli.webbrowser, "open", _forge)
-        with respx.mock(assert_all_called=False) as mock:
-            _mock_token_and_key_endpoints(mock)
-            result = runner.invoke(setup_command, ["--provider", "google"])
-
-        assert seen["status"] == 400
-        assert result.exit_code == EXIT_USAGE

@@ -33,14 +33,16 @@ live, metered capability does not exist is the more expensive of the two.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
+from convilyn._internal.file_refs import file_ids
 from convilyn.exceptions import (
     APIError,
     GoalArtifactUnusableError,
     UnderstandUnavailableError,
 )
-from convilyn.types import Artifact
+from convilyn.types import Artifact, File
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from convilyn.resources.goals import AsyncGoals
@@ -121,7 +123,7 @@ async def fetch_markdown_artifact(
 
 async def run_to_markdown(
     goals: AsyncGoals,
-    files: list[str],
+    files: Sequence[str | File],
     *,
     timeout: float,
     poll_interval: float,
@@ -140,7 +142,7 @@ async def run_to_markdown(
     """
     if not files:
         raise ValueError("to_markdown() requires at least one file id")
-    payload: dict[str, Any] = {"fileIds": files, "outputFormat": "markdown"}
+    payload: dict[str, Any] = {"fileIds": file_ids(files), "outputFormat": "markdown"}
     try:
         job = await goals._create_job(payload=payload)
     except APIError as exc:

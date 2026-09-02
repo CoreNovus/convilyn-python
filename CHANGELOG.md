@@ -3,6 +3,196 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [Semantic Versioning](https://semver.org/).
 
+## [3.6.0] - 2026-08-31
+
+### Added
+
+- **`convert.download_to(job, to_dir=...)`** lands a result in a directory under
+  the name the platform gave it, instead of a name you have to invent. Pass
+  either `to` (a filename) or `to_dir` (a directory) — one of the two.
+
+### Changed
+
+- **A conversion that produced a package is no longer written under a name that
+  denies being one.** Converting a document containing images to `md` returns a
+  ZIP — the Markdown plus its `assets/` — and
+
+  ```python
+  client.convert.download_to(job, to="report.md")
+  ```
+
+  used to write those ZIP bytes into that name without a word. The result was a
+  file whose name guarantees Markdown and whose first two bytes are `PK`; any
+  tool that opened it as Markdown got binary. The response said
+  `mimetype='application/zip'` the whole time and this method never read it.
+
+  That call now raises, naming the package and pointing at `to_dir`. If you
+  meant to keep the archive, name it `.zip`.
+
+  **Only an archive is refused.** Writing PDF bytes to `report.output` still
+  works: the bytes are what the name promises and only the extension is
+  unconventional, which is your business. An archive is different in kind —
+  the file is a container holding the thing its name claims to be.
+
+### Fixed
+
+- **`goals.understand()` described itself as taking several files, and the
+  platform takes one.** Its summary line read "understanding of file(s)", its
+  parameter is a list, and nothing anywhere mentioned a limit — so the shape a
+  caller could reasonably infer was one the platform rejects. It now says one
+  file, and says what to do instead: send each file as its own request.
+
+  The limit is the platform's, and it is being lifted. The count is deliberately
+  **not** checked in the client, and this is worth saying because the opposite
+  looks like the helpful choice: a copy of a server-side admission rule goes
+  stale the day the server moves, and it goes stale in the direction where this
+  SDK refuses work the platform would have accepted. The refusal you get today
+  is immediate, names the limit, and costs no credits — which is a better answer
+  than a duplicate of the rule that will outlive it.
+
+- **An uploaded `File` was accepted by `convert` and rejected by the goal
+  lane.** `files.upload()` hands you a `File`, and `convert.create(file=...)`
+  takes that object — so passing it to `goals.understand(files=[...])` is the
+  obvious next step. It produced
+
+  ```
+  TypeError: Object of type File is not JSON serializable
+  ```
+
+  raised from inside the HTTP library while encoding the request, naming neither
+  the method, nor the parameter, nor what to pass instead.
+
+  Every `files=` parameter on `client.goals` now takes uploaded `File` objects,
+  their `file_id` strings, or a mix. That is `start()`, `extract()`,
+  `understand()`, `run_interactive()` and `to_markdown()` — the report named
+  `understand()`, but all of them built the request the same way.
+
+  Anything else is refused **before the request is sent**, with a message that
+  names the parameter and the fix rather than one from the JSON encoder two
+  layers down.
+
+  The parameters are typed `Sequence[str | File]`, not `list[str | File]`. A
+  `list` is invariant, so widening it that way would have **rejected** every
+  existing caller passing a plain `list[str]` — silently for anyone using a type
+  checker, and invisibly for everyone else.
+
+- **The `convilyn_quota` tool did not tell your assistant that a quote is not a
+  balance.** 3.5.0's release notes drew the distinction — "it is not a balance
+  check; the balance is `client.account.get_balance()`" — but the tool
+  description, which is the only text the assistant actually reads, contained
+  neither the word "balance" nor the call that answers it.
+
+  So an assistant was told to use the number to answer an approval, and told
+  nothing about the question it cannot answer. It now says three things: that
+  this is a price and not what the account has left; that the balance is
+  `client.account.get_balance()`; and that the figure is pre-margin cost in
+  micro-USD, so converting it to credits **understates** what you are charged —
+  which fails in the direction that tells someone they can afford a run they
+  cannot.
+
+- **`CostEstimate`'s docstring said the SDK "does not wrap it yet".** It pointed
+  at `POST /credits/workflow-quote` for affordability and described the absence
+  of a wrapper as a scheduling detail. It is a decision: that route is not on
+  this SDK's published surface, and the public contract argues against the shape
+  it was being used in. Now stated as a decision, with the direction that is
+  actually going somewhere — the charge arriving on the job you ran.
+
+- **An interrupted `convilyn setup` could leave you with no key at all — and
+  destroy the one you already had.** The credentials file was truncated in
+  place and then written, so a Ctrl-C, a full disk, or a sign-in that failed
+  after that point left `credentials.json` empty. The key that had been in it
+  was already gone.
+
+  That is a worse position than it sounds, because the two sides then disagree:
+  your machine reads the empty file and reports no credential, while the server
+  still holds an active key created under this machine's name — and it will not
+  create a second one under the same name. Nothing in the terminal could settle
+  it.
+
+  The file is now written beside itself and renamed into place, which is atomic
+  on every platform this package supports. An interrupted write leaves the
+  previous key exactly as it was, and leaves nothing behind.
+
+- **`convilyn agent install --dry-run` still said it had changed one of your
+  files.** 3.5.0 fixed this for two of the three destinations. The third —
+  `~/.codex/config.toml` — reported
+
+  ```
+  appended: C:\Users\you\.codex\config.toml
+  ```
+
+  in the past tense while writing nothing. It is now `would append:`.
+
+  The reason it was missed is worth stating, because it says which machines saw
+  it: `appended` is the word this command uses when the Codex config **already
+  exists**, so the case that read wrong was every Codex user, and the case that
+  read right was a machine that had never run Codex. Every test written for the
+  3.5.0 fix started from an empty home directory, so none of them could reach it.
+
+  The verb list is no longer maintained by hand next to the code that prints it.
+  It is derived from the set of actions the installer can return, and a test
+  fails if the two ever disagree — so a new destination cannot ship a word the
+  dry run does not know how to say.
+
+- **`convilyn setup --no-browser` announced that it was opening your browser.**
+  The flag worked — no browser was launched — but the two lines printed above
+  the URL both promised a launch:
+
+  ```
+  Opening your browser to sign in with google...
+  If it doesn't open automatically, visit this URL:
+  ```
+
+  On the headless and SSH sessions the flag exists for, that means waiting for a
+  window that was never coming. It now prints one line that matches what it
+  will do: `Open this URL to sign in with google (this machine will not launch a
+  browser):`.
+
+  The sentence used to be written by the caller while the decision to launch was
+  made somewhere else, which is how the two came apart. Both are now decided in
+  the same place, so the same mistake cannot be made again by the next command
+  that opens a link.
+
+  Those lines are also ASCII now. They were the one place a Windows console
+  using cp950 or cp932 — which is most of them in Taiwan, Hong Kong and Japan —
+  rendered an ellipsis as mojibake, in the single line telling a headless user
+  where to sign in.
+
+- **`convilyn setup` could only succeed once per machine.** The API key it
+  creates was named after your hostname, with no way to change it, and the
+  console refuses a second active key with the same name. So a first run that
+  half-completed — you closed the browser, or the sign-in worked but the save
+  was interrupted — left every later attempt failing with
+
+  ```
+  Login failed: HTTP 409 key_mint_failed: An active key with this name already exists.
+  ```
+
+  and nothing you could do from the terminal to get past it. `--force` did not
+  help: it only skips reusing a key already saved on your machine, then asks for
+  the same name again.
+
+  Three things change. `convilyn setup` now **retries once under a distinct
+  name** when the first is taken, so an interrupted run repairs itself. A new
+  **`--key-name`** option lets you choose the name outright — useful on a shared
+  machine, or when you would rather pick than accept a generated one. And if both
+  names are taken, the error now says so and names the flag, instead of repeating
+  advice you had no way to follow.
+
+  A name you supply is checked before the browser opens, so a typo costs a
+  message rather than a full sign-in ending in a rejection.
+
+- **`convilyn doctor` reported a missing API key as a failure.** It exited
+  non-zero and printed `1 failed`, which reads as a broken install — but offline
+  conversion (`convilyn local …`) needs no account at all, so an install without
+  a key is limited, not broken. It is now a warning, and the command exits 0.
+
+- **`convilyn doctor` could say your credentials file was fine and your key was
+  missing, in the same run.** That check only ever looked at file permissions,
+  never at the contents, so a file holding no usable key still reported `OK`. It
+  is now named `Credentials file perms`, and a file that exists but yields no key
+  is reported as exactly that — with the path — rather than as "not set".
+
 ## [3.5.0] - 2026-08-30
 
 ### Added
@@ -228,13 +418,13 @@ plus the two entries below.
   page's footer are ever reachable** (the reading-order edge condition is
   evaluated over the whole flattened region list, so the right page's header
   and the left page's footer sit at interior indices and cannot be first or
-  last); found in code review after this line was first written, tracked as
-  a known gap rather than silently left overclaiming (#4682).
+  last); found in code review after this line was first written, and recorded
+  as a known gap rather than silently left overclaiming.
 
   Only the text goes, and only in a PDF. A logo drawn in the header band is a
   picture the document contains and PDF still extracts it; the HTML path
   strips the whole element it was found in, so the same logo inside an HTML
-  `<header>` is lost — an asymmetry also tracked in #4682, not fixed here.
+  `<header>` is lost — a known asymmetry, not fixed here.
 
 - **`convilyn.local`: a PDF's own title no longer outranks its sections.**
   Every PDF's title fell to the same outline level as its top-level section
@@ -1416,7 +1606,7 @@ both still here and still work; their removal is bound to 4.0.0.
 ### Fixed
 
 - A caller-supplied `poll_interval` is now clamped to a `MIN_POLL_INTERVAL`
-  (0.2s) floor in both the goal-lane and convert wait loops. `poll_interval=0`
+  (0.2s) floor in both the goals and convert wait loops. `poll_interval=0`
   previously produced an unbounded request rate for the whole timeout window:
   the stale-progress backoff is multiplicative, so a zero never grew, and
   `asyncio.sleep(0)` yields without waiting. The clamp is applied at the single
@@ -1561,7 +1751,7 @@ both still here and still work; their removal is bound to 4.0.0.
 - **`goals.extract(files)`** (async + sync) — one-call document extraction.
   Sugar over `start()` → `wait()` → `artifacts()` for the common "image/PDF →
   one JSON object" case, so single-step extraction no longer pays the full
-  Goal Lane lifecycle boilerplate (start/wait/fetch/parse). Runs the platform's
+  `client.goals` lifecycle boilerplate (start/wait/fetch/parse). Runs the platform's
   document-extraction workflow and returns the parsed JSON of the job's primary
   JSON artifact. It is **not** a new inference product — the understanding comes
   from the same platform workflow; this only collapses the run-then-fetch-then-
@@ -1616,7 +1806,7 @@ both still here and still work; their removal is bound to 4.0.0.
 ### Added
 
 - **`client.workflows.catalog()`** (async + sync) — lists the platform's
-  built-in goal-lane workflow catalog (`GET /workflows/catalog`), returning
+  built-in workflow catalog (`GET /workflows/catalog`), returning
   the new `CatalogWorkflow` type (workflow id, name, supported inputs,
   locales, `tier` / `free_tier_allowed` gate hints). Previously
   `workflows.search()` only reached the user-published community listing,

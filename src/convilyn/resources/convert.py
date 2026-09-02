@@ -35,7 +35,7 @@ from convilyn._internal.download import download_url_to_path
 from convilyn._internal.http import HTTPClient
 from convilyn._internal.loop_runner import CoroRunner
 from convilyn.exceptions import JobFailedError, JobTimeoutError
-from convilyn.types import ConvertJob, File
+from convilyn.types import ConvertJob, File, ResultFile
 
 # ── Tunables ────────────────────────────────────────────────────────
 
@@ -48,6 +48,41 @@ MAX_POLL_INTERVAL = 5.0
 MIN_POLL_INTERVAL = 0.2
 STALE_PROGRESS_BACKOFF_AFTER = 3  # consecutive identical progress → grow interval
 BACKOFF_FACTOR = 1.5
+
+#: Media types whose payload is a CONTAINER rather than the artifact itself.
+#:
+#: Deliberately not a general mime-type-to-extension table. The question this
+#: answers is narrow — "will the bytes be an archive holding the thing the
+#: filename promises?" — and a general table would have to decide cases where
+#: the bytes genuinely ARE what the name says and only the extension is
+#: unconventional, which is the caller's business rather than this method's.
+#:
+#: It is also not derived from :mod:`mimetypes`. That module reads the Windows
+#: registry during ``init()``, so a check built on it answers differently on
+#: different machines — a gate keyed on the machine rather than on the data,
+#: which is the shape this repo has paid for before.
+_ARCHIVE_MEDIA_TYPES = frozenset({"application/zip"})
+_ARCHIVE_SUFFIXES = frozenset({".zip"})
+
+
+def _refuse_archive_under_a_misleading_name(result: ResultFile, target: Path) -> None:
+    """Refuse to write archive bytes to a name that does not admit it.
+
+    A conversion carrying assets returns a package, and the natural ``to=`` for
+    a Markdown conversion is ``something.md`` — so the default outcome was a
+    file named Markdown whose first two bytes are ``PK``.
+    """
+    if (result.mimetype or "").lower() not in _ARCHIVE_MEDIA_TYPES:
+        return
+    if target.suffix.lower() in _ARCHIVE_SUFFIXES:
+        return
+    raise ValueError(
+        f"This conversion produced a package ({result.filename}, {result.mimetype}) "
+        f"because the output carries assets alongside it — writing it to "
+        f"{target.name!r} would name it {target.suffix or 'nothing'} and fill it with "
+        "an archive. Pass to_dir= to land it under the platform's own filename, "
+        f"or name it with a .zip suffix if you meant to keep the package."
+    )
 
 
 class AsyncConvert:
@@ -157,29 +192,44 @@ class AsyncConvert:
         Accepts either a :class:`ConvertJob` (uses its cached state) or a
         ``job_id`` string (retrieves fresh state first).
         """
-        resolved = await self._ensure_job(job)
-        if not resolved.result_files:
+        return self._first_result_file(await self._ensure_job(job)).url
+
+    @staticmethod
+    def _first_result_file(job: ConvertJob) -> ResultFile:
+        """The result this job produced, or the reason there is none.
+
+        Split out of :meth:`download_url` once :meth:`download_to` needed the
+        whole row rather than just its URL — the platform's own filename and
+        media type are what let a download refuse a name that contradicts its
+        content, and they were being discarded one line before the caller
+        could see them.
+        """
+        if not job.result_files:
             raise JobFailedError(
-                job_id=resolved.job_id,
-                processor_type=resolved.processor_type,
+                job_id=job.job_id,
+                processor_type=job.processor_type,
                 code="NO_RESULT_FILES",
                 message="Job is terminal but no result files were produced",
             )
-        return resolved.result_files[0].url
+        return job.result_files[0]
 
     async def download_to(
         self,
         job: ConvertJob | str,
         *,
-        to: str | os.PathLike[str],
+        to: str | os.PathLike[str] | None = None,
+        to_dir: str | os.PathLike[str] | None = None,
         overwrite: bool = False,
     ) -> Path:
-        """Download the first result file to ``to`` and return the path.
+        """Download the first result file and return the path it landed at.
+
+        Pass ``to`` to choose the filename, or ``to_dir`` to drop it into a
+        directory under the name the platform gave it. Exactly one.
 
         Uses :py:meth:`HTTPClient.external_get`, which bypasses Convilyn
         auth headers on the storage URL.
 
-        Raises ``FileExistsError`` when ``to`` already exists, unless
+        Raises ``FileExistsError`` when the destination already exists, unless
         ``overwrite=True``. That matches :func:`convilyn.local.convert`,
         whose docstring states the reason as a position rather than a
         default: guessing what somebody wanted is how a converter
@@ -194,9 +244,49 @@ class AsyncConvert:
         ```python
         client.convert.download_to(job, to="out/report.pdf", overwrite=True)
         ```
+
+        **A conversion that produced assets returns a ZIP, not the artifact.**
+        Converting a document with images to ``md`` yields a package — the
+        Markdown plus an ``assets/`` directory — and the platform sends it as
+        one archive::
+
+            job.result_files[0]
+            # ResultFile(filename='report.zip', mimetype='application/zip', ...)
+
+        ``download_to(job, to="report.md")`` used to write those ZIP bytes into
+        that name without a word, producing a file whose name guarantees
+        Markdown and whose first two bytes are ``PK``. Any tool that opens it as
+        Markdown gets binary.
+
+        So an archive destined for a name that does not say ``.zip`` is now
+        refused, and the message names ``to_dir``. The position is the one this
+        package already states in ``markdown/images.py``: *"Naming an unknown
+        stream ``.png`` produces a file that no viewer opens under a name
+        promising it should."* This method was doing exactly that, one field
+        over, with ``result_files[0].mimetype`` in hand and unread.
+
+        **Only an archive is refused**, deliberately. Every other
+        suffix disagreement — PDF bytes into ``report.output``, say — still
+        writes: the bytes ARE what the name promises and only the extension is
+        unconventional, which is the caller's business. An archive is different
+        in kind, because the file is a CONTAINER holding the thing its name
+        claims to be.
         """
-        url = await self.download_url(job)
-        return await download_url_to_path(self._http, url, to, overwrite=overwrite)
+        if (to is None) == (to_dir is None):
+            raise TypeError(
+                "download_to() takes either `to` (a filename) or `to_dir` "
+                "(a directory, using the platform's own filename), not both and not neither"
+            )
+        resolved = await self._ensure_job(job)
+        result = self._first_result_file(resolved)
+
+        if to_dir is not None:
+            target: str | os.PathLike[str] = Path(os.fspath(to_dir)) / result.filename
+        else:
+            target = cast("str | os.PathLike[str]", to)
+            _refuse_archive_under_a_misleading_name(result, Path(os.fspath(target)))
+
+        return await download_url_to_path(self._http, result.url, target, overwrite=overwrite)
 
     # ── Private steps (extensible by subclassing) ───────────────
 
@@ -345,7 +435,8 @@ class Convert:
         self,
         job: ConvertJob | str,
         *,
-        to: str | os.PathLike[str],
+        to: str | os.PathLike[str] | None = None,
+        to_dir: str | os.PathLike[str] | None = None,
         overwrite: bool = False,
     ) -> Path:
-        return self._run(self._async.download_to(job, to=to, overwrite=overwrite))
+        return self._run(self._async.download_to(job, to=to, to_dir=to_dir, overwrite=overwrite))

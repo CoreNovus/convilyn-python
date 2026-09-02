@@ -15,8 +15,9 @@ POSIX, ``%APPDATA%\\convilyn`` on Windows. Deliberately the **config**, not
 cache, directory — a credential must survive a cache-clearing sweep and
 should not share a directory with disposable temp/profile data.
 
-**Windows**: the ``0o600`` mode passed to :func:`os.open` has no effect on NTFS
-ACLs. Protection there comes from the ACL the file inherits from ``%APPDATA%``,
+**Windows**: the ``0o600`` mode :func:`tempfile.mkstemp` creates the file with
+has no effect on NTFS ACLs. Protection there comes from the ACL the file
+inherits from ``%APPDATA%``,
 which by default grants only the user, ``Administrators`` and ``SYSTEM`` —
 measured, and equivalent in practice to POSIX ``0600`` (owner plus root).
 
@@ -38,6 +39,8 @@ import json
 import os
 import stat
 import subprocess
+import tempfile
+from contextlib import suppress
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -58,10 +61,31 @@ def credentials_path() -> Path:
 def write_credentials(key: str, *, source: str = "setup") -> Path:
     """Persist ``key`` as the file-based auth source. Returns the path written.
 
-    Creates the config directory (mode ``0700`` on POSIX) and writes the file
-    via ``os.open(..., 0o600)`` rather than ``open()`` followed by a separate
-    ``chmod`` — the latter leaves a window where the file is briefly
-    world-readable before its permissions are narrowed.
+    Creates the config directory (mode ``0700`` on POSIX). The file is created
+    by :func:`tempfile.mkstemp`, which opens it ``0o600`` in one step rather
+    than ``open()`` followed by a separate ``chmod`` — the latter leaves a
+    window where the file is briefly world-readable before its permissions are
+    narrowed.
+
+    **Written beside the target and renamed into place, never truncated where it
+    stands.** The previous form opened the real path with ``O_TRUNC``, so
+    anything that stopped the process between the truncate and the flush — a
+    Ctrl-C, a full disk, a sign-in that failed after this point — left a
+    ZERO-BYTE ``credentials.json`` behind, and it had already destroyed the
+    working key that was there.
+
+    That is not a theoretical window. External testing reached exactly that
+    state and could not leave it: :func:`read_credentials` answered "no
+    credential", so the CLI offered to sign in again, while the server still
+    held an active key minted under the same machine name and refused to mint a
+    second. The local file said one thing, the server said the opposite, and the
+    user was between them with nothing on this machine to fix it.
+
+    :func:`os.replace` is atomic on POSIX and on Windows, so a concurrent reader
+    — the Python client resolving auth in another process — sees the whole old
+    file or the whole new one, never a partial one. The temporary file is made
+    in the SAME directory because that atomicity only holds within one
+    filesystem, and it is removed if anything goes wrong before the rename.
     """
     path = credentials_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -74,9 +98,25 @@ def write_credentials(key: str, *, source: str = "setup") -> Path:
             "source": source,
         }
     )
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        f.write(payload)
+    fd, staged = tempfile.mkstemp(dir=path.parent, prefix=".credentials-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(payload)
+            f.flush()
+            #: Rename orders the metadata, not the DATA. Without this a crash
+            #: just after the rename can leave the new name pointing at an
+            #: empty file -- the same zero-byte state, reached the long way.
+            os.fsync(f.fileno())
+        os.replace(staged, path)
+    except BaseException:
+        #: BaseException, not Exception: the interruption this exists to
+        #: survive is Ctrl-C, and `except Exception` does not catch it -- it
+        #: would leave the staged file behind on the one path that matters
+        #: most. Cleanup failure is swallowed because the caller's problem is
+        #: the original exception, not the stray file.
+        with suppress(OSError):
+            os.unlink(staged)
+        raise
     return path
 
 

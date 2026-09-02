@@ -174,7 +174,7 @@ def _run_account_action(
             err=True,
         )
         if exc.upgrade_url:
-            open_url_with_fallback(exc.upgrade_url, intro="Opening your browser to top up credits…")
+            open_url_with_fallback(exc.upgrade_url, purpose="top up credits")
         raise SystemExit(EXIT_USAGE) from exc
     except AuthError as exc:
         click.echo(f"Authentication failed: {exc}", err=True)

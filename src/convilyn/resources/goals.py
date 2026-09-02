@@ -20,13 +20,13 @@ from __future__ import annotations
 import asyncio
 import os
 import time
-import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, Literal
 
 from convilyn._internal.callbacks import maybe_await
 from convilyn._internal.download import download_url_to_path
+from convilyn._internal.file_refs import file_ids
 from convilyn._internal.http import HTTPClient, server_reason
 from convilyn._internal.loop_runner import CoroRunner
 from convilyn.exceptions import (
@@ -35,7 +35,7 @@ from convilyn.exceptions import (
     GoalJobTimeoutError,
     UnderstandUnavailableError,
 )
-from convilyn.types import Artifact, ArtifactDownload, GoalJob, PendingSlot
+from convilyn.types import Artifact, ArtifactDownload, File, GoalJob, PendingSlot
 
 # ── Tunables ────────────────────────────────────────────────────────
 
@@ -101,7 +101,7 @@ class AsyncGoals:
         workflow_id: str | None = None,
         user_workflow_id: str | None = None,
         goal_text: str | None = None,
-        files: list[str] | None = None,
+        files: Sequence[str | File] | None = None,
         slots: dict[str, Any] | None = None,
         llm_config_id: str | None = None,
     ) -> GoalJob:
@@ -137,7 +137,7 @@ class AsyncGoals:
             goal_text=goal_text,
             files=files,
         )
-        payload: dict[str, Any] = {"fileIds": files or []}
+        payload: dict[str, Any] = {"fileIds": file_ids(files or [])}
         if workflow_id is not None:
             payload["workflowId"] = workflow_id
         if user_workflow_id is not None:
@@ -209,7 +209,7 @@ class AsyncGoals:
         workflow_id: str | None = None,
         user_workflow_id: str | None = None,
         goal_text: str | None = None,
-        files: list[str] | None = None,
+        files: Sequence[str | File] | None = None,
         slots: dict[str, Any] | None = None,
         llm_config_id: str | None = None,
         timeout: float = DEFAULT_POLL_TIMEOUT,
@@ -240,7 +240,7 @@ class AsyncGoals:
 
     async def extract(
         self,
-        files: list[str],
+        files: Sequence[str | File],
         *,
         timeout: float = DEFAULT_POLL_TIMEOUT,
         poll_interval: float = DEFAULT_POLL_INTERVAL,
@@ -275,32 +275,21 @@ class AsyncGoals:
                 the in-memory cap. Read ``exc.reason``.
             GoalJobFailedError, GoalJobTimeoutError: propagated from ``run()``.
         """
-        warnings.warn(
-            "goals.extract() is deprecated; use goals.understand(files, schema=...) "
-            "for grounded, schema-constrained extraction. extract() runs a fixed "
-            "workflow with no caller control over the output shape.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        if not files:
-            raise ValueError("extract() requires at least one file id")
-        job = await self.run(
+        from convilyn.resources._goals_extract import run_extract
+
+        return await run_extract(
+            self,
+            files,
             workflow_id=EXTRACT_WORKFLOW_ID,
-            files=files,
             timeout=timeout,
             poll_interval=poll_interval,
             idle_timeout=idle_timeout,
+            stacklevel=3,
         )
-        if job.needs_input:
-            raise ValueError(
-                "extract() expected a single-step workflow, but the job stopped for "
-                "slot input; use start()/fill_slot() for interactive workflows."
-            )
-        return await self._fetch_json_artifact(job.job_spec_id, job_status=job.status)
 
     async def understand(
         self,
-        files: list[str],
+        files: Sequence[str | File],
         *,
         schema: dict[str, Any],
         instructions: str | None = None,
@@ -308,7 +297,18 @@ class AsyncGoals:
         poll_interval: float = DEFAULT_POLL_INTERVAL,
         idle_timeout: float | None = None,
     ) -> Any:
-        """Grounded, schema-constrained understanding of file(s).
+        """Grounded, schema-constrained understanding of ONE file.
+
+        ``files`` takes uploaded :class:`~convilyn.types.File` objects, their
+        ``file_id`` strings, or a mix — ``files.upload()`` hands you the object,
+        and having to unwrap it here was an asymmetry with ``convert``, which
+        takes it directly.
+
+        **The platform currently serves one file per request** and refuses more
+        by name, immediately and at no credit cost. Send each file as its own
+        request. The count is deliberately NOT checked here: the limit is the
+        platform's and is being lifted, so a client-side copy would go stale in
+        the direction where this SDK refuses work the platform would have done.
 
         Runs the platform's schema-constrained understanding over ``files`` and
         returns a result that conforms to ``schema`` (a **JSON Schema dict** —
@@ -344,7 +344,7 @@ class AsyncGoals:
             raise ValueError("understand() requires at least one file id")
         if not isinstance(schema, dict):
             raise TypeError("understand() requires a JSON Schema dict for `schema`")
-        payload: dict[str, Any] = {"fileIds": files, "outputSchema": schema}
+        payload: dict[str, Any] = {"fileIds": file_ids(files), "outputSchema": schema}
         if instructions is not None:
             payload["instructions"] = instructions
         try:
@@ -379,7 +379,7 @@ class AsyncGoals:
 
     async def to_markdown(
         self,
-        files: list[str],
+        files: Sequence[str | File],
         *,
         timeout: float = DEFAULT_POLL_TIMEOUT,
         poll_interval: float = DEFAULT_POLL_INTERVAL,
@@ -411,7 +411,7 @@ class AsyncGoals:
         workflow_id: str | None = None,
         user_workflow_id: str | None = None,
         goal_text: str | None = None,
-        files: list[str] | None = None,
+        files: Sequence[str | File] | None = None,
         on_preview: Callable[[GoalJob], Any] | None = None,
         timeout: float = DEFAULT_POLL_TIMEOUT,
         poll_interval: float = DEFAULT_POLL_INTERVAL,
@@ -500,7 +500,7 @@ class AsyncGoals:
         workflow_id: str | None,
         user_workflow_id: str | None,
         goal_text: str | None,
-        files: list[str] | None,
+        files: Sequence[str | File] | None,
     ) -> None:
         """Mirror the backend's XOR + fileIds-required rules client-side.
 
@@ -899,13 +899,13 @@ class Goals:
     def run(self, **kwargs: Any) -> GoalJob:
         return self._run(self._async.run(**kwargs))
 
-    def extract(self, files: list[str], **kwargs: Any) -> Any:
+    def extract(self, files: Sequence[str | File], **kwargs: Any) -> Any:
         return self._run(self._async.extract(files, **kwargs))
 
-    def understand(self, files: list[str], **kwargs: Any) -> Any:
+    def understand(self, files: Sequence[str | File], **kwargs: Any) -> Any:
         return self._run(self._async.understand(files, **kwargs))
 
-    def to_markdown(self, files: list[str], **kwargs: Any) -> str:
+    def to_markdown(self, files: Sequence[str | File], **kwargs: Any) -> str:
         return self._run(self._async.to_markdown(files, **kwargs))
 
     def run_interactive(self, **kwargs: Any) -> GoalJob:

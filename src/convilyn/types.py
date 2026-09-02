@@ -696,11 +696,19 @@ class CostEstimate(BaseModel):
           than having no number at all: it would tell a caller they can afford
           a run they cannot.
 
-       **To ask "what will this workflow cost me, and can I afford it", call
-       ``POST /credits/workflow-quote``.** It answers in credits, returns your
-       balance in the same unit, and does the comparison server-side
-       (``costCredits`` / ``balanceCredits`` / ``sufficient``). It accepts a
-       ``ck_`` key. The SDK does not wrap it yet.
+       **To ask "what will this workflow cost me, and can I afford it", the
+       comparison has to happen server-side, in credits.**
+       ``POST /credits/workflow-quote`` does exactly that
+       (``costCredits`` / ``balanceCredits`` / ``sufficient``) and accepts a
+       ``ck_`` key — but it is **not part of this SDK's published surface**:
+       absent from the public contract as a path, unwrapped here, and the
+       contract argues against the shape it was used in (quoting a workflow you
+       do not intend to run, purely to read the balance out of the response).
+       Calling it by hand works and carries no compatibility promise.
+
+       That is a decision, not a scheduling detail — this used to end "the SDK
+       does not wrap it yet", which reads as a wrapper on its way. The direction
+       that is going somewhere is the charge arriving on the job you ran.
     """
 
     model_config = ConfigDict(populate_by_name=True, frozen=True, extra="allow")

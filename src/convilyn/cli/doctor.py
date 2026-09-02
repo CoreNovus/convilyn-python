@@ -4,6 +4,13 @@ Mirrors the pattern of ``brew doctor`` / ``gh auth status`` / ``stripe
 status``: a quick, scriptable readout of "is this client likely to
 work in this environment?". Exits non-zero if any required piece is
 missing so CI / agent loops can branch on the result.
+
+**Only a FAIL is "required".** ``WARN`` reports something the user may want to
+act on without claiming the install is broken, and the split is load-bearing
+rather than cosmetic: this package has a fully offline half (``convilyn local
+…``) that needs no account, so a machine with no API key is a *limited* install,
+not a failed one. Reporting it as ``1 failed`` was both untrue and expensive —
+a red line on a working setup is how a diagnostic stops being read.
 """
 
 from __future__ import annotations
@@ -143,6 +150,21 @@ def _check_api_key() -> Check:
 
     Same precedence as `resolve_auth` (env beats file) so this check can
     never disagree with what the client itself will do.
+
+    **No key is a WARN, not a FAIL**, and the distinction is the whole point of
+    the line. A FAIL here exits non-zero and prints `1 failed`, which says this
+    install is broken — and for the offline half of this package that is simply
+    untrue: `convilyn local convert`, `convilyn local capabilities` and the
+    three local MCP tools all run with no account, no key and no network. An
+    unauthenticated install is a *limited* install, not a broken one, and
+    reporting it as breakage teaches people to ignore the one line that is
+    genuinely red when something really is wrong.
+
+    The two no-key cases are kept distinct because they need opposite actions.
+    "No credentials file" means log in. "A file that yields nothing" means the
+    file is there and unusable — a half-finished `convilyn setup`, a hand-edited
+    or truncated JSON — and telling that user "not set" sends them looking for
+    an environment variable while a broken file sits at a path this check knows.
     """
     env_key = os.environ.get(ENV_API_KEY)
     if env_key:
@@ -154,10 +176,24 @@ def _check_api_key() -> Check:
             "OK",
             f"source=file ({credentials.credentials_path()}), value={_mask_secret(file_key)}",
         )
+    # ASCII only. `write_line` degrades an unencodable character to a visible
+    # backslash escape rather than raising, so an em dash here does not crash —
+    # it just renders as mojibake on the cp950 / cp932 consoles this package's
+    # Windows users actually have, in the one line telling them what to do next.
+    # Same call doc-eval 0.2.3 made after an em dash came back mangled there.
+    path = credentials.credentials_path()
+    if path.exists():
+        return Check(
+            ENV_API_KEY,
+            "WARN",
+            f"{path} exists but holds no usable key - re-run `convilyn setup`. "
+            "Local commands (`convilyn local ...`) work without one",
+        )
     return Check(
         ENV_API_KEY,
-        "FAIL",
-        f"not set — export {ENV_API_KEY}=ck_… or run `convilyn setup` to log in",
+        "WARN",
+        f"no key configured - run `convilyn setup` (or export {ENV_API_KEY}=ck_...) "
+        "for hosted commands. Local commands (`convilyn local ...`) work without one",
     )
 
 
@@ -187,19 +223,19 @@ def _check_credentials_file_permissions() -> Check:
         return _check_windows_credentials_acl(path)
     if not path.exists():
         return Check(
-            "Credentials file",
+            "Credentials file perms",
             "SKIP",
             f"no local credentials file at {path} (run `convilyn setup` to create one)",
         )
     mode = credentials.credentials_file_mode()
     if mode is not None and mode & 0o077:
         return Check(
-            "Credentials file",
+            "Credentials file perms",
             "WARN",
             f"{oct(mode)} at {path} is more permissive than 0600 — run `chmod 600 {path}`",
         )
     return Check(
-        "Credentials file", "OK", f"{oct(mode) if mode is not None else 'unknown'} ({path})"
+        "Credentials file perms", "OK", f"{oct(mode) if mode is not None else 'unknown'} ({path})"
     )
 
 
@@ -213,7 +249,7 @@ def _check_windows_credentials_acl(path: Path) -> Check:
     """
     if not path.exists():
         return Check(
-            "Credentials file",
+            "Credentials file perms",
             "SKIP",
             f"no local credentials file at {path} (run `convilyn setup` to create one)",
         )
@@ -221,14 +257,14 @@ def _check_windows_credentials_acl(path: Path) -> Check:
     broad = credentials.broad_principals_with_access()
     if broad is None:
         return Check(
-            "Credentials file",
+            "Credentials file perms",
             "SKIP",
             f"could not read the NTFS ACL for {path} (icacls unavailable)",
         )
     if broad:
         names = ", ".join(sorted(broad))
         return Check(
-            "Credentials file",
+            "Credentials file perms",
             "WARN",
             (
                 f"{path} is readable by {names} — your API key is exposed to other "
@@ -236,7 +272,7 @@ def _check_windows_credentials_acl(path: Path) -> Check:
                 "location, or remove those entries from the ACL."
             ),
         )
-    return Check("Credentials file", "OK", f"ACL grants no broad principal ({path})")
+    return Check("Credentials file perms", "OK", f"ACL grants no broad principal ({path})")
 
 
 def _check_base_url() -> Check:

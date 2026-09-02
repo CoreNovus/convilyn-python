@@ -129,11 +129,15 @@ _QUOTA_DESCRIPTION = """\
 **When to use** Before `convilyn_understand`, so an approval can be answered
 with a number instead of a guess.
 
-**When NOT to use** Before any local tool — those are free and this call is not
-free of latency.
+**When NOT to use** As a balance check. This is a PRICE, not what the account
+has left, and the two are not in the same unit — the balance is credits, read
+with `client.account.get_balance()`. Also not before any local tool: those are
+free, and this call is not free of latency.
 
 **Preconditions** A Convilyn account (`convilyn setup`). Read-only: spends
-nothing.
+nothing. The figure is insured pre-margin cost in micro-USD, so scaling it into
+credits UNDERSTATES what is charged. Report it as a price to approve; never
+answer "you can afford this" from it.
 
 **Failure modes** No key returns `ok: false` naming `convilyn setup`.
 

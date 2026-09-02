@@ -10,7 +10,7 @@ writing Python. Sub-commands:
 * ``confirm``    — submit filled slots for execution
 * ``cancel``     — cancel a running / queued job
 * ``retry``      — retry a failed job
-* ``understand`` — grounded, schema-constrained understanding of file(s)
+* ``understand`` — grounded, schema-constrained understanding of ONE file
   (lives in :mod:`.goals_understand`; registered onto the group below)
 
 Exit codes follow the pinned convention in :mod:`._exit_codes`:
@@ -439,7 +439,7 @@ def _run_sync_action(
             f"Insufficient credits (need {exc.required_credits}, have {exc.available_credits})",
         )
         if exc.upgrade_url:
-            open_url_with_fallback(exc.upgrade_url, intro="Opening your browser to top up credits…")
+            open_url_with_fallback(exc.upgrade_url, purpose="top up credits")
         raise SystemExit(EXIT_USAGE) from exc
     except APIError as exc:
         raise SystemExit(EXIT_API_ERROR) from _print_error(exc, "API error")

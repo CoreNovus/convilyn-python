@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
   "name": "convilyn",
-  "version": "3.5.0",
+  "version": "3.6.0",
   "description": "Read documents without spending tokens: local, deterministic conversion for 50+ formats.",
   "owner": {
     "name": "CoreNovus",
@@ -13,7 +13,7 @@
       "displayName": "Convilyn — local document conversion",
       "description": "Convert .docx, .pptx, .xlsx, .odt, .pdf, .epub and 50+ more to Markdown on your own machine — zero tokens, no network, same bytes every run. Requires the convilyn package: pip install \"convilyn[all,mcp]\".",
       "source": "./plugins/convilyn",
-      "version": "3.5.0",
+      "version": "3.6.0",
       "category": "productivity",
       "keywords": [
         "documents",

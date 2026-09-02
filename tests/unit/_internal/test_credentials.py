@@ -270,3 +270,93 @@ class TestBroadPrincipalsWithAccess:
         fine" from "I did not look" has a green that means nothing."""
         monkeypatch.setattr(os, "name", "posix")
         assert credentials.broad_principals_with_access() is None
+
+
+# ── 5. Error — an interrupted write must not destroy a working key ───
+
+
+class TestAnInterruptedWriteLeavesTheOldKeyIntact:
+    """The file is replaced, never truncated where it stands.
+
+    The previous form opened the real path with `O_TRUNC`, so a Ctrl-C, a full
+    disk, or a sign-in that failed after that point left a ZERO-BYTE
+    `credentials.json` -- having already destroyed the key that was in it.
+
+    External testing reached that state and could not leave it: `read_credentials`
+    answered "no credential" while the server still held an active key minted
+    under the same machine name and refused to mint a second. The local file and
+    the server disagreed about the same fact, with nothing on the machine able
+    to settle it.
+
+    `test_second_write_overwrites_the_first` was the only write test there was,
+    and it cannot see any of this: it only asks what happens when the write
+    SUCCEEDS.
+    """
+
+    @staticmethod
+    def _explode(*_args, **_kwargs):
+        raise KeyboardInterrupt
+
+    def test_the_previous_key_survives_an_interrupted_write(
+        self, isolated_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        credentials.write_credentials("ck_working_key")  # pragma: allowlist secret
+        monkeypatch.setattr(credentials.os, "replace", self._explode)
+
+        with pytest.raises(KeyboardInterrupt):
+            credentials.write_credentials("ck_replacement")  # pragma: allowlist secret
+
+        assert credentials.read_credentials() == "ck_working_key"  # pragma: allowlist secret
+
+    def test_it_leaves_no_staged_file_behind(
+        self, isolated_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A stray `.credentials-*.tmp` beside the real file is a second copy of
+        a secret, and one nothing would ever clean up."""
+        credentials.write_credentials("ck_working_key")  # pragma: allowlist secret
+        monkeypatch.setattr(credentials.os, "replace", self._explode)
+
+        with pytest.raises(KeyboardInterrupt):
+            credentials.write_credentials("ck_replacement")  # pragma: allowlist secret
+
+        assert sorted(p.name for p in isolated_root.iterdir()) == ["credentials.json"]
+
+    def test_the_interruption_is_a_base_exception(self) -> None:
+        """Vacuity guard for both tests above.
+
+        They would pass just as well against `except Exception` if the probe
+        raised something that clause catches. `KeyboardInterrupt` is the actual
+        shape an interrupted sign-in has, and it is NOT an `Exception`.
+        """
+        assert not issubclass(KeyboardInterrupt, Exception)
+
+    def test_a_successful_write_still_leaves_only_the_real_file(self, isolated_root: Path) -> None:
+        """Vacuity guard for the cleanup test: a writer that staged nothing at
+        all would satisfy it without ever having written atomically."""
+        credentials.write_credentials("ck_first")  # pragma: allowlist secret
+        credentials.write_credentials("ck_second")  # pragma: allowlist secret
+
+        assert sorted(p.name for p in isolated_root.iterdir()) == ["credentials.json"]
+        assert credentials.read_credentials() == "ck_second"  # pragma: allowlist secret
+
+    def test_the_real_file_is_never_opened_for_truncation(
+        self, isolated_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The property, stated directly rather than inferred from an outcome.
+
+        Everything above observes the RESULT of atomicity. This observes the
+        mechanism: nothing opens the destination with `O_TRUNC`, which is the
+        one call that can empty a working credentials file.
+        """
+        truncated: list[str] = []
+        real_open = credentials.os.open
+
+        def _record(path, flags, *args, **kwargs):
+            if flags & os.O_TRUNC:
+                truncated.append(str(path))
+            return real_open(path, flags, *args, **kwargs)
+
+        monkeypatch.setattr(credentials.os, "open", _record)
+        credentials.write_credentials("ck_example_key")  # pragma: allowlist secret
+
+        assert str(credentials.credentials_path()) not in truncated

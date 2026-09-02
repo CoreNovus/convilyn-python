@@ -187,3 +187,39 @@ class TestTheServerNamesItself:
         from convilyn import __version__
 
         assert tools.version == __version__
+
+
+class TestThePricingToolSaysWhatItIsNot:
+    """`convilyn_quota` returns a PRICE. A model reading it as a balance is the
+    one mistake this tool can cause, and its description made none of the three
+    distinctions that prevent it.
+
+    The catalogue's other four descriptions each carry their own honesty clause;
+    this one said "so an approval can be answered with a number" and then never
+    said which question that number cannot answer. `CostEstimate`'s docstring
+    argues all of it at length -- and the model reads none of that.
+    """
+
+    async def test_it_names_the_balance_call(self, tools) -> None:
+        tool = next(t for t in await tools.list_tools() if t.name == "convilyn_quota")
+        assert "get_balance" in (tool.description or "")
+
+    async def test_it_says_the_unit_is_not_credits(self, tools) -> None:
+        tool = next(t for t in await tools.list_tools() if t.name == "convilyn_quota")
+        body = (tool.description or "").lower()
+        assert "micro-usd" in body
+        assert "understates" in body
+
+    async def test_it_still_refuses_to_answer_affordability(self, tools) -> None:
+        """The active instruction, not just the caveat. Dividing by 10,000 is
+        the obvious move and it is wrong in the dangerous direction: it tells a
+        caller they can afford a run they cannot."""
+        tool = next(t for t in await tools.list_tools() if t.name == "convilyn_quota")
+        assert "afford" in (tool.description or "").lower()
+
+    async def test_the_free_tools_still_do_not_mention_a_balance(self, tools) -> None:
+        """Vacuity guard: the three assertions above would also pass if every
+        description had grown the same paragraph."""
+        for name in ("convilyn_convert", "convilyn_capabilities", "convilyn_pdf"):
+            tool = next(t for t in await tools.list_tools() if t.name == name)
+            assert "get_balance" not in (tool.description or ""), name

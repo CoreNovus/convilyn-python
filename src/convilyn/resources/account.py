@@ -169,9 +169,12 @@ class AsyncAccount:
         "when comparing against a quote from :meth:`get_quota`", and that
         comparison is wrong in unit (credits vs µU), in margin (charged vs
         insured) and in subject (a workflow vs a Builder tool palette). To ask
-        "can I afford this workflow", call ``POST /credits/workflow-quote``,
-        which returns ``costCredits``, ``balanceCredits`` and a server-computed
-        ``sufficient`` — one unit, one round-trip. The SDK does not wrap it yet.
+        "can I afford this workflow", the comparison has to happen server-side,
+        in credits: ``POST /credits/workflow-quote`` returns ``costCredits``,
+        ``balanceCredits`` and a server-computed ``sufficient`` in one
+        round-trip. See :class:`~convilyn.CostEstimate` before reaching for it —
+        that route is **not on this SDK's published surface**, and it is a
+        decision rather than a wrapper on its way.
 
         Read-only, like the rest of this resource: topping up is a website
         action, not an SDK one. Note that ``/credits/ledger`` is JWT-only, so a
