@@ -225,3 +225,38 @@ class TestTheMcpConfig:
         )
         assert result.returncode == 0, result.stdout + result.stderr
         assert "Usage:" in result.stdout
+
+
+class TestThePublishedToolTableNamesRealTools:
+    """`plugins/convilyn/README.md` lists the five tools, and nothing wrote it.
+
+    `build_plugin.py`'s ``OUTPUTS`` covers SKILL.md / plugin.json / mcp.json —
+    this README is hand-maintained and ships to the public mirror, so a rename
+    that missed it would publish a table naming tools that do not exist. Rather
+    than adding a fourth generated file (the README is prose around the table,
+    not a rendering of anything), the table is *derived* here: the names come
+    from the live server, so the check cannot drift the way a second hand-typed
+    list would.
+    """
+
+    README = PLUGIN_DIR / "README.md"
+
+    def _table_names(self) -> set[str]:
+        import re
+
+        rows = re.findall(r"^\| `([a-z_]+)` \|", self.README.read_text(encoding="utf-8"), re.M)
+        return set(rows)
+
+    async def _registered(self) -> set[str]:
+        from convilyn.mcp.server import build_server
+
+        return {tool.name for tool in await build_server().list_tools()}
+
+    async def test_the_table_lists_exactly_the_registered_tools(self) -> None:
+        assert self._table_names() == await self._registered()
+
+    def test_the_table_is_not_empty(self) -> None:
+        """Vacuity guard: an empty set equals an empty set, so a regex that
+        stopped matching would make the assertion above pass while the README
+        said anything at all."""
+        assert len(self._table_names()) == 5

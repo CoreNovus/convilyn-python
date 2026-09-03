@@ -45,11 +45,11 @@ says so rather than routing everything through a converter.
 
 | tool | cost |
 |---|---|
-| `convilyn_convert` | free, local |
-| `convilyn_capabilities` | free, local |
-| `convilyn_pdf` | free, local |
-| `convilyn_quota` | free, hosted (read-only) |
-| `convilyn_understand` | **spends credits** — structured extraction against a JSON Schema |
+| `convert` | free, local |
+| `capabilities` | free, local |
+| `pdf` | free, local |
+| `quota` | free, hosted (read-only) |
+| `understand` | **spends credits** — structured extraction against a JSON Schema |
 
 ## Credentials
 

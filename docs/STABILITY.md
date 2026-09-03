@@ -58,10 +58,11 @@ The public, semver-covered surface of this package is:
    what those hosts document; a host moving its own directory is not a breaking
    change in this package, and the release note says so when it happens.
 
-   **The MCP tool names are covered too** — `convilyn_convert`,
-   `convilyn_capabilities`, `convilyn_pdf`, `convilyn_quota`,
-   `convilyn_understand`. A renamed tool breaks every saved prompt that names
-   it, which is the same kind of break as a renamed CLI command.
+   **The MCP tool names are covered too** — `convert`, `capabilities`, `pdf`,
+   `quota`, `understand`. A renamed tool breaks every saved prompt that names
+   it, which is the same kind of break as a renamed CLI command. They were
+   renamed once, in 4.0.0 — see [Renamed in 4.0.0](#renamed-in-400--the-mcp-tool-prefix)
+   for what changed and why that release carried no deprecation window.
 3. **The authentication contract** — a consumer API key (canonical prefix
    `ck_`, minted in the API Console / Settings → API) passed as
    `api_key=`, `CONVILYN_API_KEY`, or the credential file `convilyn setup`
@@ -126,6 +127,56 @@ data*. A method that merely became stricter about, say, an argument's format doe
 not qualify; that is a narrowed signature, and it is major. And a change under this
 row is never quiet: it goes in `Changed`, never `Added`, and the entry has to show
 the one-line migration.
+
+## Renamed in 4.0.0 — the MCP tool prefix
+
+The five MCP tools lost their `convilyn_` prefix:
+
+| 3.x | 4.0.0 |
+|---|---|
+| `convilyn_convert` | `convert` |
+| `convilyn_capabilities` | `capabilities` |
+| `convilyn_pdf` | `pdf` |
+| `convilyn_understand` | `understand` |
+| `convilyn_quota` | `quota` |
+
+**Migration.** Anywhere you named a tool — a permission rule, an
+`allowed-tools` list, a subagent `tools` field, a hook matcher — drop
+`convilyn_` from the tool segment and leave the host's own namespace alone:
+
+```
+mcp__plugin_convilyn_convilyn__convilyn_convert   ->  mcp__plugin_convilyn_convilyn__convert
+mcp__convilyn__convilyn_convert                   ->  mcp__convilyn__convert
+```
+
+The host already namespaces every tool by server, so the prefix spelled
+`convilyn` three times in one identifier and added nothing the namespace had
+not already said.
+
+### Why this release had no deprecation window
+
+This is the one documented departure from the [deprecation
+policy](#deprecation-policy) above, and it is a property of MCP tools rather
+than an exception made for convenience.
+
+A deprecated Python symbol keeps working while emitting a
+`DeprecationWarning` that costs a caller nothing. **A deprecated MCP tool has
+to stay registered to keep working** — so a window would have shipped ten
+tools instead of five, for at least one minor release. That is not a neutral
+cost:
+
+- it doubles a catalogue whose small size is the property worth protecting —
+  every tool's description is re-sent to the model on every turn, and the
+  package holds itself to a description budget that ten tools would exceed;
+- MCP has no deprecation channel a client acts on, so the "warning" could only
+  be prose inside a description the caller pays for on every turn;
+- keeping the old names registered is a compatibility layer, which this
+  project's engineering principles reject outright.
+
+So the warning this surface gets is the release note and this section, not a
+dual-registration window. The policy above stands unchanged for every other
+kind of public surface; if a future MCP tool has to be renamed, it will be
+announced the same way — in a major, with a migration table.
 
 ## Removed in 3.0.0 — the WebSocket event stream
 

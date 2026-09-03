@@ -27,9 +27,9 @@ from pathlib import Path
 from typing import Any
 
 from convilyn import local
-from convilyn.local.errors import LocalError
+from convilyn.local.errors import LocalError, MissingDependencyError
 
-#: Operations `convilyn_pdf` accepts, mapped to the `convilyn.local.pdf`
+#: Operations `pdf` accepts, mapped to the `convilyn.local.pdf`
 #: function each one calls.
 #:
 #: ONE tool with an operation enum rather than seven tools. Tool descriptions are
@@ -46,6 +46,18 @@ PDF_OPERATIONS: tuple[str, ...] = (
     "unlock",
     "info",
 )
+
+#: `info`'s default bounds. It used to return the entire text layer: a 19-page
+#: spec measured 36,660 chars — roughly 9,200 tokens from one call, and doubled
+#: on the wire because the payload rides in both the text block and
+#: `structuredContent`. The description called it "the cheapest way to learn
+#: whether a PDF has a text layer", which it was not; it was the most expensive.
+#:
+#: 4,000 chars is about 1,000 tokens, or two pages — enough to identify a
+#: document and prove it has a text layer, which is what the operation is for.
+#: Both are overridable per call, so nothing is unreachable, only un-accidental.
+INFO_MAX_CHARS = 4_000
+INFO_MAX_PAGES = 20
 
 
 #: What each operation needs, for the message a missing argument produces.
@@ -257,8 +269,16 @@ def pdf(operation: str, **kwargs: Any) -> dict[str, Any]:
         )
     try:
         return _run_pdf(operation, kwargs)
-    except LocalError as exc:
+    except MissingDependencyError as exc:
         return _error(str(exc), hint='uv add "convilyn[pdf]" (or pip install "convilyn[pdf]")')
+    except LocalError as exc:
+        # NOT the install hint. `PdfOperationError` also subclasses `LocalError`,
+        # so a single `except LocalError` told every PDF failure to install a
+        # package — measured, with pypdf present: a corrupt file returned
+        # "Stream has ended unexpectedly" alongside `uv add "convilyn[pdf]"`.
+        # Advice that cannot be acted on is worse than none: it sends the reader
+        # to fix an environment that was never the problem.
+        return _error(str(exc))
     except KeyError as exc:
         # `_run_pdf` reads its arguments by subscript, and `server.py` strips
         # every `None` before calling — so a parameter the model simply omitted
@@ -283,11 +303,43 @@ def _run_pdf(operation: str, kwargs: dict[str, Any]) -> dict[str, Any]:
 
     if operation == "info":
         source = Path(kwargs["source"])
-        return {
+        total = pdf_ops.page_count(source)
+        max_chars = int(kwargs.get("max_chars", INFO_MAX_CHARS))
+        max_pages = int(kwargs.get("max_pages", INFO_MAX_PAGES))
+        requested = kwargs.get("pages")
+
+        # A PAGE bound as well as a character bound, and the page one is not
+        # redundant: pypdf extracts per page, so slicing the string afterwards
+        # would still have paid to read all 300 pages of a long document. It is
+        # composed as the same `pages` string the whole chain already speaks —
+        # `extract_text` -> `parse_pages` — which is why neither `local/pdf.py`
+        # nor the engine changes here.
+        pages = requested or (f"1-{max_pages}" if total > max_pages else None)
+        text = pdf_ops.extract_text(source, pages=pages)
+        clipped = text[:max_chars]
+        truncated = len(text) > max_chars or (requested is None and pages is not None)
+
+        result: dict[str, Any] = {
             "ok": True,
-            "pages": pdf_ops.page_count(source),
-            "text": pdf_ops.extract_text(source, pages=kwargs.get("pages")),
+            "pages": total,
+            "pages_read": pages or f"1-{total}",
+            "text": clipped,
+            "text_chars": len(clipped),
+            "text_truncated": truncated,
         }
+        if truncated:
+            # Do not cut silently. The published tool-authoring guidance is to
+            # steer toward a more targeted call, and there are two right answers
+            # here rather than one, because they solve different problems.
+            result["hint"] = (
+                f"Showing {result['pages_read']} of {total} page(s), "
+                f"{len(clipped)} of {len(text)} extracted chars. "
+                'For a specific range: {"operation": "info", "pages": "12-14"}. '
+                "For the WHOLE document at zero tokens, convert it instead: "
+                'convert(paths=[...], to="md") writes a file and returns its '
+                "path — then read only the part you need."
+            )
+        return result
     if operation == "merge":
         out = Path(kwargs["out"])
         pdf_ops.merge([Path(p) for p in kwargs["sources"]], out)

@@ -4,11 +4,11 @@
 document text. Four of these boundaries did not exist when that surface shipped
 in 3.5.0 (#4838), and this file is where each one is pinned:
 
-* **the upload fence** — `convilyn_understand` sends bytes off the machine, and
+* **the upload fence** — `understand` sends bytes off the machine, and
   its only check was `Path.is_file()`. `~/.ssh/id_rsa` is a file.
 * **the spend gate** — the tool description told the model to ask permission
   first, and nothing made it. A description is input to the same model.
-* **`convilyn_pdf` raises nothing** — the module header promises it; a missing
+* **`pdf` raises nothing** — the module header promises it; a missing
   argument broke the promise with a `KeyError`.
 * **browser dispatch** — a URL out of a server response body reached
   `webbrowser.open`, which on Windows is `os.startfile`.
@@ -157,7 +157,7 @@ class TestUnderstandCannotUploadWithoutTheFence:
         assert result["ok"] is False
 
 
-# ── SEC-13: `convilyn_pdf` returns, it does not raise ────────────────
+# ── SEC-13: `pdf` returns, it does not raise ────────────────
 
 
 class TestPdfReturnsInsteadOfRaising:

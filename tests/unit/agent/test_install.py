@@ -7,7 +7,9 @@ shape that config might already be in, and what must NOT happen to it.
 
 from __future__ import annotations
 
+import importlib
 import json
+import os
 
 import pytest
 from click.testing import CliRunner
@@ -17,6 +19,7 @@ from convilyn.agent.install import (
     SECTION,
     TENSELESS_ACTIONS,
     Step,
+    claude_mcp_config,
     claude_plugin_root,
     codex_config,
     install,
@@ -25,11 +28,18 @@ from convilyn.agent.install import (
     install_skill,
     mcp_extra_installed,
     payload,
+    server_command,
     skill_destination,
     skill_source,
 )
 from convilyn.cli import agent as agent_cli
 from convilyn.cli.main import cli
+
+#: The MODULE, not the function ``convilyn.agent.install.install`` that the
+#: package re-exports under the same dotted name -- attribute lookup finds the
+#: function and shadows the submodule, so ``import ... as`` yields the wrong
+#: object and every monkeypatch against it fails with a confusing AttributeError.
+install_module = importlib.import_module("convilyn.agent.install")
 
 #: A config with unrelated content in it, in the two shapes Codex actually
 #: writes: a sibling server, and a top-level table after it.
@@ -121,17 +131,28 @@ class TestTheClaudeCodePluginIsWrittenInPlace:
         assert (root / ".claude-plugin" / "plugin.json").read_bytes() == payload(
             "plugin.json"
         ).read_bytes()
-        assert (root / ".mcp.json").read_bytes() == payload("mcp.json").read_bytes()
+        #: ``.mcp.json`` is the ONE file that is not a verbatim copy: its
+        #: command is resolved for this machine (#4999). This assertion used to
+        #: compare it to the payload byte-for-byte, which is exactly the shape
+        #: the defect needed to survive.
+        assert (root / ".mcp.json").read_bytes() == claude_mcp_config()
 
     def test_no_credential_is_written(self, home) -> None:
         """``convilyn setup`` already stores the key where the CLI finds it. A
         config file gets copied between machines and pasted into issues."""
         install_claude_code_plugin(home)
-        text = (claude_plugin_root(home) / ".mcp.json").read_text(encoding="utf-8").lower()
+        #: Parsed, not searched as text. The command is now an absolute path
+        #: (#4999) and a virtualenv in it contains the substring "env", so the
+        #: old check failed on a config that carries no credential at all. The
+        #: question was always about KEYS, and asking it that way is both
+        #: correct and immune to whatever the path happens to spell.
+        server = json.loads((claude_plugin_root(home) / ".mcp.json").read_text(encoding="utf-8"))[
+            "mcpServers"
+        ]["convilyn"]
 
-        assert "env" not in text
-        assert "key" not in text
-        assert "token" not in text
+        assert "env" not in server
+        assert set(server) == {"command", "args"}
+        assert not any("key" in k.lower() or "token" in k.lower() for k in server)
 
     def test_re_running_reports_unchanged(self, home) -> None:
         install_claude_code_plugin(home)
@@ -245,7 +266,7 @@ class TestTheConfigStaysParseable:
     def test_a_fresh_config_parses(self, home, tomllib) -> None:
         install_codex_mcp(home)
         parsed = tomllib.loads(codex_config(home).read_text(encoding="utf-8"))
-        assert parsed["mcp_servers"]["convilyn"]["command"] == "convilyn"
+        assert parsed["mcp_servers"]["convilyn"]["command"] == server_command()
         assert parsed["mcp_servers"]["convilyn"]["args"] == ["mcp", "serve"]
 
     def test_a_merged_config_parses_and_keeps_the_neighbour(self, home, tomllib) -> None:
@@ -480,3 +501,98 @@ class TestTheConditionalCoversTheWholeVocabulary:
 
         assert "appended:" in result.stderr, result.stderr
         assert "would append" not in result.stderr
+
+
+class TestTheRegisteredCommandCanActuallyBeSpawned:
+    """#4999: both destinations shipped the bare name ``convilyn``.
+
+    That reads as obviously right -- it is what every MCP server in the
+    ecosystem writes -- and an MCP host spawns its servers with an environment
+    whose PATH need not contain the install directory. The install reported
+    success and the five tools were simply absent.
+
+    The resolution itself is tested through monkeypatch rather than against
+    whatever this machine happens to have installed: a test that passes only on
+    a box where convilyn sits beside the interpreter is a test that tells you
+    about the box.
+    """
+
+    def test_it_prefers_the_executable_beside_the_running_interpreter(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """The convilyn the user just invoked -- not whatever PATH names first.
+
+        A project virtualenv earlier in PATH would otherwise register a server
+        the editor cannot see, which is the exact confusion #4999 was.
+        """
+        exe = tmp_path / ("convilyn.exe" if os.name == "nt" else "convilyn")
+        exe.write_bytes(b"")
+        monkeypatch.setattr(install_module.sys, "executable", str(tmp_path / "python"))
+
+        assert server_command() == str(exe)
+
+    def test_it_falls_back_to_path_when_the_sibling_is_absent(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setattr(install_module.sys, "executable", str(tmp_path / "python"))
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        found = elsewhere / ("convilyn.exe" if os.name == "nt" else "convilyn")
+        found.write_bytes(b"")
+        monkeypatch.setattr(install_module.shutil, "which", lambda _: str(found))
+
+        assert server_command() == str(found.resolve())
+
+    def test_it_falls_back_to_the_bare_name_rather_than_crashing(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """An install shape this does not anticipate must not break the install."""
+        monkeypatch.setattr(install_module.sys, "executable", str(tmp_path / "python"))
+        monkeypatch.setattr(install_module.shutil, "which", lambda _: None)
+
+        assert server_command() == "convilyn"
+
+    def test_the_claude_config_carries_the_resolved_command(self, home) -> None:
+        install_claude_code_plugin(home)
+        written = json.loads((claude_plugin_root(home) / ".mcp.json").read_text(encoding="utf-8"))
+
+        assert written["mcpServers"]["convilyn"]["command"] == server_command()
+
+    def test_the_shipped_template_still_carries_the_bare_name(self) -> None:
+        """The payload is also what the marketplace route serves from the public
+        mirror, where no local path can be known. Only the local copy resolves."""
+        template = json.loads(payload("mcp.json").read_text(encoding="utf-8"))
+
+        assert template["mcpServers"]["convilyn"]["command"] == "convilyn"
+
+    def test_a_windows_path_does_not_break_the_toml(self, home, monkeypatch) -> None:
+        """A basic TOML string would read ``\\U`` in ``C:\\Users`` as a unicode
+        escape and the file would not parse. Hence a literal string."""
+        tomllib = pytest.importorskip("tomllib")
+        monkeypatch.setattr(
+            install_module, "server_command", lambda: r"C:\Users\USER\.local\bin\convilyn.exe"
+        )
+
+        install_codex_mcp(home)
+        parsed = tomllib.loads(codex_config(home).read_text(encoding="utf-8"))
+
+        assert parsed["mcp_servers"]["convilyn"]["command"] == (
+            r"C:\Users\USER\.local\bin\convilyn.exe"
+        )
+
+    def test_reinstalling_is_still_unchanged(self, home) -> None:
+        """The byte comparison that decides "unchanged" has to read the same
+        bytes it writes, or every re-run reports drift forever."""
+        install_claude_code_plugin(home)
+
+        assert install_claude_code_plugin(home).action == "unchanged"
+
+    def test_the_inline_table_advice_is_not_the_bare_name(self, home) -> None:
+        """The one config this command refuses to edit -- so the line it prints
+        is the whole fix for that user, and a bare name there reproduces #4999."""
+        config = codex_config(home)
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text('mcp_servers = { other = { command = "other" } }\n', encoding="utf-8")
+
+        step = install_codex_mcp(home)
+
+        assert step.action == "refused"
+        assert server_command() in step.detail

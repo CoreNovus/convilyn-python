@@ -130,8 +130,8 @@ virtualenv is not on the editor's `PATH`. `uv tool install` and
 
 That installs a skill describing when local conversion helps — and, just as
 importantly, when reading the file directly is the better move — and registers
-an MCP server offering five tools: `convilyn_convert`, `convilyn_capabilities`
-and `convilyn_pdf` (local, free), `convilyn_quota`, and `convilyn_understand`
+an MCP server offering five tools: `convert`, `capabilities`
+and `pdf` (local, free), `quota`, and `understand`
 (hosted, spends credits, and says so where the assistant reads it).
 
 Each host looks in its own place, so the command writes to both:
@@ -146,8 +146,8 @@ the next run. It merges into your existing config rather than replacing it, is
 safe to re-run, and takes `--dry-run`. **No API key is written into any config
 file** — `convilyn setup` already stores it where the CLI looks.
 
-Only two of the five tools need an account: `convilyn_understand` and
-`convilyn_quota` reach the platform. The three local ones work with no `convilyn
+Only two of the five tools need an account: `understand` and
+`quota` reach the platform. The three local ones work with no `convilyn
 setup` at all.
 
 To hand the same thing to a team from a marketplace instead:

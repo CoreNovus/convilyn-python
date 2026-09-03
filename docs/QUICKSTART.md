@@ -311,8 +311,8 @@ The two hosts look in different places, so both are written:
 | Claude Code | `~/.claude/skills/convilyn/` (a plugin, no marketplace needed) | next session, or `/reload-plugins` |
 | Codex | `~/.agents/skills/convilyn/`, `~/.codex/config.toml` | next run |
 
-Three of the five tools — `convilyn_convert`, `convilyn_capabilities`,
-`convilyn_pdf` — are local and need no account, so you can stop here. The other
+Three of the five tools — `convert`, `capabilities`,
+`pdf` — are local and need no account, so you can stop here. The other
 two reach the platform and need step 2.
 
 ## 2. Get an API key

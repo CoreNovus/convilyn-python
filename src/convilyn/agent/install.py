@@ -41,7 +41,11 @@ mangled config.
 
 from __future__ import annotations
 
+import json
+import os
 import re
+import shutil
+import sys
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
@@ -49,15 +53,76 @@ from pathlib import Path
 #: The table this command owns. It never touches any other part of the file.
 SECTION = "[mcp_servers.convilyn]"
 
-#: Appended verbatim. No ``env`` block: ``convilyn setup`` already writes the
-#: credential where the CLI finds it, so putting a key here would move a secret
-#: into a file that gets copied between machines and pasted into issues for no
-#: gain at all.
-BLOCK = f"""
+_EXECUTABLE = "convilyn.exe" if os.name == "nt" else "convilyn"
+
+
+def server_command() -> str:
+    """The command an MCP host should spawn to start convilyn's server.
+
+    An ABSOLUTE path, and that is the whole point of this function. Both
+    destinations used to carry the bare name ``convilyn``, which reads as the
+    obviously right thing -- it is what every MCP server in the ecosystem ships
+    -- and it does not work here: an MCP host spawns its servers with an
+    environment whose ``PATH`` need not contain the directory the package was
+    installed into. Measured on Windows with a ``uv tool install``, the bare
+    name fails to spawn while the same config with an explicit ``PATH``, or with
+    this absolute path, connects. The failure is silent from the user's side,
+    because the install itself succeeded.
+
+    The path resolved is **the convilyn belonging to the interpreter running
+    this command**, not whatever ``PATH`` happens to name first. That is the
+    stronger choice: it is the executable the user just invoked, so the
+    ``mcp_extra_installed`` warning printed beside it now describes the same
+    environment that will actually run the server. Resolving through ``PATH``
+    would let a project virtualenv shadow the user-level install and register a
+    server the editor cannot see -- the exact confusion this change exists to
+    end.
+
+    Falls back to ``PATH``, then to the bare name. The last fallback keeps the
+    previous behaviour for an installation shape this does not anticipate,
+    rather than crashing during an install.
+    """
+    beside_interpreter = Path(sys.executable).parent / _EXECUTABLE
+    if beside_interpreter.is_file():
+        return str(beside_interpreter)
+    on_path = shutil.which("convilyn")
+    if on_path:
+        return str(Path(on_path).resolve())
+    return "convilyn"
+
+
+def codex_block() -> str:
+    """The ``[mcp_servers.convilyn]`` table, appended to Codex's config.
+
+    A **TOML literal string** (single quotes) for the command, because the
+    resolved path contains backslashes on Windows and a basic string would read
+    them as escapes -- ``\\U`` in ``C:\\Users`` is a unicode escape, so the file
+    would not even parse.
+
+    No ``env`` block: ``convilyn setup`` already writes the credential where the
+    CLI finds it, so putting a key here would move a secret into a file that
+    gets copied between machines and pasted into issues for no gain at all.
+    """
+    return f"""
 {SECTION}
-command = "convilyn"
+command = '{server_command()}'
 args = ["mcp", "serve"]
 """
+
+
+def claude_mcp_config() -> bytes:
+    """``.mcp.json`` for the Claude Code plugin, with the command resolved.
+
+    The payload template keeps the bare name on purpose: it is also what the
+    marketplace route serves from the public mirror, where no local path can be
+    known. Only the locally-installed copy gets an absolute path, and it is
+    substituted into the shipped shape rather than assembled here, so the
+    template stays the single description of what the config looks like.
+    """
+    config = json.loads(payload("mcp.json").read_text(encoding="utf-8"))
+    config["mcpServers"]["convilyn"]["command"] = server_command()
+    return (json.dumps(config, indent=2) + "\n").encode("utf-8")
+
 
 #: ``mcp_servers = {{ ... }}`` at top level. Appending ``[mcp_servers.convilyn]``
 #: after an inline table is a TOML error, so this is the shape that gets refused.
@@ -178,6 +243,20 @@ def install_skill(home: Path, *, dry_run: bool = False) -> Step:
     return Step(destination, action, True)
 
 
+def _plugin_body(name: str) -> bytes:
+    """What to write for one plugin file.
+
+    Everything is the shipped payload verbatim except ``mcp.json``, whose
+    command has to be resolved for this machine -- see :func:`server_command`.
+    Routing it here rather than at the call site keeps the byte comparison that
+    decides ``"unchanged"`` reading the same bytes it would write, which is what
+    makes re-running the install idempotent instead of reporting drift forever.
+    """
+    if name == "mcp.json":
+        return claude_mcp_config()
+    return payload(name).read_bytes()
+
+
 def install_claude_code_plugin(home: Path, *, dry_run: bool = False) -> Step:
     """Write the skills-directory plugin Claude Code loads with no install step.
 
@@ -191,9 +270,7 @@ def install_claude_code_plugin(home: Path, *, dry_run: bool = False) -> Step:
     is also what makes re-running safe.
     """
     root = claude_plugin_root(home)
-    wanted = {
-        root / relative: payload(name).read_bytes() for name, relative in _CLAUDE_PLUGIN_FILES
-    }
+    wanted = {root / relative: _plugin_body(name) for name, relative in _CLAUDE_PLUGIN_FILES}
 
     if all(path.is_file() and path.read_bytes() == body for path, body in wanted.items()):
         return Step(root, "unchanged", False, "already up to date")
@@ -215,7 +292,7 @@ def install_codex_mcp(home: Path, *, dry_run: bool = False) -> Step:
     if not destination.is_file():
         if not dry_run:
             destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_text(BLOCK.lstrip("\n"), encoding="utf-8")
+            destination.write_text(codex_block().lstrip("\n"), encoding="utf-8")
         return Step(destination, "created", True)
 
     existing = destination.read_text(encoding="utf-8")
@@ -230,7 +307,11 @@ def install_codex_mcp(home: Path, *, dry_run: bool = False) -> Step:
             False,
             "mcp_servers is written as an inline table here; adding a "
             f"{SECTION} section after one is invalid TOML. Add\n"
-            '  convilyn = { command = "convilyn", args = ["mcp", "serve"] }\n'
+            #: The same absolute path the appended table would have carried. A
+            #: bare name here would hand the user the unspawnable config in the
+            #: one place this command cannot write for them.
+            f"  convilyn = {{ command = '{server_command()}', "
+            'args = ["mcp", "serve"] }\n'
             "inside your existing mcp_servers table instead.",
         )
 
@@ -239,7 +320,7 @@ def install_codex_mcp(home: Path, *, dry_run: bool = False) -> Step:
         #: this is safe wherever the file happens to end -- with one exception,
         #: refused above.
         separator = "" if existing.endswith("\n") else "\n"
-        destination.write_text(existing + separator + BLOCK, encoding="utf-8")
+        destination.write_text(existing + separator + codex_block(), encoding="utf-8")
     return Step(destination, "appended", True)
 
 

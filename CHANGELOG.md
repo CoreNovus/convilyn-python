@@ -3,6 +3,172 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [Semantic Versioning](https://semver.org/).
 
+## [4.0.0] - 2026-09-03
+
+### Changed — BREAKING
+
+- **The five MCP tools lost their `convilyn_` prefix.**
+
+  | 3.x | 4.0.0 |
+  |---|---|
+  | `convilyn_convert` | `convert` |
+  | `convilyn_capabilities` | `capabilities` |
+  | `convilyn_pdf` | `pdf` |
+  | `convilyn_understand` | `understand` |
+  | `convilyn_quota` | `quota` |
+
+  The host already namespaces every MCP tool by server, so a plugin install
+  exposed `mcp__plugin_convilyn_convilyn__convilyn_convert` — `convilyn` three
+  times in one identifier, the last of which told the model nothing the
+  namespace had not already said.
+
+  **Migration.** Anywhere you named a tool — a permission rule, an
+  `allowed-tools` list, a subagent `tools` field, a hook matcher — drop
+  `convilyn_` from the tool segment and leave the host's namespace alone:
+
+  ```
+  mcp__plugin_convilyn_convilyn__convilyn_convert  ->  mcp__plugin_convilyn_convilyn__convert
+  mcp__convilyn__convilyn_convert                  ->  mcp__convilyn__convert
+  ```
+
+  Nothing else about the tools changed: same inputs, same behaviour, same
+  results. A saved prompt that names a tool needs the one-word edit above;
+  a caller that only uses the Python API or the CLI is unaffected.
+
+  **Why it was renamed rather than left alone.** The previous release argued
+  for keeping the prefix precisely because renaming is breaking. That settles
+  the mechanism — a major version — not the question; a public surface does not
+  get to stay wrong permanently because correcting it costs a major.
+
+  **Why there is no deprecation window**, which is a documented departure from
+  this project's usual policy: a deprecated MCP tool has to stay *registered*
+  to keep working, so a window would have shipped ten tools for at least one
+  minor release. That doubles a catalogue whose small size is the property
+  worth protecting — every description is re-sent to the model on every turn —
+  and exceeds the description budget this package holds itself to. MCP also has
+  no deprecation channel a client acts on, so the "warning" could only be prose
+  in a description the caller pays for every turn. `docs/STABILITY.md` carries
+  the carve-out and the full reasoning.
+
+### Changed
+
+- **`convert` now publishes a real `outputSchema`**, so a host can validate what
+  it returns instead of being told "any object".
+  `Annotated[CallToolResult, Envelope]` keeps the return type — so `isError`
+  stays ours — *and* derives the published schema from `Envelope`.
+
+  It is the only one, and the reason is narrow: every field in `ConvertEnvelope`
+  is declared under the name it is sent under, so the schema the library derives
+  and the payload the tool sends cannot disagree. `quota` is **deliberately
+  excluded** — `CostEstimate` carries camelCase aliases, and a schema derived
+  from it advertises `estimatedMicroU` while the payload sends
+  `estimated_micro_u`, which every client that validates output schemas rejects.
+  `pdf` and `capabilities` have multiple success shapes that a top-level union
+  cannot express through this path, and `understand`'s `result` is by
+  construction the caller's own JSON Schema output.
+
+  A modelled shape converts silent payload drift into a loud failure. That is
+  the point, and it is a new failure mode — worth taking on the one tool whose
+  shape is stable and alias-free, not on the four where it is not.
+
+- **A refused call now sets `isError` on the wire**, in addition to the
+  `{"ok": false, "error", "hint"}` body it already returned. A host keying off
+  the protocol flag previously saw an unbroken run of successes while the model
+  was reading refusals. The body is unchanged — the flag was added, not traded
+  for it.
+
+  **A refusal is what sets it, not merely `ok: false`.** A batch where one file
+  of twelve failed returns `ok: false` with eleven good rows — a call that did
+  its job, and `convert`'s contract is explicit that a failed file is a result
+  rather than an exception. Flagging it as a tool execution error told the host
+  the call would have failed when it had not. It also matters more than
+  cosmetically: `isError` exempts a result from output-schema validation, so a
+  rule keyed on `ok` alone would skip validation on exactly the payload most
+  likely to drift.
+
+- **`pdf` `operation: "info"` now returns a bounded sample instead of the whole
+  text layer.** It used to return everything: a 19-page spec measured 36,660
+  characters — roughly 9,200 tokens from a single call, and doubled on the wire
+  because the payload rides in both the text block and `structuredContent`.
+  The description called it *"the cheapest way to learn whether a PDF has a text
+  layer"*; it was the most expensive way. Defaults are now 4,000 characters
+  (≈2 pages) from the first 20 pages, both overridable per call with `max_chars`
+  and `max_pages`.
+
+  The result says when it clipped — `text_truncated`, `text_chars`,
+  `pages_read` — and carries a `hint` naming the two narrower calls: a page
+  range for part of the document, or `convert` for all of it at zero tokens.
+  Silent truncation would be worse than the original problem: a model cannot
+  tell a short document from a clipped one, and would answer about the part it
+  received. Measured on a 40-page document: 43,629 characters before, 4,000
+  after.
+
+  `pages` already accepted `"1-5"` / `"1-3,7,10-12"` and was wired end to end —
+  it was simply never mentioned for `info`, so nothing the model reads suggested
+  a 26× cheaper call existed.
+
+- **The five MCP tools now declare their behaviour to the host.** Every tool
+  carries `annotations` and a human-readable `title`: `capabilities`
+  and `quota` are marked read-only, `understand` and
+  `quota` as reaching the network. A client could not previously
+  auto-approve the read-only tools, because nothing said which ones they were.
+- **`pdf`'s `operation` is now a real schema `enum`**, so the eight
+  valid values are visible before a call instead of only in the error hint.
+  Every tool parameter also carries a description. `convert`'s `to`
+  stays deliberately open: its value set is what the local machine can write.
+- **`convert` now documents that it returns output PATHS, not the
+  converted text.** That is the basis of the batch being free, and it was
+  stated nowhere the model reads; the skill's own wording implied the opposite.
+
+### Fixed
+
+- **The spend-approval prompt showed a price that was not the price.** Before
+  uploading your files and charging you, `understand` asked for approval with a
+  figure — and the figure was **"about $1.00" on every call, for every file, for
+  every account.** It came from pricing an *empty* chat-Builder tool palette:
+  `(0 tools × 20 iterations) + (50,000 µU × 20)`. It never varied with file
+  count, size, page count, schema, tier or balance, and it described an
+  operation you were not running.
+
+  Three things were wrong at once: the wrong operation (that estimator "knows
+  nothing about which workflow you intend to run"), the wrong unit (insured
+  pre-margin µU, which understates the charge — on one measured run the quote
+  was 120.1 credits against 403–419 actually charged), and no correction
+  afterwards, since the charge is not yet reported back on a finished run.
+
+  **The prompt now states that the amount is unknown rather than guessing it**,
+  and says why. It is not silently omitted: an approval screen with no cost line
+  reads as "free". The blocking network round-trip that fetched the constant is
+  gone with it. `quota`'s description no longer suggests using it to price a
+  run — it prices a tool palette you pass explicitly, and with no arguments it
+  returns a constant.
+
+- **A corrupt PDF told you to install a package you already have.**
+  `PdfOperationError` subclasses `LocalError`, so a single `except LocalError`
+  attached `uv add "convilyn[pdf]"` to *every* PDF failure. With pypdf
+  installed, a damaged file returned `Stream has ended unexpectedly` alongside
+  advice to install pypdf. Only a genuinely missing dependency carries that hint
+  now.
+
+- **`convilyn agent install` registered an MCP server the host could not
+  start.** Both destinations wrote the bare name `convilyn` as the command, and
+  an MCP host spawns its servers with an environment whose `PATH` need not
+  contain the directory the package was installed into. The install reported
+  success and the five tools never appeared — a CLI that works in your terminal
+  and nothing at all in your assistant. Measured on Windows 11 with a
+  `uv tool install`: bare name `failed`, the same config with an explicit
+  `env.PATH` `connected`, an absolute path `connected`. Both destinations now
+  carry the absolute path of the `convilyn` belonging to the interpreter that
+  ran the install.
+
+  Two things this does **not** do. It is not established to be Windows-only —
+  the mechanism (a subprocess `PATH` missing the install directory) is
+  platform-neutral, and POSIX is simply unmeasured. And it does not repair an
+  existing `~/.codex/config.toml`: that file already declares `convilyn`, so
+  the installer reports `unchanged` and leaves the old bare-name table in
+  place. Fix that one by hand, or delete the `[mcp_servers.convilyn]` section
+  and re-run.
+
 ## [3.6.1] - 2026-09-02
 
 ### Security

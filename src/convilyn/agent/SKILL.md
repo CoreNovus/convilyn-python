@@ -13,7 +13,7 @@ allowed-tools: Bash(convilyn:*)
 license: Apache-2.0
 metadata:
   author: CoreNovus
-  version: "3.6.1"
+  version: "4.0.0"
 ---
 
 # Reading documents without spending tokens
@@ -31,8 +31,10 @@ gets you XML fragments or binary, and reassembling it is work with no upside.
 **A batch.** Twenty files cost the same zero tokens as one, in one call.
 
 **A large PDF.** Reading a long PDF page by page spends tokens proportional to
-its length. Converting spends none — and the Markdown that comes back is what
-you then reason over.
+its length. Converting spends none: the tool writes a `.md` file and hands back
+its PATH, not its text, so nothing enters your context until you choose to read
+it. That is the whole reason a batch is free — read only the files the task
+actually needs.
 
 **Repeatability.** The output is deterministic, so a diff between two runs means
 the input changed, not the weather.
@@ -83,7 +85,7 @@ ratings.
 the user's agreement before spending on their behalf. Local conversion is free;
 this is not, and the difference is worth stating out loud when you offer it.
 
-The MCP tool `convilyn_understand` takes local paths and uploads them for you.
+The MCP tool `understand` takes local paths and uploads them for you.
 The shell form takes already-uploaded file **ids**, not paths:
 
 ```bash
@@ -94,8 +96,8 @@ convilyn goals understand --files <file-id> --schema-file ./fields.json
 ## Talking to it over MCP instead
 
 `convilyn mcp serve` exposes the same capabilities as MCP tools
-(`convilyn_convert`, `convilyn_capabilities`, `convilyn_pdf`,
-`convilyn_understand`, `convilyn_quota`). If those tools are already available
+(`convert`, `capabilities`, `pdf`,
+`understand`, `quota`). If those tools are already available
 to you, that server is running and you can call them directly instead of
 shelling out.
 

@@ -1,7 +1,7 @@
 """Nothing is uploaded or charged until a HUMAN says yes.
 
-`convilyn_understand` shipped with this gate written as prose in its own tool
-description — *"Call `convilyn_quota` first if the user has not already agreed
+`understand` shipped with this gate written as prose in its own tool
+description — *"Call `quota` first if the user has not already agreed
 to spend"* — and nothing enforcing it. A tool description is input to the same
 model the description is trying to constrain, so it is advice, not a gate.
 
@@ -20,12 +20,27 @@ run.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from convilyn.mcp import server
+
+
+def _refusal(result: Any) -> dict[str, Any]:
+    """Unwrap a refusal, asserting BOTH channels carry it.
+
+    Tools return a ``CallToolResult`` now: a refusal keeps ``ok: false`` in the
+    body and also sets ``isError`` on the wire. Reading only the body would let
+    the protocol flag regress unnoticed, which is the defect the change fixed —
+    so this helper checks both and hands back the body.
+    """
+    assert result.is_error is True
+    body = result.structured_content
+    assert body["ok"] is False
+    return body
 
 
 class _FakeSession:
@@ -141,28 +156,37 @@ class TestNoAnswerIsNotAYes:
         assert "could not obtain approval" in denial
 
 
-# ── the prompt carries a number WE fetched ───────────────────────────
+# ── the prompt names no price, on purpose ────────────────────────────
 
 
 class TestThePromptIsHonest:
-    def test_it_names_the_price_from_the_quote(self) -> None:
-        prompt = server._spend_prompt(
-            ["/tmp/invoice.pdf"], {"ok": True, "estimate": {"estimated_micro_u": 1_250_000}}
-        )
-        assert "$1.25" in prompt
+    """These assertions replace one that pinned the defect in place.
 
-    def test_it_says_so_when_the_price_is_unknown(self) -> None:
-        """An approval screen with no cost line reads as free."""
-        prompt = server._spend_prompt(["/tmp/invoice.pdf"], {"ok": False, "error": "no key"})
-        assert "could not be quoted" in prompt
+    The old test fed `_spend_prompt` a hand-built `{"estimated_micro_u":
+    1_250_000}` and asserted `"$1.25" in prompt`. That value cannot arise at the
+    real call site: `tools.quota()` there is called with no arguments, prices an
+    EMPTY Builder tool palette, and returns the same 1,000,000 µU every time —
+    so the prompt read "about $1.00" on every call, for every account. The test
+    verified a formatter against an input production never produces.
+    """
+
+    def test_it_shows_no_currency_figure(self) -> None:
+        """The load-bearing one. A price here was fabricated three ways over:
+        wrong operation, wrong unit, and no correction afterwards."""
+        assert not re.search(r"\$\s*\d", server._spend_prompt(["/tmp/invoice.pdf"]))
+
+    def test_it_says_the_amount_is_unknown(self) -> None:
+        """An approval screen with no cost line reads as free, so the unknown is
+        stated rather than omitted — the one thing the old prompt got right."""
+        assert "not known" in server._spend_prompt(["/tmp/invoice.pdf"])
+
+    def test_it_says_credits_are_spent(self) -> None:
+        assert "SPEND CREDITS" in server._spend_prompt(["/tmp/invoice.pdf"])
 
     def test_it_says_the_files_leave_the_machine(self) -> None:
-        prompt = server._spend_prompt(["/tmp/invoice.pdf"], {"ok": True, "estimate": {}})
+        prompt = server._spend_prompt(["/tmp/invoice.pdf"])
         assert "UPLOAD" in prompt
         assert "invoice.pdf" in prompt
-
-
-# ── roots: the fence's input, and its fallback ───────────────────────
 
 
 class TestAllowedRoots:
@@ -235,7 +259,7 @@ class TestTheToolItselfDoesNotSpendWithoutApproval:
             answer=_Answer("decline"),
         )
         result = await self._call(ctx, workspace)
-        assert result["ok"] is False
+        _refusal(result)
 
     async def test_a_client_without_elicitation_stops_the_upload(
         self, workspace, never_spends
@@ -245,8 +269,7 @@ class TestTheToolItselfDoesNotSpendWithoutApproval:
             answer=_Answer("accept", approve=True),
         )
         result = await self._call(ctx, workspace)
-        assert result["ok"] is False
-        assert "cannot ask you to approve" in result["error"]
+        assert "cannot ask you to approve" in _refusal(result)["error"]
 
     async def test_a_bad_request_is_refused_before_anyone_is_asked(
         self, workspace, never_spends
@@ -260,8 +283,7 @@ class TestTheToolItselfDoesNotSpendWithoutApproval:
         )
         handler = _understand_handler()
         result = await handler(ctx=ctx, paths=[str(workspace / "invoice.pdf")], schema={})
-        assert result["ok"] is False
-        assert "schema" in result["error"]
+        assert "schema" in _refusal(result)["error"]
         assert ctx.elicit_calls == []
 
     async def test_a_fenced_path_is_refused_before_anyone_is_asked(
@@ -274,12 +296,37 @@ class TestTheToolItselfDoesNotSpendWithoutApproval:
         )
         handler = _understand_handler()
         result = await handler(ctx=ctx, paths=[str(workspace / ".env")], schema={"type": "object"})
-        assert result["ok"] is False
+        _refusal(result)
         assert ctx.elicit_calls == []
+
+    async def test_understand_never_calls_quota(self, workspace, never_spends, monkeypatch) -> None:
+        """`tools.quota()` was a blocking HTTP round-trip on the event loop to
+        re-derive a constant that described a different operation. It is gone;
+        this fails if anyone reinstates it."""
+
+        from convilyn.mcp import tools
+
+        def _explode(*args, **kwargs):
+            raise AssertionError("understand must not price itself with a palette estimate")
+
+        monkeypatch.setattr(tools, "quota", _explode)
+        ctx = _FakeContext(
+            _FakeSession(capabilities={"elicitation", "roots"}, roots=[workspace.as_uri()]),
+            answer=_Answer("decline"),
+        )
+        handler = _understand_handler()
+
+        result = await handler(
+            ctx=ctx,
+            paths=[str(workspace / "invoice.pdf")],
+            schema={"type": "object", "properties": {"total": {"type": "number"}}},
+        )
+
+        _refusal(result)
 
 
 def _understand_handler():
-    """The registered `convilyn_understand` function, pulled off a built server.
+    """The registered `understand` function, pulled off a built server.
 
     Reached through the server rather than re-implemented here, so this exercises
     the same wiring the model gets — including that `ctx` is injected rather than
@@ -287,6 +334,9 @@ def _understand_handler():
     """
     built = server.build_server()
     for tool in built._tool_manager.list_tools():  # noqa: SLF001 - test reaches in deliberately
-        if tool.name == "convilyn_understand":
+        if tool.name == "understand":
             return tool.fn
-    raise AssertionError("convilyn_understand is not registered")  # pragma: no cover
+    raise AssertionError("understand is not registered")  # pragma: no cover
+
+
+# ── roots: the fence's input, and its fallback ───────────────────────
