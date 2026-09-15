@@ -239,7 +239,7 @@ class TestOutputPlacement:
         assert pdf.page_count(second) == 3
 
 
-# ── 8. The library's own exceptions never reach the caller (#4108) ────
+# ── 8. The library's own exceptions never reach the caller ────────────
 
 
 class TestEncryptedSourcesStayInTheTaxonomy:

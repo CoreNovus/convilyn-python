@@ -43,13 +43,32 @@ convilyn local convert report.docx --to md
 Run `convilyn local doctor` to see what your machine can do and how to extend
 it — it never guesses, and it never fails silently.
 
+**Two things the offline engine will not do, by design.** Neither is left for
+you to infer from a disappointing result — one refuses the conversion, the other
+tells you what it could not read:
+
+- **It does not read HTML.** `convilyn local convert page.html --to md` answers
+  `Unsupported conversion: No route from html to md. This engine cannot read
+  html at all.` The good HTML-to-text libraries are GPL-licensed and this
+  package is Apache-2.0, so taking one would change the licence of everything
+  that installs it. Installing an extra does not unlock this; there is no extra
+  to install.
+- **It does not OCR a scanned page.** A PDF whose pages are images carries no
+  text layer, and nothing here will invent one. You are told so rather than left
+  to infer it from a thin result — `! no text layer found — this PDF is probably
+  a scan` — and of the 650 real-world PDFs that converted in
+  [docs/MEASURED-2026-09-08.md](docs/MEASURED-2026-09-08.md), 145 are this case.
+  Reading those needs the hosted API, where OCR runs as a metered workflow.
+
+Everything else this engine converts runs entirely on your machine, and
+`convilyn local formats` lists every route it has.
+
 **Platform workflows run in the cloud, and need a key.** `Convilyn(...)` reaches
 the hosted AI workflows — the part where a conversion becomes something you can
 save, share, re-run and improve.
 
 The long-term goal is for more of the first half to be possible: practical AI
-workflows on the computing resources people already have, including AI PCs and
-edge devices. `convilyn-edge` is where that work runs today.
+workflows on the computing resources people already have.
 
 ## Who is this for?
 
@@ -128,7 +147,7 @@ directly is faster and costs the same nothing.
 
 ## How well does it work?
 
-**[docs/MEASURED-2026-08-28.md](docs/MEASURED-2026-08-28.md)** — the full test
+**[docs/MEASURED-2026-09-08.md](docs/MEASURED-2026-09-08.md)** — the full test
 results, with the corpora, the metrics and the known limitations.
 
 Every figure is produced by [`doc-eval`](https://github.com/CoreNovus/doc-eval),

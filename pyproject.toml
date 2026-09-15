@@ -101,7 +101,7 @@ dev = [
     "pytest-asyncio>=0.23.0",
     "pytest-cov>=4.1.0",
     "respx>=0.22.0",
-    "ruff==0.16.5",
+    "ruff==0.16.6",
     # The `typecheck` gate's checker (#3917). Specifier deliberately identical
     # to the one already in scripts/oss/templates/pyproject.toml: this repo's
     # cross-file agreement ratchet compares specifier STRINGS, and a new
@@ -198,9 +198,10 @@ line-length = 100
 # exclusion is gone. Measured on this package before flipping: 3 files change,
 # all of it trailing-comment realignment — the class #3953 warned about
 # (deliberately one-line multi-name imports exploded one-per-line) does not
-# occur here, it was measured on `edge-python` / `author-python`. Those four
-# SDKs still carry the exclusion and are NOT covered by this decision; each is
-# its owner's call.
+# occur here, it was measured on the then-existing `edge-python` and on
+# `author-python`. The SDKs that still carry the exclusion are NOT covered by
+# this decision; each is its owner's call. (`edge-python` was one of them until
+# #5450 removed the edge SDK trees — epic #5446.)
 #
 # What this buys is narrow, and worth stating so nobody over-reads a green run:
 # consistency, not correctness. A formatter has no opinion on whether a sample

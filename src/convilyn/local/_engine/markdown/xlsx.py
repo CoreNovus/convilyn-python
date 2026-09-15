@@ -12,6 +12,19 @@ if it were the document's title. This is deliberately silent: a
 single-sheet workbook is the commonest shape this function sees, and no
 warning is emitted for the omission.
 
+**"Sheet" means a sheet that has cells.** A workbook can also hold chart
+sheets — a chart on a tab of its own, with no grid behind it — and those are
+skipped. There is nothing on them to convert: the chart draws data that lives
+on another sheet, so the numbers are already in the output and the picture is
+not something Markdown can hold. Unlike the single-sheet heading omission
+above, this one IS reported in the warnings, because a chart sheet is content
+the document had and the conversion does not carry.
+
+They are excluded from the sheet count as well, not merely skipped when
+reached. The count is what decides both the sheet cap and whether a heading is
+warranted, so a workbook of one data sheet beside one chart sheet has exactly
+one thing to read and is treated as the single-sheet workbook it is.
+
 Cells are read for their stored value, not their formula: a Markdown table of
 ``=SUM(B2:B9)`` is useless to every reader.
 
@@ -186,7 +199,9 @@ def extract(path: Path) -> MarkdownDoc:
     """Read a workbook into one table block per worksheet.
 
     A sheet's name becomes a heading only when there is more than one sheet — a
-    single-sheet workbook gets its table with no heading at all.
+    single-sheet workbook gets its table with no heading at all. Chart sheets are
+    not sheets for either purpose: they produce no table and they do not count
+    towards the number that decides the heading.
 
     Empty trailing rows and columns are trimmed, so a sheet with data in A1:C10 does
     not render as a table padded out to the spreadsheet's maximum extent.
@@ -200,16 +215,24 @@ def extract(path: Path) -> MarkdownDoc:
     uncached = 0
 
     try:
-        names = workbook.sheetnames
-        if len(names) > MAX_SHEETS:
+        data_sheets = workbook.worksheets
+        chart_sheets = len(workbook.sheetnames) - len(data_sheets)
+        if len(data_sheets) > MAX_SHEETS:
             warnings.append(
-                f"truncated: only the first {MAX_SHEETS} of {len(names)} sheets converted"
+                f"truncated: only the first {MAX_SHEETS} of {len(data_sheets)} sheets converted"
+            )
+        if chart_sheets:
+            warnings.append(
+                f"best_effort: {chart_sheets} chart sheet(s) hold no cell data and were "
+                "not converted"
             )
 
-        sheet_names = names[:MAX_SHEETS]
-        needs_heading = len(sheet_names) > 1
-        for name in sheet_names:
-            rows, truncated = _sheet_rows(workbook[name])
+        converted = data_sheets[:MAX_SHEETS]
+        sheet_names = [sheet.title for sheet in converted]
+        needs_heading = len(converted) > 1
+        for sheet in converted:
+            name = sheet.title
+            rows, truncated = _sheet_rows(sheet)
             if needs_heading:
                 blocks.append(Block(kind="heading", text=name, level=2))
 

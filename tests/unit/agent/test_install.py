@@ -132,7 +132,7 @@ class TestTheClaudeCodePluginIsWrittenInPlace:
             "plugin.json"
         ).read_bytes()
         #: ``.mcp.json`` is the ONE file that is not a verbatim copy: its
-        #: command is resolved for this machine (#4999). This assertion used to
+        #: command is resolved for this machine. This assertion used to
         #: compare it to the payload byte-for-byte, which is exactly the shape
         #: the defect needed to survive.
         assert (root / ".mcp.json").read_bytes() == claude_mcp_config()
@@ -142,7 +142,7 @@ class TestTheClaudeCodePluginIsWrittenInPlace:
         config file gets copied between machines and pasted into issues."""
         install_claude_code_plugin(home)
         #: Parsed, not searched as text. The command is now an absolute path
-        #: (#4999) and a virtualenv in it contains the substring "env", so the
+        #: and a virtualenv in it contains the substring "env", so the
         #: old check failed on a config that carries no credential at all. The
         #: question was always about KEYS, and asking it that way is both
         #: correct and immune to whatever the path happens to spell.
@@ -504,7 +504,7 @@ class TestTheConditionalCoversTheWholeVocabulary:
 
 
 class TestTheRegisteredCommandCanActuallyBeSpawned:
-    """#4999: both destinations shipped the bare name ``convilyn``.
+    """Both destinations shipped the bare name ``convilyn``.
 
     That reads as obviously right -- it is what every MCP server in the
     ecosystem writes -- and an MCP host spawns its servers with an environment
@@ -523,7 +523,7 @@ class TestTheRegisteredCommandCanActuallyBeSpawned:
         """The convilyn the user just invoked -- not whatever PATH names first.
 
         A project virtualenv earlier in PATH would otherwise register a server
-        the editor cannot see, which is the exact confusion #4999 was.
+        the editor cannot see, which is the exact confusion this removes.
         """
         exe = tmp_path / ("convilyn.exe" if os.name == "nt" else "convilyn")
         exe.write_bytes(b"")
@@ -587,7 +587,7 @@ class TestTheRegisteredCommandCanActuallyBeSpawned:
 
     def test_the_inline_table_advice_is_not_the_bare_name(self, home) -> None:
         """The one config this command refuses to edit -- so the line it prints
-        is the whole fix for that user, and a bare name there reproduces #4999."""
+        is the whole fix for that user, and a bare name there reproduces that defect."""
         config = codex_config(home)
         config.parent.mkdir(parents=True, exist_ok=True)
         config.write_text('mcp_servers = { other = { command = "other" } }\n', encoding="utf-8")

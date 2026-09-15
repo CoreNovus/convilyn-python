@@ -18,15 +18,20 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-# The Builder (chat-driven authoring) models live in `_types_builder` and are
-# re-exported here, because adding `warnings` took this module past its
-# 800-line budget and the ratchet's answer to that is to extract, not to
-# record a new ceiling. Public surface is unchanged: `convilyn.types.X`,
-# `convilyn.X` and `import *` all still resolve. That block was the cheap
-# seam because the Builder wire is snake_case while every other family here
-# is camelCase-with-aliases, so it shared no convention with its neighbours.
+# TWO families live in their own modules and are re-exported here. Both moved
+# for the same reason: this module reached its 800-line budget, and the ratchet's
+# answer is to extract rather than record a new ceiling. Public surface is
+# unchanged either time — `convilyn.types.X`, `convilyn.X` and `import *` all
+# still resolve.
 #
-# A grouped import with one `noqa` rather than an `__all__`: this module has
+# The Builder block (`_types_builder`) went first, when `warnings` was added: its
+# wire is snake_case while every other family here is camelCase-with-aliases, so
+# it shared no convention with its neighbours. The file/storage block
+# (`_types_files`) followed, when one added field on `ConvertJob` put
+# the module back over — those four describe one subject, and `client.files` is
+# the only resource that reads them all.
+#
+# Grouped imports with one `noqa` each rather than an `__all__`: this module has
 # never declared one, and adding a partial list would silently shrink what
 # `import *` exports.
 from convilyn._types_builder import (  # noqa: F401  (re-export; see above)
@@ -39,75 +44,14 @@ from convilyn._types_builder import (  # noqa: F401  (re-export; see above)
     BuilderTurn,
     BuilderVerdictAction,
 )
+from convilyn._types_files import (  # noqa: F401  (re-export; see above)
+    File,
+    FileList,
+    StorageUsage,
+    StoredFile,
+)
 
 JobStatus = Literal["queued", "processing", "completed", "failed"]
-
-
-class File(BaseModel):
-    """A file known to the Convilyn platform.
-
-    Returned by :py:meth:`convilyn.resources.files.AsyncFiles.upload` and,
-    in future commits, by ``client.files.get(...)`` / ``client.files.list()``.
-
-    The :py:attr:`file_id` is the only handle other resources need —
-    ``client.convert.start(file_id=file.file_id, ...)`` accepts it
-    directly. SDK callers should not treat any other field as a stable
-    identifier.
-    """
-
-    model_config = ConfigDict(populate_by_name=True, frozen=True)
-
-    file_id: str = Field(alias="fileId")
-    filename: str = Field(alias="fileName")
-    size: int = Field(alias="fileSize", gt=0)
-    content_type: str = Field(alias="mimeType")
-    created_at: datetime = Field(alias="createdAt")
-    job_id: str | None = Field(default=None, alias="jobId")
-    is_input: bool = Field(default=True, alias="isInput")
-
-
-class StoredFile(BaseModel):
-    """One durable stored file (e.g. an emailed-in attachment).
-
-    Returned inside :class:`FileList` by
-    :py:meth:`convilyn.resources.files.AsyncFiles.list`. Durable files
-    survive the ~1-hour cleanup that removes ordinary uploads and count
-    toward your storage quota. Attribute names mirror :class:`File` for
-    consistency; the list wire is snake_case, bridged by ``alias``.
-
-    Ephemeral uploads do NOT appear here — this lists durable storage only.
-    """
-
-    model_config = ConfigDict(populate_by_name=True, frozen=True)
-
-    file_id: str
-    filename: str = Field(alias="file_name")
-    size: int = Field(alias="file_size", ge=0)
-    content_type: str = Field(alias="mime_type")
-    file_extension: str
-    created_at: datetime
-
-
-class StorageUsage(BaseModel):
-    """Durable-storage usage against your tier's free quota (bytes)."""
-
-    model_config = ConfigDict(frozen=True)
-
-    used_bytes: int = Field(ge=0)
-    free_bytes: int = Field(ge=0)
-    over_quota: bool
-
-
-class FileList(BaseModel):
-    """Your durable stored files plus a storage-usage summary.
-
-    Returned by :py:meth:`convilyn.resources.files.AsyncFiles.list`.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    files: list[StoredFile]
-    usage: StorageUsage
 
 
 class ResultFile(BaseModel):
@@ -174,6 +118,12 @@ class ConvertJob(BaseModel):
     processor_type: str = Field(alias="processorType")
     progress: int = Field(ge=0, le=100)
     progress_message: str | None = Field(default=None, alias="progressMessage")
+    #: How long the platform suggests waiting before asking about this job
+    #: again, in milliseconds. Advisory and deterministic — derived from the
+    #: job's own state, never an estimate of when it will finish. ``None`` on a
+    #: terminal job, and on any deployment that does not serve it. ``wait()``
+    #: follows it unless the caller passed their own ``poll_interval``.
+    suggested_poll_interval_ms: int | None = Field(default=None, alias="suggestedPollIntervalMs")
     result_files: list[ResultFile] | None = Field(default=None, alias="resultFiles")
     #: What the conversion could not preserve. Empty on a faithful conversion,
     #: and worth reading on a successful one — a `.xls` workbook converted to

@@ -1,6 +1,6 @@
 """``convilyn setup`` — saved-key reuse, the callback page, and `--key-name`.
 
-Split from `test_setup.py` (#4707 file-size ratchet: extract a module rather
+Split from `test_setup.py` (file-size ratchet: extract a module rather
 than raise the 800-line ceiling). See that file's docstring for the shared
 context (the real loopback callback server, the simulated browser). This file
 is self-contained, matching this test directory's own convention — every

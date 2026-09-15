@@ -1,6 +1,6 @@
 """The pure core of the document->Markdown engine: render, triage, text, csv.
 
-Offline by construction — no network, no AWS, no Bedrock. That is the property
+Offline by construction — no network, no AWS, no model provider. That is the property
 the whole extract -> enrich -> render split was chosen for, so it is asserted
 here rather than assumed.
 """
@@ -345,7 +345,7 @@ class TestCsvExtractor:
         assert any("truncated" in w for w in extract_csv(source).warnings)
 
     def test_the_default_cap_converts_that_many_data_rows(self, tmp_path):
-        """#3997, as the reporter met it: the DEFAULT cap, with no argument.
+        """As the reporter met it: the DEFAULT cap, with no argument.
 
         The published engine converted 4,999 rows under a warning naming 5,000,
         because the header was charged to the cap. Pinned here as well as at the

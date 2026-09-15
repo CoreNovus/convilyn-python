@@ -8,7 +8,7 @@ open and immediately GETs the callback, exactly as a real browser redirect
 would — this way the test never has to guess the internally-generated PKCE
 values.
 
-Split from `test_setup_reuse_and_key_name.py` (#4707 file-size ratchet:
+Split from `test_setup_reuse_and_key_name.py` (file-size ratchet:
 extract a module rather than raise the 800-line ceiling). This file keeps the
 first sign-in path — happy path, boundary, errors, object-state, password
 sign-in, the welcome block. The saved-key reuse path, the callback page, and

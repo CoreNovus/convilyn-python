@@ -224,7 +224,7 @@ class TestThePricingToolSaysWhatItIsNot:
 
 
 class TestEveryToolDeclaresItsBehaviour:
-    """Annotations were unset on all five until #5028.
+    """Annotations were unset on all five until they were declared.
 
     They are the only machine-readable statement of what a tool does to the
     world, and a host needs them for the thing annotations exist for: it cannot
@@ -326,7 +326,7 @@ class TestTheFiniteParameterSetsAreDeclared:
         assert "enum" not in tool.input_schema["properties"]["to"]
 
     async def test_parameters_carry_descriptions(self, tools) -> None:
-        """No input schema carried any until #5028."""
+        """No input schema carried any until they were declared."""
         tool = next(t for t in await tools.list_tools() if t.name == "pdf")
         for param in ("operation", "pages", "password"):
             assert tool.input_schema["properties"][param].get("description"), param

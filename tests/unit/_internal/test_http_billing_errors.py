@@ -1,4 +1,4 @@
-"""``_decode_error`` — the billing refusal taxonomy (#4081).
+"""``_decode_error`` — the billing refusal taxonomy.
 
 Four refusals ride the paid path and each wants a different next step from the
 caller: top up, leave the Free plan, pick another workflow, retry later. Before
@@ -12,7 +12,7 @@ round-trip per case. One end-to-end case at the bottom proves the typed error
 really reaches a caller through ``request()``; the rest would only re-prove
 respx.
 
-Four categories per `.claude/rules/unit-testing`: logic (which class), boundary
+Four categories: logic (which class), boundary
 (zero, absent, unknown code), error (the taxonomy promise), object-state (the
 operands survive decoding).
 """
@@ -35,7 +35,7 @@ from convilyn import (
     QuotaExceededError,
     SpecNotPricedError,
 )
-from convilyn._internal.http import _decode_error
+from convilyn._internal.http_errors import _decode_error
 
 API_BASE = "https://api.convilyn.com"
 

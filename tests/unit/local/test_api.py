@@ -40,9 +40,19 @@ class TestConvertLogic:
         assert result.output == sample_txt.with_suffix(".md")
 
     def test_the_output_is_markdown(self, sample_txt: Path) -> None:
-        local.convert(sample_txt, to="md")
+        """One `#`, not two.
 
-        assert "## Chapter One" in sample_txt.with_suffix(".md").read_text(encoding="utf-8")
+        A plain text file carries no styling, so the heuristic cannot tell a
+        title from a section under it — every line it accepts is a peer, and
+        peers with nothing above them are the document's top level. This read
+        `##` while the engine emitted level 2 and the backend's Word writer
+        compensated by subtracting one; the level is absolute now and the
+        compensation is gone.
+        """
+        local.convert(sample_txt, to="md")
+        lines = sample_txt.with_suffix(".md").read_text(encoding="utf-8").splitlines()
+
+        assert lines[0] == "# Chapter One"
 
     def test_out_names_the_file_and_infers_the_format(self, sample_txt: Path) -> None:
         destination = sample_txt.parent / "elsewhere" / "renamed.md"
@@ -88,7 +98,7 @@ class TestConvertManyLogic:
         assert seen == ["start", "done"]
 
 
-# ── 1b. The row cap (#3997) ──────────────────────────────────────────
+# ── 1b. The row cap ──────────────────────────────────────────────────
 #
 # The cap existed as a module constant no caller could reach, so "give me the
 # first 200 rows of this 500,000-row export" and "give me all of it" were both

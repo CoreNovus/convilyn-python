@@ -28,5 +28,5 @@ python app.py
 ```
 
 Need a device-side durable queue instead (offline kiosk / register)?
-That is the Edge SDK's territory — `convilyn_edge.offline` — not an
-app-layer copy; don't duplicate it here.
+There is no supported path for that today — the Edge SDK that owned it was
+withdrawn along with the edge/on-device placement.

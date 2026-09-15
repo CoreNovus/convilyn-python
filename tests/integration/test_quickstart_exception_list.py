@@ -39,8 +39,7 @@ The tables are delimited by `<!-- exceptions:cloud:begin -->` /
 swept every backticked token in the section would trip on the surrounding
 paragraphs — which legitimately mention `ImportError`, `FileExistsError`,
 `ValueError`, `TypeError` and `JobError` in order to say they are *not* part of
-this taxonomy. `turbo-lane-cost-classes.md` §"Why this stopped being a grep
-one-liner" is the standing lesson: a text scan trips over the document's own
+this taxonomy. The standing lesson: a text scan trips over the document's own
 explanation of itself. An explicit delimiter is a contract; a regex over prose
 is a guess.
 """

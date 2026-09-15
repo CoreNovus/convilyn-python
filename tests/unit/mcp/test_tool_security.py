@@ -2,7 +2,7 @@
 
 `convilyn mcp serve` puts five tools in front of a model that reads untrusted
 document text. Four of these boundaries did not exist when that surface shipped
-in 3.5.0 (#4838), and this file is where each one is pinned:
+in 3.5.0, and this file is where each one is pinned:
 
 * **the upload fence** — `understand` sends bytes off the machine, and
   its only check was `Path.is_file()`. `~/.ssh/id_rsa` is a file.

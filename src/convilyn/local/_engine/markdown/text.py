@@ -51,7 +51,7 @@ def extract(path: Path) -> MarkdownDoc:
         if not text:
             continue
         if looks_like_heading(text):
-            blocks.append(Block(kind="heading", text=text, level=2))
+            blocks.append(Block(kind="heading", text=text, level=1))
         else:
             blocks.append(Block(kind="paragraph", text=text))
 

@@ -288,7 +288,7 @@ class TestConvertBoundary:
         """`file="report.pdf"` used to reach `file.filename` and die with
         `AttributeError: 'str' object has no attribute 'filename'` — an
         implementation detail, from the one resource whose other two refusals
-        are careful `TypeError`s (#4108)."""
+        are careful `TypeError`s."""
         async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
             with pytest.raises(TypeError, match="expects an uploaded File object"):
                 await client.convert.create(file="report.pdf", target_format="md")  # type: ignore[arg-type]
@@ -610,10 +610,10 @@ class TestRefusalDetailReachesTheCaller:
 
 
 class TestConversionWarningsReachTheCaller:
-    """A successful conversion can still have lost something (#4054).
+    """A successful conversion can still have lost something.
 
-    The channel was built by #4033 and the LibreOffice route started filling it
-    in #4111 — but `ConvertJob` did not model the field, so every warning the
+    The channel was built first and the LibreOffice route started filling it
+    in later — but `ConvertJob` did not model the field, so every warning the
     server sent was dropped at the last hop. `pdf_reverse` has been emitting
     real ones ("Page 3 has minimal or no text") the whole time and no caller has
     ever seen one.
@@ -657,7 +657,7 @@ class TestConversionWarningsReachTheCaller:
     @pytest.mark.asyncio
     async def test_a_response_without_the_field_still_parses(self, file_obj) -> None:
         """Boundary, and the one that matters for a published client: every job
-        row written before #4033, and any older deployment, omits the key
+        row written before that channel existed, and any older deployment, omits the key
         entirely. Absent must mean empty, not a ValidationError on the user's
         machine."""
         job = await self._completed_with(file_obj, {})

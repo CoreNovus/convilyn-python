@@ -1,4 +1,4 @@
-"""LoopRunner — the #2112 regression guard.
+"""LoopRunner — the event-loop regression guard.
 
 The sync surface used to give every call its own ``asyncio.run`` loop,
 orphaning httpx pooled connections and crashing at interpreter teardown
@@ -29,7 +29,7 @@ class TestLoopRunnerLogic:
         runner.close()
 
     def test_consecutive_runs_share_one_loop(self):
-        """The #2112 fix itself: call N runs on the same loop object."""
+        """The fix itself: call N runs on the same loop object."""
         runner = LoopRunner()
 
         loops = [runner.run(_current_loop()) for _ in range(3)]

@@ -82,6 +82,10 @@ from convilyn.local._engine.markdown.model import (
     ExtractedImage,
     MarkdownDoc,
 )
+from convilyn.local._engine.markdown.tables import (
+    detect_tables,
+    in_any_box,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -92,10 +96,6 @@ _LINE_TOLERANCE = 2.0
 _DEDUPE_TOLERANCE = 1
 
 _PLACED_BLOCK = "_placed_block"
-
-MIN_TABLE_ROWS = 2
-MIN_TABLE_COLUMNS = 2
-
 
 _SENTENCE_END = SENTENCE_END + "：:"
 
@@ -158,18 +158,6 @@ def _lines_from_words(words: list[dict]) -> list[tuple[str, float, float]]:
     return lines
 
 
-def _in_any_box(word: dict, boxes: list[tuple]) -> bool:
-    for x0, top, x1, bottom in boxes:
-        if (
-            word["x0"] >= x0
-            and word["x1"] <= x1
-            and word["top"] >= top
-            and word["bottom"] <= bottom
-        ):
-            return True
-    return False
-
-
 def _image_sources_by_page(path: Path) -> dict[int, dict[str, Any]]:
     per_page: dict[int, dict[str, Any]] = {}
 
@@ -204,17 +192,6 @@ def _collect(item: Any, collector: ImageCollector) -> ExtractedImage | None:
 class _Region:
     lines: tuple[tuple[str, float, float], ...] = ()
     placed: tuple[tuple[float, Block], ...] = ()
-
-
-def _table_block(rows: list[list[str | None]]) -> Block | None:
-    cleaned = tuple(tuple((cell or "").strip() for cell in row) for row in rows if row)
-    if len(cleaned) < MIN_TABLE_ROWS:
-        return None
-    if max((len(row) for row in cleaned), default=0) < MIN_TABLE_COLUMNS:
-        return None
-    if not any(cell for row in cleaned for cell in row):
-        return None
-    return Block(kind="table", rows=cleaned)
 
 
 def _placed_images(
@@ -310,14 +287,7 @@ def _read_page(
     placements = list(getattr(page, "images", None) or [])
     page = page.dedupe_chars(tolerance=_DEDUPE_TOLERANCE)
 
-    try:
-        found = page.find_tables()
-        candidates = [(t.bbox, t.extract()) for t in found]
-    except Exception as exc:
-        logger.debug("pdf table extraction failed on a page (%s)", exc)
-        candidates = []
-
-    tables = [(bbox, block) for bbox, rows in candidates if (block := _table_block(rows))]
+    tables = detect_tables(page)
 
     try:
         words = page.extract_words(extra_attrs=["size"])
@@ -325,7 +295,7 @@ def _read_page(
         logger.debug("pdf word extraction failed on a page (%s)", exc)
         words = []
 
-    items: list[dict] = [w for w in words if not _in_any_box(w, [bbox for bbox, _ in tables])]
+    items: list[dict] = [w for w in words if not in_any_box(w, [bbox for bbox, _ in tables])]
     for bbox, block in tables:
         x0, top, x1, bottom = bbox
         items.append(
@@ -435,6 +405,7 @@ def extract(path: Path) -> MarkdownDoc:
 
         for index, page in enumerate(pdf.pages[:MAX_PAGES]):
             pages.append(_read_page(page, image_sources.get(index, {}), collector))
+            page.close()
 
     prose_lines = [line for regions in pages for region in regions for line in region.lines]
     body = body_size(prose_lines)

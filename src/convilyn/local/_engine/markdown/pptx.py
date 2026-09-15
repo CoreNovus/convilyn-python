@@ -9,6 +9,14 @@ paragraphs and list items, so the deck's outline survives. Speaker notes are
 included after the slide's content, because they are usually where the actual
 argument is written down.
 
+A deck built on the blank layout declares no titles at all, so a short line
+sitting alone in its own text box is read as that slide's heading. Where even
+that finds nothing, the slide contributes **no heading**: a label like
+"Slide 3" appears nowhere in the source, and a reader downstream cannot tell an
+invented heading from one the author typed. The slide boundary is carried by a
+page break instead — the same answer the PDF path gives to the same question,
+where a new page has never produced a "Page N" heading either.
+
 Tables and pictures are carried across in slide order. A slide-count cap bounds
 the work a very large deck can cause and is reported in the returned document's
 warnings when it applies.
@@ -101,8 +109,10 @@ def _tabbed_table(
 def extract(path: Path) -> MarkdownDoc:
     """Read a presentation into a ``MarkdownDoc``.
 
-    Each slide contributes a heading (from its title, where it has one), its shapes
-    in reading order, and its speaker notes.
+    Each slide contributes its shapes in reading order and its speaker notes,
+    preceded by a heading where the slide has a title or a line that reads as one.
+    A slide with neither gets no heading — nothing here invents one — and the page
+    break between slides carries the boundary.
     """
     from pptx import Presentation
     from pptx.enum.shapes import MSO_SHAPE_TYPE
@@ -186,8 +196,6 @@ def extract(path: Path) -> MarkdownDoc:
                     continue
                 slide_blocks.append(Block(kind="list_item", text=text, level=indent))
 
-        if not seen_heading_on_slide:
-            blocks.append(Block(kind="heading", text=f"Slide {number}", level=SLIDE_TITLE_LEVEL))
         blocks.extend(slide_blocks)
 
         notes = _notes(slide)

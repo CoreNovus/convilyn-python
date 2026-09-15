@@ -85,6 +85,39 @@ def _refuse_archive_under_a_misleading_name(result: ResultFile, target: Path) ->
     )
 
 
+#: Final components that name no file. ``Path("..").name`` is ``".."`` — NOT
+#: empty — so taking the final component alone still leaves one input that
+#: escapes ``to_dir``, and ``""`` / ``"."`` / ``"/"`` all collapse onto the
+#: directory itself. All four are refused rather than handed to the writer,
+#: which would fail with an `IsADirectoryError` from three frames down.
+_NOT_A_FILENAME = frozenset({"", ".", ".."})
+
+
+def _own_name(filename: str) -> str:
+    """The final path component of a SERVER-supplied filename, nothing else.
+
+    ``pathlib``'s ``/`` honours an absolute right-hand operand, so
+    ``Path("/out") / "/etc/passwd"`` discards ``/out`` entirely and
+    ``download_to(to_dir="/out")`` would write wherever the response said.
+
+    Nothing about that is exploitable today: every producer of ``filename``
+    routes through ``worker_handler._output_filename``, whose
+    ``_UNSAFE_FILENAME_RE`` strips ``/``, ``\\`` and ``:``. But that sanitiser
+    lives in ``backend-api/`` and this join ships inside a PyPI artifact on end
+    users' machines — a guarantee enforced in one tree and relied on in another,
+    with no gate spanning the two and no way to reach installed copies if it
+    ever stops holding. So the containment is restated here, where it is used.
+    """
+    name = Path(os.fspath(filename)).name
+    if name in _NOT_A_FILENAME:
+        raise ValueError(
+            f"The platform sent {filename!r} as this result's filename, which names "
+            "no file, so there is nothing to create inside to_dir. Pass to= with the "
+            "filename you want instead."
+        )
+    return name
+
+
 class AsyncConvert:
     """Asynchronous conversion resource.
 
@@ -281,7 +314,7 @@ class AsyncConvert:
         result = self._first_result_file(resolved)
 
         if to_dir is not None:
-            target: str | os.PathLike[str] = Path(os.fspath(to_dir)) / result.filename
+            target: str | os.PathLike[str] = Path(os.fspath(to_dir)) / _own_name(result.filename)
         else:
             target = cast("str | os.PathLike[str]", to)
             _refuse_archive_under_a_misleading_name(result, Path(os.fspath(target)))
@@ -350,14 +383,25 @@ class AsyncConvert:
         timeout: float,
         initial_interval: float,
     ) -> ConvertJob:
-        """Polling with simple backoff on stale progress.
+        """Polling that follows the platform's cadence when it offers one.
 
-        Kept separate so subclasses can swap in adaptive scheduling when
-        the API starts emitting ``suggestedPollIntervalMs`` for
-        file conversion jobs.
+        The API now emits ``suggestedPollIntervalMs`` — the thing this method
+        was kept separate for. It is followed in BOTH directions: longer while
+        the job is queued, shorter once it is nearly done. Following only the
+        shortening half would trade a shorter wait for more requests, which is
+        the swap the server side of this deliberately refuses to make.
+
+        **A caller who passed their own ``poll_interval`` keeps it.** Someone
+        who asked for 5 seconds usually did so to make fewer requests, and a
+        server hint that quietly overrode that would spend their quota for
+        them. The hint applies only when the caller expressed no preference.
+
+        Without a hint — an older deployment, or one not serving it — this is
+        exactly the previous behaviour: backoff on stale progress.
         """
         start = time.monotonic()
         interval = max(initial_interval, MIN_POLL_INTERVAL)  # see MIN_POLL_INTERVAL
+        follow_platform_cadence = initial_interval == DEFAULT_POLL_INTERVAL
         stale_count = 0
         last_progress = -1
         while True:
@@ -365,7 +409,12 @@ class AsyncConvert:
             if job.is_terminal:
                 return self._finalise(job)
 
-            if job.progress == last_progress:
+            hint_ms = job.suggested_poll_interval_ms if follow_platform_cadence else None
+            if hint_ms is not None:
+                interval = min(max(hint_ms / 1000, MIN_POLL_INTERVAL), MAX_POLL_INTERVAL)
+                last_progress = job.progress
+                stale_count = 0
+            elif job.progress == last_progress:
                 stale_count += 1
                 if stale_count >= STALE_PROGRESS_BACKOFF_AFTER:
                     interval = min(interval * BACKOFF_FACTOR, MAX_POLL_INTERVAL)

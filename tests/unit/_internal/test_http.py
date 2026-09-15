@@ -329,12 +329,12 @@ class TestExternalDownloadCap:
         assert (written, dest.read_bytes()) == (5, b"hello")
 
 
-# ── 9. Error envelope — the THIRD wire shape (#4204) ───────────────────
+# ── 9. Error envelope — the THIRD wire shape ───────────────────────────
 
 
 class TestStringDetailEnvelope:
     """``HTTPException(status_code=..., detail=<str>)`` is a shape the API really
-    emits — the goal lane raises it on four paths — and ``_flatten_error_envelope``
+    emits — the workflow route raises it on four paths — and ``_flatten_error_envelope``
     recognised only the flat and dict-wrapped forms. A string ``detail`` fell
     through unchanged, so ``message`` missed and became the reason phrase: the
     server's explanation was replaced with ``"Bad Request"``.

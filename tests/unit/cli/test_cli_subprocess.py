@@ -1,9 +1,9 @@
-"""Entrypoint subprocess smoke — #2112 teardown guard.
+"""Entrypoint subprocess smoke teardown guard.
 
 Runs ``python -m convilyn.cli.main`` in a real child interpreter so the
 full startup → command → interpreter-teardown cycle is exercised the
 way end users invoke it. The real-network Windows repro rides the turbo
-E2E ``scenario_cli_convert``; the same-loop invariant that fixes #2112
+E2E ``scenario_cli_convert``; the same-loop invariant that fixes it
 is asserted in ``tests/unit/_internal/test_loop_runner.py``.
 """
 

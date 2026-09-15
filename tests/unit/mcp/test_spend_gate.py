@@ -137,7 +137,7 @@ class TestNoAnswerIsNotAYes:
 
     async def test_the_refusal_message_does_not_promise_a_cli_that_cannot_do_this(self) -> None:
         """`convilyn goals understand` takes already-uploaded file IDs and there
-        is no upload command, so there is NO shell path for a local file (#4841).
+        is no upload command, so there is NO shell path for a local file.
         Naming it here would be advice that does not work — worse than none."""
         ctx = _FakeContext(_FakeSession(capabilities=set()))
         _, denial = await server._approved_to_spend(ctx, "spend $1?")

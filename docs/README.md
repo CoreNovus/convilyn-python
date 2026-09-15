@@ -1,3 +1,5 @@
+<!-- mcp-name: io.github.CoreNovus/convilyn -->
+
 <p align="center">
   <img src="https://raw.githubusercontent.com/CoreNovus/convilyn-python/main/docs/assets/corenovus-community-banner.png" alt="CoreNovus — Connected AI Workflows" />
 </p>
@@ -42,6 +44,50 @@ local.convert("report.pdf", to="md", overwrite=True)  # …and re-run over it
 reads the format from its suffix. Pass exactly one. Nothing replaces an existing
 file unless you say `overwrite=True` — guessing what you wanted is how a converter
 writes over the wrong one.
+
+## How good is the conversion?
+
+Every converter claims fidelity. We publish the measuring instrument instead.
+[**doc-eval**](https://github.com/CoreNovus/doc-eval) is Apache-2.0, has no model,
+no network and no API key in its scoring path, and gives the same score for the
+same input on any machine — including yours, against your own documents.
+
+On `synth-v1`, scoring the offline path this package ships:
+
+| axis | measured |
+|---|---|
+| Text fidelity — normalised edit distance | **0.9664** (n=20) |
+| Table structure — TEDS-Struct | **0.9333** (n=10) |
+| Reading order | **1.0000** (n=8) |
+| Inline formatting — F1 | **1.0000** (n=20) |
+
+Then the part most benchmarks leave out — **657 real-world PDFs**, of which 650
+converted. 145 of those 650 have no text layer at all: they are page images, and
+this engine does no OCR by design. On the pages that do have text, reading order
+holds at the control's level for ordinary multi-column layout (86.8% median
+against an 85.4% control) and degrades on dense small-type pages — dictionaries,
+newspapers — **by re-ordering rather than by losing text**: the word count still
+matches the PDF's text layer at 1.00×.
+
+Full results, corpora, metric definitions and known limitations:
+[**What has been measured**](https://github.com/CoreNovus/convilyn-python/blob/main/docs/MEASURED-2026-09-08.md).
+That file is the source of these figures and carries its measurement date in its
+name, so an older report cannot be mistaken for the current one.
+
+### Why a number can lie
+
+One of doc-eval's rules exists because of a measured case: markitdown produced
+**0 bytes** for all 98 documents in olmOCR-Bench's `old_scans` slice and still
+scored **12.7%** — an empty file passes every "must not contain" check for free.
+
+So doc-eval scores a blank prediction as zero rather than as a pass, records a
+missing one instead of quietly dropping it, prints the `n` behind every mean, and
+labels which metrics are *published* (comparable with the citing paper) and which
+are its own. Those rules are the difference between a score and a claim.
+
+None of this is a head-to-head: these are our numbers on our corpora. What we are
+offering for comparison is the **method** — run the same tool over your own
+documents and see what any converter, this one included, actually does.
 
 ## It tells you what it can do, and never guesses
 
@@ -190,7 +236,7 @@ branch on the result without parsing English:
 
 ```bash
 convilyn account quota --tool pdf-mcp:extract_text --json | jq .estimated_usd
-convilyn goals start "summarise these contracts" --dry-run
+convilyn goals start --goal-text "summarise these contracts" --files file_abc --dry-run
 ```
 
 ## Free to install, metered to use
@@ -233,7 +279,7 @@ dependency cost.
 
 - [Quickstart](https://github.com/CoreNovus/convilyn-python/blob/main/docs/QUICKSTART.md)
   — 5 minutes, covering offline conversion, goals, workflows and quota
-- [What has been measured](https://github.com/CoreNovus/convilyn-python/blob/main/docs/MEASURED-2026-08-28.md) — full results, measured 2026-08-28
+- [What has been measured](https://github.com/CoreNovus/convilyn-python/blob/main/docs/MEASURED-2026-09-08.md) — full results, measured 2026-08-28
   — conversion and extraction scored on three named corpora (685 documents),
   including where it falls short
 - [Full documentation](https://docs.convilyn.com)

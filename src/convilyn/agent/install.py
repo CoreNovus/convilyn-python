@@ -31,6 +31,14 @@ extended safely is reported and left exactly as it was; nothing here rewrites a
 line it did not add. The Claude Code destination is a directory this package
 owns end to end, so it is written outright.
 
+"Left exactly as it was" is a promise a truncate-then-write cannot keep, which
+is why every destination here goes through
+:func:`convilyn._internal.atomic.write_atomically`. ``Path.write_text`` opens
+with ``O_TRUNC``, so a Ctrl-C between the truncate and the flush left the user
+holding a truncated ``config.toml`` — and what is lost there is not a key this
+package can re-mint, it is their whole Codex configuration, including the
+content this command exists to preserve.
+
 **Why the TOML edit is textual.** ``tomllib`` reads TOML from 3.11 and this
 package supports 3.10; nothing in the standard library *writes* TOML at any
 version. The alternatives were a new runtime dependency for one command, or
@@ -49,6 +57,8 @@ import sys
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
+
+from convilyn._internal.atomic import WORLD_READABLE, write_atomically
 
 #: The table this command owns. It never touches any other part of the file.
 SECTION = "[mcp_servers.convilyn]"
@@ -238,8 +248,7 @@ def install_skill(home: Path, *, dry_run: bool = False) -> Step:
 
     action = "updated" if destination.is_file() else "created"
     if not dry_run:
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_bytes(payload)
+        write_atomically(destination, payload, mode=WORLD_READABLE)
     return Step(destination, action, True)
 
 
@@ -281,8 +290,7 @@ def install_claude_code_plugin(home: Path, *, dry_run: bool = False) -> Step:
             #: Bytes, not text -- see ``install_skill``. The manifests are
             #: compared byte-for-byte above, so a newline translated on write
             #: would report drift on every subsequent run.
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(body)
+            write_atomically(path, body, mode=WORLD_READABLE)
     return Step(root, action, True, "loads as convilyn@skills-dir on the next session")
 
 
@@ -291,8 +299,9 @@ def install_codex_mcp(home: Path, *, dry_run: bool = False) -> Step:
 
     if not destination.is_file():
         if not dry_run:
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_text(codex_block().lstrip("\n"), encoding="utf-8")
+            write_atomically(
+                destination, codex_block().lstrip("\n").encode("utf-8"), mode=WORLD_READABLE
+            )
         return Step(destination, "created", True)
 
     existing = destination.read_text(encoding="utf-8")
@@ -320,7 +329,11 @@ def install_codex_mcp(home: Path, *, dry_run: bool = False) -> Step:
         #: this is safe wherever the file happens to end -- with one exception,
         #: refused above.
         separator = "" if existing.endswith("\n") else "\n"
-        destination.write_text(existing + separator + codex_block(), encoding="utf-8")
+        write_atomically(
+            destination,
+            (existing + separator + codex_block()).encode("utf-8"),
+            mode=WORLD_READABLE,
+        )
     return Step(destination, "appended", True)
 
 

@@ -3,7 +3,7 @@
 `convert` reaches three processors and the caller names none of them, so the
 derivation is the feature. These tests are written against the *rule* ("the
 family that speaks both formats") rather than against a table of pairs: a table
-here would be the fourth hand-typed copy #3923 exists to delete.
+here would be the fourth hand-typed copy the format-derivation work exists to delete.
 """
 
 from __future__ import annotations

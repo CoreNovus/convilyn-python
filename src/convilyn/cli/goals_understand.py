@@ -62,8 +62,15 @@ from convilyn.cli._output import OutputRenderer, make_renderer
 @click.option(
     "--files",
     "files",
-    required=True,
-    help="Comma-separated file ids to understand (e.g. file_abc,file_def).",
+    default=None,
+    help="Comma-separated file ids already uploaded (e.g. file_abc,file_def).",
+)
+@click.option(
+    "--path",
+    "paths",
+    multiple=True,
+    type=click.Path(exists=True, dir_okay=False, readable=True, path_type=Path),
+    help="Local file to upload and then understand. Repeatable.",
 )
 @click.option(
     "--schema-file",
@@ -99,7 +106,8 @@ from convilyn.cli._output import OutputRenderer, make_renderer
     help="Validate the schema file and print the would-be request; no network.",
 )
 def understand_command(
-    files: str,
+    files: str | None,
+    paths: tuple[Path, ...],
     schema_file: Path,
     instructions: str | None,
     timeout: float,
@@ -107,6 +115,16 @@ def understand_command(
     dry_run: bool,
 ) -> None:
     """Grounded, schema-constrained understanding of ONE file.
+
+    Two ways to name the input, and you may mix them. ``--path`` takes a LOCAL
+    file, uploads it, and understands the result; ``--files`` takes ids that are
+    already uploaded. Before ``--path`` existed there was no shell route at all
+    for a file on disk — no CLI command uploads one, and ``convilyn api`` is a
+    JSON-body escape hatch with no multipart surface — so a user holding
+    ``invoice.pdf`` could not reach this command. The MCP tool ``understand``
+    has always taken paths, for the reason its own docstring gives: making the
+    caller run upload, collect ids, then understand is three round trips to
+    express one intent.
 
     ``--files`` still takes a comma-separated list, but the platform currently
     serves ONE file per request and refuses more by name, at no credit cost.
@@ -138,9 +156,13 @@ def understand_command(
     exit status most needs was absent from the one place they would look.
     """
     renderer = make_renderer(json_output=json_output)
-    file_ids = _goals._parse_file_ids(files)
-    if not file_ids:
-        raise click.ClickException("--files requires at least one file id")
+    #: ``or []`` because ``_parse_file_ids`` answers ``None`` for "nothing
+    #: given" -- a shape the sibling commands want so the SDK's own XOR
+    #: validation fires. Here either source satisfies the command, so the
+    #: absence of ids is not an error on its own and a list is the honest type.
+    file_ids = _goals._parse_file_ids(files) or []
+    if not file_ids and not paths:
+        raise click.ClickException("pass --path for a local file, or --files for uploaded ids")
     schema = _load_schema_file(schema_file)
 
     if dry_run:
@@ -149,6 +171,7 @@ def understand_command(
             file_ids=file_ids,
             schema=schema,
             instructions=instructions,
+            pending_uploads=paths,
         )
         return
 
@@ -159,6 +182,7 @@ def understand_command(
         instructions=instructions,
         timeout=timeout,
         json_output=json_output,
+        paths=paths,
     )
 
 
@@ -214,18 +238,32 @@ def _emit_understand_dry_run(
     file_ids: list[str],
     schema: dict[str, Any],
     instructions: str | None,
+    pending_uploads: tuple[Path, ...] = (),
 ) -> None:
-    """Print the would-be ``POST /api/v1/jobs/goal`` payload, no network call."""
+    """Print the would-be ``POST /api/v1/jobs/goal`` payload, no network call.
+
+    ``pending_uploads`` is REPORTED, never performed: an upload is a network
+    call, and ``--dry-run``'s whole contract is that it makes none. So the
+    payload's ``fileIds`` carries only the ids that already exist, and the paths
+    are listed beside it under ``would_upload`` — a dry run that silently
+    uploaded would be the more useful preview and the wrong command.
+    """
     payload = _understand_payload(file_ids=file_ids, schema=schema, instructions=instructions)
+    would_upload = [str(path) for path in pending_uploads]
+    upload_note = f" (after uploading {len(would_upload)} file(s))" if would_upload else ""
     renderer.event(
         "create",
-        message=f"[dry-run] Would POST /api/v1/jobs/goal: {json.dumps(payload, sort_keys=True)}",
+        message=(
+            f"[dry-run] Would POST /api/v1/jobs/goal{upload_note}: "
+            f"{json.dumps(payload, sort_keys=True)}"
+        ),
     )
     renderer.final(
         {
             "command": "goals.understand",
             "dry_run": True,
             "payload": payload,
+            "would_upload": would_upload,
             "summary": "[dry-run] No API calls made.",
         }
     )
@@ -239,6 +277,7 @@ def _run_understand(
     instructions: str | None,
     timeout: float,
     json_output: bool,
+    paths: tuple[Path, ...] = (),
     client_factory: Callable[[], Convilyn] | None = None,
 ) -> None:
     """Drive ``client.goals.understand`` and render the parsed result.
@@ -257,6 +296,18 @@ def _run_understand(
         raise click.ClickException(str(exc)) from exc
 
     try:
+        #: Uploaded HERE rather than before the client exists, because the
+        #: upload is a call on that client -- and inside the same ``try``, so an
+        #: upload that fails maps through the same taxonomy as the run instead
+        #: of escaping as a traceback.
+        #:
+        #: Ids from ``--files`` keep their position and uploads follow, so the
+        #: order the platform sees is the order the flags were written.
+        uploaded = [client.files.upload(str(path)).file_id for path in paths]
+        for path, file_id in zip(paths, uploaded, strict=True):
+            renderer.event("upload", filename=path.name, file_id=file_id)
+        file_ids = [*file_ids, *uploaded]
+
         renderer.event("create", message=f"Understanding {len(file_ids)} file(s)")
         result = client.goals.understand(
             file_ids,

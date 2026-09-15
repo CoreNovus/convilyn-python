@@ -111,7 +111,7 @@ class TestGoalsLogic:
 
     @pytest.mark.asyncio
     async def test_llm_config_id_serialised_when_provided(self) -> None:
-        """BYO-LLM (#1856): an explicit llm_config_id is sent as ``llmConfigId``."""
+        """BYO-LLM: an explicit llm_config_id is sent as ``llmConfigId``."""
         async with respx.mock(assert_all_called=True) as mock:
             create = mock.post(f"{API_BASE}/api/v1/jobs/goal").mock(
                 return_value=httpx.Response(201, json=_job_response("queued"))
@@ -166,7 +166,7 @@ class TestGoalsLogic:
 
     @pytest.mark.asyncio
     async def test_user_workflow_id_serialised_as_user_workflow_id(self) -> None:
-        """start(user_workflow_id=) must send ``userWorkflowId`` (#2546) — the
+        """start(user_workflow_id=) must send ``userWorkflowId`` — the
         typed uw_* surface so callers no longer need the raw-request escape hatch."""
         async with respx.mock(assert_all_called=True) as mock:
             create = mock.post(f"{API_BASE}/api/v1/jobs/goal").mock(
@@ -200,7 +200,7 @@ class TestGoalsBoundary:
 
     @pytest.mark.asyncio
     async def test_workflow_id_and_user_workflow_id_raises_typeerror(self) -> None:
-        """The three workflow sources are mutually exclusive (#2546)."""
+        """The three workflow sources are mutually exclusive."""
         async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
             with pytest.raises(TypeError, match="not multiple"):
                 await client.goals.start(workflow_id="wf", user_workflow_id="uw_abc")
@@ -231,7 +231,7 @@ class TestGoalsBoundary:
 
     @pytest.mark.asyncio
     async def test_user_workflow_id_path_can_omit_files(self) -> None:
-        """A uw_* run may start with no files (collected via checkpoints) — #2546."""
+        """A uw_* run may start with no files (collected via checkpoints)."""
         async with respx.mock(assert_all_called=True) as mock:
             mock.post(f"{API_BASE}/api/v1/jobs/goal").mock(
                 return_value=httpx.Response(201, json=_job_response("queued", fileIds=[]))
@@ -847,7 +847,7 @@ class TestArtifacts:
 
     @pytest.mark.asyncio
     async def test_download_artifact_to_refuses_an_existing_file(self, tmp_path) -> None:
-        """#4005 was filed against ``convert.download_to``; this method shares the
+        """The same defect was filed against ``convert.download_to``; this method shares the
         same writer and its docstring promises identical behaviour, so it moved with
         it. Fixing one and not the other would have re-created the inconsistency the
         ticket is about, one resource over."""
@@ -1226,7 +1226,7 @@ class TestRunInteractive:
 # ── WS token redaction (never leak the bearer in an error string) ───
 
 
-# ── understand() — grounded, schema-constrained understanding (#2528) ──
+# ── understand() — grounded, schema-constrained understanding ──────────
 
 _SCHEMA = {
     "type": "object",
@@ -1261,9 +1261,9 @@ class TestUnderstand:
     async def test_ready_job_is_confirmed_before_waiting(self) -> None:
         # The FSM only enqueues execution on confirm — a schema-routed create
         # lands READY with no slots, so understand() must confirm or the job
-        # parks forever (live regression, 2026-07-21 #2696 window). The
-        # confirm is driven by the shared _wait_loop auto_confirm_ready seam
-        # (#2856), so it fires off the POLLED status, not the create response.
+        # parks forever (live regression). The
+        # confirm is driven by the shared _wait_loop auto_confirm_ready seam,
+        # so it fires off the POLLED status, not the create response.
         result = {"vendor": "Acme", "total": 1200}
         async with respx.mock(assert_all_called=True) as mock:
             _mock_extract_chain(mock, artifacts=[_json_artifact_payload()], storage_json=result)
@@ -1332,7 +1332,7 @@ class TestUnderstand:
         assert hasattr(client.goals, "understand")
 
 
-# ── READY-park auto-confirm (#2856) ──────────────────────────────────
+# ── READY-park auto-confirm ──────────────────────────────────────────
 
 
 class TestReadyAutoConfirm:
@@ -1343,7 +1343,7 @@ class TestReadyAutoConfirm:
     async def test_run_confirms_ready_job_and_converges(self) -> None:
         # READY → confirm → running → completed: the run() driver must not
         # park at ready (live regression: plain goals.run() 300s poll
-        # timeout at status=ready, 2026-07-21 #2696 window).
+        # timeout at status=ready).
         async with respx.mock(assert_all_called=True) as mock:
             mock.post(f"{API_BASE}/api/v1/jobs/goal").mock(
                 return_value=httpx.Response(201, json=_job_response("created"))

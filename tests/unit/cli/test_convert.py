@@ -106,7 +106,7 @@ class TestOverwrite:
     """`convilyn convert` gained `--overwrite` when `download_to` stopped
     replacing files silently. Without the flag a second run of the same command
     would have had no way to finish — and `convilyn local convert` has carried
-    the identically-named flag all along, which is the consistency #4005 is about
+    the identically-named flag all along, which is the consistency this is about
     reaching the CLI as well as the library.
     """
 

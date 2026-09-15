@@ -26,6 +26,7 @@ from typing import NamedTuple
 import click
 
 from convilyn.cli._exit_codes import EXIT_JOB_FAILED, EXIT_USAGE
+from convilyn.cli._nudge import note_successful_conversion
 from convilyn.cli._output import OutputRenderer, make_renderer
 from convilyn.local.types import ConversionResult, ProgressEvent, Requirement, Route
 
@@ -204,6 +205,11 @@ def convert_command(
             "summary": f"Converted {input_file.name} → {result.output}",
         }
     )
+
+    # After the final(), never before: the hint is an aside to a finished
+    # conversion, and anything printed between the result and the summary reads
+    # as part of the result.
+    note_successful_conversion(json_output=json_output)
 
 
 # ── batch ────────────────────────────────────────────────────────────

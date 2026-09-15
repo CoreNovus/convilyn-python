@@ -97,7 +97,7 @@ account:
 convilyn local convert report.docx --to md      # → report.md
 convilyn local convert photo.png --to webp      # → photo.webp
 convilyn local convert clip.mov --to mp4        # → clip.mp4 (needs FFmpeg)
-convilyn local batch 'docs/*.pdf' --to md --out-dir build/
+convilyn local batch docs/*.pdf --to md --out-dir build/
 convilyn local formats                          # what this machine can do
 convilyn local doctor                           # …and how to extend it
 ```
@@ -495,8 +495,18 @@ what this machine can convert, and the offline engine ships behind extras
 (`convilyn[pdf]` and friends). Hoisting it into the top-level namespace would
 put a name there that means nothing on a bare install.
 
-Three things this taxonomy deliberately does **not** cover, because they are not
+Four things this taxonomy deliberately does **not** cover, because they are not
 the API's answer to anything:
+
+- **Transport-level failures are `httpx` exceptions, verbatim.** A
+  `httpx.ConnectError` / `httpx.ReadTimeout` means the request never got an
+  answer, so there is no API refusal to translate — `except ConvilynError` will
+  not catch them, and `except (ConvilynError, httpx.HTTPError)` is the shape to
+  use if you want both. The position is stated in `exceptions.py`'s own
+  hierarchy and this list had simply never repeated it. Note the object-storage
+  hop gets a longer budget than an API call (`STORAGE_TIMEOUT`, 300 s read and
+  write against the client's 30 s), because an upload and a status poll are
+  different operations and one number was wrong for both.
 
 - `FileExistsError` from a download whose destination already exists — the
   destination's problem, and `overwrite=True` is the fix.
@@ -856,6 +866,31 @@ when a resumed run has no counter, so a missing number never reads as a real one
 Branch on the reasons you handle and treat an unfamiliar one as absent: the
 server may know a ceiling your installed version does not.
 
+### 7.8 Stop at the approval gate (`stop_on`)
+
+A job that needs your approval parks at `status="ready"`, queued behind a
+decision only you can make. That is **not** one of `wait()`'s default stops —
+it is neither terminal nor `slots_pending` — so a plain `wait()` polls a ready
+job until the timeout. Pass `stop_on` to stop there instead:
+
+```python
+from convilyn import Convilyn
+
+client = Convilyn()
+estimate = client.account.get_quota(tools=["pdf-mcp:extract_text"])
+
+job = client.goals.start(workflow_id="goal_lane.content_to_multipost", files=["file_abc"])
+job = client.goals.wait(job.job_spec_id, stop_on={"ready"})
+
+print(job.status, estimate.estimated_usd, estimate.quota_check.state)
+job = client.goals.confirm(job.job_spec_id)
+```
+
+The price comes from `client.account.get_quota(...)` (§8.2) — `GoalJob` carries
+no cost field. `run()` and `run_interactive()` auto-confirm `ready` instead,
+because they are end-to-end drivers with nobody to ask; `stop_on` is the path
+for a caller that decides first.
+
 ## 8. Check your plan + quota before running (`client.account`)
 
 Some Convilyn endpoints (fork a public workflow, publish your own,
@@ -984,9 +1019,12 @@ page. The essentials for SDK callers:
 * **Custom retry policy**: pass `retry_policy=` to the constructor to
   replace the default `ExponentialBackoffRetry`. The Protocol is two
   methods: `should_retry()` and `next_delay()`.
-* **Bring-your-own transport**: every resource accepts an
-  `HTTPClient` via the constructor so you can inject `httpx.MockTransport`
-  or a recording transport for tests.
+* **Testing against a fake API**: every resource takes an `HTTPClient` via its
+  constructor, so a test can hand one in. Note `HTTPClient` builds its own
+  `httpx.AsyncClient` and takes no `transport=`, so `httpx.MockTransport`
+  cannot be injected — this package's own suite uses
+  [`respx`](https://lundberg.github.io/respx/) to intercept at the transport
+  layer instead, and that is the supported route.
 * **Authoring your own workflow / tool server**: install the *author*
   SDK with `uv add convilyn-author` (a separate package — see
   [`sdk/author-python/docs/README.md`](../../author-python/docs/README.md)).

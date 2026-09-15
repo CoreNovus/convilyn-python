@@ -15,11 +15,11 @@ POSIX, ``%APPDATA%\\convilyn`` on Windows. Deliberately the **config**, not
 cache, directory — a credential must survive a cache-clearing sweep and
 should not share a directory with disposable temp/profile data.
 
-**Windows**: the ``0o600`` mode :func:`tempfile.mkstemp` creates the file with
-has no effect on NTFS ACLs. Protection there comes from the ACL the file
-inherits from ``%APPDATA%``,
-which by default grants only the user, ``Administrators`` and ``SYSTEM`` —
-measured, and equivalent in practice to POSIX ``0600`` (owner plus root).
+**Windows**: the ``0o600`` mode the file is created with (see
+:mod:`convilyn._internal.atomic`) has no effect on NTFS ACLs. Protection there
+comes from the ACL the file inherits from ``%APPDATA%``, which by default
+grants only the user, ``Administrators`` and ``SYSTEM`` — measured, and
+equivalent in practice to POSIX ``0600`` (owner plus root).
 
 What inheritance does NOT give is a guarantee, and that is the gap
 :func:`broad_principals_with_access` closes. The ACL is whatever the parent
@@ -39,10 +39,10 @@ import json
 import os
 import stat
 import subprocess
-import tempfile
-from contextlib import suppress
 from datetime import datetime, timezone
 from pathlib import Path
+
+from convilyn._internal.atomic import OWNER_ONLY, write_atomically
 
 
 def config_root() -> Path:
@@ -61,11 +61,10 @@ def credentials_path() -> Path:
 def write_credentials(key: str, *, source: str = "setup") -> Path:
     """Persist ``key`` as the file-based auth source. Returns the path written.
 
-    Creates the config directory (mode ``0700`` on POSIX). The file is created
-    by :func:`tempfile.mkstemp`, which opens it ``0o600`` in one step rather
-    than ``open()`` followed by a separate ``chmod`` — the latter leaves a
-    window where the file is briefly world-readable before its permissions are
-    narrowed.
+    Creates the config directory (mode ``0700`` on POSIX). The file itself is
+    written by :func:`convilyn._internal.atomic.write_atomically`, which owns
+    the replace-never-truncate mechanism and the ``0o600`` creation — see that
+    module for why each step is there.
 
     **Written beside the target and renamed into place, never truncated where it
     stands.** The previous form opened the real path with ``O_TRUNC``, so
@@ -81,11 +80,9 @@ def write_credentials(key: str, *, source: str = "setup") -> Path:
     second. The local file said one thing, the server said the opposite, and the
     user was between them with nothing on this machine to fix it.
 
-    :func:`os.replace` is atomic on POSIX and on Windows, so a concurrent reader
-    — the Python client resolving auth in another process — sees the whole old
-    file or the whole new one, never a partial one. The temporary file is made
-    in the SAME directory because that atomicity only holds within one
-    filesystem, and it is removed if anything goes wrong before the rename.
+    The atomicity matters to a specific reader: the Python client resolving
+    auth in another process sees the whole old file or the whole new one,
+    never a partial one.
     """
     path = credentials_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -98,25 +95,7 @@ def write_credentials(key: str, *, source: str = "setup") -> Path:
             "source": source,
         }
     )
-    fd, staged = tempfile.mkstemp(dir=path.parent, prefix=".credentials-", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(payload)
-            f.flush()
-            #: Rename orders the metadata, not the DATA. Without this a crash
-            #: just after the rename can leave the new name pointing at an
-            #: empty file -- the same zero-byte state, reached the long way.
-            os.fsync(f.fileno())
-        os.replace(staged, path)
-    except BaseException:
-        #: BaseException, not Exception: the interruption this exists to
-        #: survive is Ctrl-C, and `except Exception` does not catch it -- it
-        #: would leave the staged file behind on the one path that matters
-        #: most. Cleanup failure is swallowed because the caller's problem is
-        #: the original exception, not the stray file.
-        with suppress(OSError):
-            os.unlink(staged)
-        raise
+    write_atomically(path, payload.encode("utf-8"), mode=OWNER_ONLY)
     return path
 
 

@@ -1,4 +1,4 @@
-"""Builder resource — logic / boundary / error / object-state (#2668).
+"""Builder resource — logic / boundary / error / object-state.
 
 respx mocks the HTTP layer; assertions land on observable wire behaviour
 (route + payload shape, parsed types, the register `uw_` id, typed errors).

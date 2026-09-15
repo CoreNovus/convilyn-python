@@ -117,10 +117,14 @@ class AsyncUserWorkflows:
     ) -> dict[str, Any]:
         """Export a workflow's grounded contract — the device artifact.
 
-        The platform-manufactured wire the ``convilyn-edge`` SDK's
-        ``load_contract`` parses: save the returned dict verbatim as
-        ``authored/<name>.uw.json`` and an edge Solution Pack consumes it
-        drop-in. Owner-only (the wire embeds the rendered extractor prompt).
+        The platform-manufactured wire a device-side consumer parses: save the
+        returned dict verbatim as ``authored/<name>.uw.json``. Owner-only (the
+        wire embeds the rendered extractor prompt).
+
+        The edge/on-device placement this served has been retired, and the
+        SDK that consumed the artifact is no longer published. The server
+        route this calls, ``/api/v1/user_workflows/{id}/grounded-contract``,
+        is disabled by default and is being withdrawn.
 
         Args:
             model_binding: server-model id the contract binds (e.g.

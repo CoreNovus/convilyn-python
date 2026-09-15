@@ -148,7 +148,7 @@ class TestStartLogic:
         mock_factory: MagicMock,
         started_job: GoalJob,
     ) -> None:
-        """--user-workflow-id routes a uw_* run through the typed SDK path (#2546)."""
+        """--user-workflow-id routes a uw_* run through the typed SDK path."""
         mock_factory.goals.start.return_value = started_job
         result = runner.invoke(
             goals_command,
@@ -168,7 +168,7 @@ class TestStartLogic:
         runner: CliRunner,
         mock_factory: MagicMock,
     ) -> None:
-        """Dry-run for a uw_* start shows the ``userWorkflowId`` wire key (#2546)."""
+        """Dry-run for a uw_* start shows the ``userWorkflowId`` wire key."""
         result = runner.invoke(
             goals_command,
             ["start", "--user-workflow-id", "uw_abc123", "--dry-run", "--json"],

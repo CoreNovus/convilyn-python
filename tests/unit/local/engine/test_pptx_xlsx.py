@@ -82,8 +82,18 @@ class TestPptx:
 
         assert image is not None and image.data.startswith(b"\x89PNG")
 
-    def test_untitled_slide_still_gets_a_heading(self, tmp_path):
-        """A blank layout has no title; the section must still be navigable."""
+    def test_an_untitled_slide_gets_no_invented_heading(self, tmp_path):
+        """A blank layout has no title, and nothing here may supply one.
+
+        This replaces `test_untitled_slide_still_gets_a_heading`, which pinned
+        the opposite and was a deliberate choice at the time: an empty slide
+        still needs to be navigable. What that choice did not weigh is that the
+        heading it emitted was the string "Slide 1", which appears nowhere in
+        the deck — so the outline read as though the author had labelled that
+        slide, and nothing downstream can tell an invented label from a typed
+        one. `pdf.py` has always answered the identical question the other way:
+        a page boundary is a page break, never a "Page N" heading.
+        """
         from pptx import Presentation
 
         presentation = Presentation()
@@ -91,7 +101,27 @@ class TestPptx:
         path = tmp_path / "b.pptx"
         presentation.save(str(path))
 
-        assert extract_pptx(path).blocks[0].kind == "heading"
+        assert [b for b in extract_pptx(path).blocks if b.kind == "heading"] == []
+
+    def test_a_heading_less_slide_is_still_bounded_by_a_page_break(self, tmp_path):
+        """What carries the boundary now that no heading does.
+
+        The navigability the removed fallback was protecting does not vanish
+        with it — this loop already writes a page break at every slide seam,
+        which is the same thing `pdf.py` relies on. Asserted on a deck whose
+        SECOND slide is the heading-less one, so the break under test is a real
+        seam rather than the document start.
+        """
+        from pptx import Presentation
+
+        presentation = Presentation()
+        first = presentation.slides.add_slide(presentation.slide_layouts[5])
+        first.shapes.title.text = "Opening"  # type: ignore[union-attr]
+        presentation.slides.add_slide(presentation.slide_layouts[6])
+        path = tmp_path / "seam.pptx"
+        presentation.save(str(path))
+
+        assert any(b.kind == "page_break" for b in extract_pptx(path).blocks)
 
     def test_source_format_is_reported(self, deck):
         assert extract_pptx(deck).source_format == "pptx"
@@ -162,6 +192,54 @@ class TestXlsx:
         assert extract_xlsx(workbook).source_format == "xlsx"
 
 
+class TestChartSheetsAreSkipped:
+    """A chart sheet has no grid, so it is not a sheet this engine can read.
+
+    Covered here as well as in the backend because the projection is what
+    ships: the guard is a property of the emitted engine, not only of its
+    source. The chart itself is required — a chart sheet with no chart does
+    not survive `load_workbook` at all.
+    """
+
+    @staticmethod
+    def _book(path: Path, names: list[str]) -> Path:
+        import openpyxl
+        from openpyxl.chart import BarChart, Reference
+
+        book = openpyxl.Workbook()
+        book.remove(book.active)
+        for name in names:
+            sheet = book.create_sheet(name)
+            sheet.append(["item", "qty"])
+            sheet.append(["bolt", 4])
+
+        chart = BarChart()
+        chart.add_data(Reference(book[names[0]], min_col=2, min_row=1, max_row=2))
+        book.create_chartsheet("Q3 chart").add_chart(chart)
+
+        book.save(str(path))
+        return path
+
+    def test_a_workbook_with_a_chart_sheet_converts_at_all(self, tmp_path):
+        path = self._book(tmp_path / "chart.xlsx", ["Data"])
+
+        assert extract_xlsx(path).blocks
+
+    def test_one_data_sheet_beside_a_chart_sheet_gets_no_heading(self, tmp_path):
+        path = self._book(tmp_path / "one.xlsx", ["Data"])
+
+        headings = [b.text for b in extract_xlsx(path).blocks if b.kind == "heading"]
+
+        assert headings == []
+
+    def test_the_skipped_chart_sheet_is_reported(self, tmp_path):
+        path = self._book(tmp_path / "warn.xlsx", ["Data"])
+
+        warnings = extract_xlsx(path).warnings
+
+        assert any("1 chart sheet(s) hold no cell data" in w for w in warnings)
+
+
 class TestASingleSheetGetsNoHeading:
     """A heading exists to navigate BETWEEN sections; a single-sheet workbook
     has nothing to navigate between. Regression for the sheet name (most
@@ -187,7 +265,7 @@ class TestASingleSheetGetsNoHeading:
         the commonest shape this function sees, and warning on every one of
         them would be the exact cry-wolf pattern
         `workbook_guard.py::assert_no_sheets_would_be_dropped` already
-        rejected for the same population (#4111) — "a workbook measured at
+        rejected for the same population — "a workbook measured at
         exactly one sheet loses nothing, and warning anyway would cry wolf
         on the commonest workbook conversion here". A sheet named
         "CONFIDENTIAL" is the harder case for this rule, not an exception to

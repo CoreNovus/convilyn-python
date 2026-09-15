@@ -50,7 +50,7 @@ def _data_rows(markdown: Path) -> int:
 
 
 class TestMaxRows:
-    """``--max-rows`` (#3997) — the CLI half, without which a CLI user cannot say
+    """``--max-rows`` — the CLI half, without which a CLI user cannot say
     it at all. The Python API test covers the semantics; these cover reaching them
     from the command line, and the exit codes the two refusals earn."""
 

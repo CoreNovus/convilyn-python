@@ -536,3 +536,201 @@ class TestUnderstandPayloadShape:
         payload = _understand_to_payload(["f"], {"total": 1}, json_output=False)
 
         assert payload["summary"] == '{\n  "total": 1\n}'
+
+
+# ── 5. `--path`: a shell route for a file on disk ────────────────────
+
+
+class TestPathOptionUploadsLocalFiles:
+    """Before `--path`, no CLI command uploaded anything.
+
+    `--files` takes ids, `convilyn api` is a JSON-body escape hatch with no
+    multipart surface, and `client.files.upload` was reached only from inside
+    `cli/convert.py`. So a user holding `invoice.pdf` had no documented shell
+    route to this command at all — while the MCP tool `understand` has always
+    taken paths.
+    """
+
+    def test_a_local_path_is_uploaded_and_its_id_understood(
+        self, runner: CliRunner, mock_factory: MagicMock, schema_file: Path, tmp_path: Path
+    ) -> None:
+        source = tmp_path / "invoice.pdf"
+        source.write_bytes(b"%PDF-1.7")
+        mock_factory.files.upload.return_value = MagicMock(file_id="file_uploaded")
+        mock_factory.goals.understand.return_value = {"total": 1}
+
+        result = runner.invoke(
+            goals_command,
+            ["understand", "--path", str(source), "--schema-file", str(schema_file)],
+        )
+
+        assert result.exit_code == EXIT_OK
+        assert mock_factory.files.upload.call_args.args[0] == str(source)
+        assert mock_factory.goals.understand.call_args.args[0] == ["file_uploaded"]
+
+    def test_it_is_repeatable(
+        self, runner: CliRunner, mock_factory: MagicMock, schema_file: Path, tmp_path: Path
+    ) -> None:
+        first, second = tmp_path / "a.pdf", tmp_path / "b.pdf"
+        first.write_bytes(b"a")
+        second.write_bytes(b"b")
+        mock_factory.files.upload.side_effect = [
+            MagicMock(file_id="file_1"),
+            MagicMock(file_id="file_2"),
+        ]
+        mock_factory.goals.understand.return_value = {}
+
+        runner.invoke(
+            goals_command,
+            [
+                "understand",
+                "--path",
+                str(first),
+                "--path",
+                str(second),
+                "--schema-file",
+                str(schema_file),
+            ],
+        )
+
+        assert mock_factory.goals.understand.call_args.args[0] == ["file_1", "file_2"]
+
+    def test_ids_keep_their_position_and_uploads_follow(
+        self, runner: CliRunner, mock_factory: MagicMock, schema_file: Path, tmp_path: Path
+    ) -> None:
+        """Mixing the two sources is allowed, so the ORDER has to be stated
+        rather than incidental — the platform sees what the flags said."""
+        source = tmp_path / "c.pdf"
+        source.write_bytes(b"c")
+        mock_factory.files.upload.return_value = MagicMock(file_id="file_new")
+        mock_factory.goals.understand.return_value = {}
+
+        runner.invoke(
+            goals_command,
+            [
+                "understand",
+                "--files",
+                "file_old",
+                "--path",
+                str(source),
+                "--schema-file",
+                str(schema_file),
+            ],
+        )
+
+        assert mock_factory.goals.understand.call_args.args[0] == ["file_old", "file_new"]
+
+    def test_a_missing_path_is_refused_before_any_network_call(
+        self, runner: CliRunner, mock_factory: MagicMock, schema_file: Path, tmp_path: Path
+    ) -> None:
+        """`click.Path(exists=True)` is the guard, so the refusal costs nothing
+        and names the file. The MCP tool's `_fence` is deliberately NOT ported:
+        it exists because a model drives that server inside a workspace
+        boundary, whereas a CLI is driven by whoever owns the shell.
+
+        **Exit 2, not `EXIT_USAGE`,** and that is pre-existing rather than
+        this option's doing: click raises `UsageError` for a parameter-level
+        refusal and `UsageError.exit_code` is 2, which collides with this
+        CLI's own `EXIT_API_ERROR`. Measured on the existing commands —
+        `convilyn convert <missing>` and `convilyn local batch <missing>` both
+        exit 2 today. Asserted as it behaves rather than as `_exit_codes`
+        describes it; renumbering is a CLI-wide change and out of scope here.
+        """
+        result = runner.invoke(
+            goals_command,
+            [
+                "understand",
+                "--path",
+                str(tmp_path / "nope.pdf"),
+                "--schema-file",
+                str(schema_file),
+            ],
+        )
+
+        assert result.exit_code == 2
+        assert not mock_factory.files.upload.called
+
+
+class TestOneSourceIsStillRequired:
+    """`--files` stopped being `required=True`, so the command must refuse
+    "neither" itself — otherwise dropping the flag became a silent no-input
+    run rather than a usage error."""
+
+    def test_neither_flag_is_a_usage_error(
+        self, runner: CliRunner, mock_factory: MagicMock, schema_file: Path
+    ) -> None:
+        result = runner.invoke(goals_command, ["understand", "--schema-file", str(schema_file)])
+
+        assert result.exit_code == EXIT_USAGE
+
+    def test_the_refusal_names_both_ways_in(
+        self, runner: CliRunner, mock_factory: MagicMock, schema_file: Path
+    ) -> None:
+        result = runner.invoke(goals_command, ["understand", "--schema-file", str(schema_file)])
+
+        assert "--path" in result.output
+        assert "--files" in result.output
+
+    def test_files_alone_still_works(
+        self, runner: CliRunner, mock_factory: MagicMock, schema_file: Path
+    ) -> None:
+        """The pre-existing contract, pinned: making `--files` optional must not
+        make it weaker."""
+        mock_factory.goals.understand.return_value = {}
+
+        result = runner.invoke(
+            goals_command,
+            ["understand", "--files", "file_a", "--schema-file", str(schema_file)],
+        )
+
+        assert result.exit_code == EXIT_OK
+        assert not mock_factory.files.upload.called
+
+
+class TestDryRunUploadsNothing:
+    def test_a_dry_run_reports_the_path_without_uploading_it(
+        self, runner: CliRunner, mock_factory: MagicMock, schema_file: Path, tmp_path: Path
+    ) -> None:
+        """`--dry-run`'s whole contract is that it makes no network call, and an
+        upload is one. A dry run that silently uploaded would be the more
+        useful preview and the wrong command."""
+        source = tmp_path / "d.pdf"
+        source.write_bytes(b"d")
+
+        result = runner.invoke(
+            goals_command,
+            [
+                "understand",
+                "--path",
+                str(source),
+                "--schema-file",
+                str(schema_file),
+                "--dry-run",
+                "--json",
+            ],
+        )
+
+        assert result.exit_code == EXIT_OK
+        assert not mock_factory.files.upload.called
+        assert json.loads(result.output)["would_upload"] == [str(source)]
+
+    def test_the_dry_run_payload_carries_no_invented_file_id(
+        self, runner: CliRunner, mock_factory: MagicMock, schema_file: Path, tmp_path: Path
+    ) -> None:
+        source = tmp_path / "e.pdf"
+        source.write_bytes(b"e")
+
+        result = runner.invoke(
+            goals_command,
+            [
+                "understand",
+                "--path",
+                str(source),
+                "--schema-file",
+                str(schema_file),
+                "--dry-run",
+                "--json",
+            ],
+        )
+
+        assert json.loads(result.output)["payload"]["fileIds"] == []

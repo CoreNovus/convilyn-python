@@ -16,6 +16,7 @@ from convilyn.cli.agent import agent_command
 from convilyn.cli.api import api_command
 from convilyn.cli.convert import convert_command
 from convilyn.cli.doctor import doctor_command
+from convilyn.cli.feedback import feedback_command
 from convilyn.cli.goals import goals_command
 from convilyn.cli.local import local_command
 from convilyn.cli.mcp import mcp_command
@@ -46,6 +47,7 @@ cli.add_command(account_command, name="account")
 cli.add_command(local_command, name="local")
 cli.add_command(mcp_command, name="mcp")
 cli.add_command(agent_command, name="agent")
+cli.add_command(feedback_command, name="feedback")
 
 
 if __name__ == "__main__":

@@ -262,7 +262,7 @@ class TestUploadErrors:
         assert info.value.status_code == 422
 
 
-# ── 3b. Presigned-POST grant (backend #2129 upload contract) ─────────
+# ── 3b. Presigned-POST grant (upload contract) ───────────────────────
 
 
 def _stub_post_grant(mock: respx.MockRouter, confirm_payload: dict) -> respx.Route:
@@ -289,7 +289,7 @@ def _stub_post_grant(mock: respx.MockRouter, confirm_payload: dict) -> respx.Rou
 class TestUploadPostGrant:
     """A presign carrying ``fields`` is an S3 POST-policy grant: the SDK must
     multipart-POST (never PUT), copy every field verbatim, file part LAST.
-    Regression for the dev/prod 403s after backend #2129 switched PUT→POST."""
+    Regression for the dev/prod 403s after the backend switched PUT→POST."""
 
     @pytest.mark.asyncio
     async def test_post_grant_uploads_via_multipart_post(

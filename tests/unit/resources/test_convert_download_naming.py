@@ -166,3 +166,76 @@ class TestToDir:
             async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
                 with pytest.raises(TypeError, match="not both and not neither"):
                     await client.convert.download_to("job_1")
+
+
+# ── 4. Boundary — to_dir contains, whatever the server sent ──────────
+
+
+class TestToDirContainsWhateverTheServerSent:
+    """`to_dir` joins a SERVER-supplied filename, and `/` honours an absolute
+    right-hand operand: `Path("/out") / "/etc/passwd"` discards `/out`.
+
+    Not exploitable today — the backend's `_output_filename` strips `/`, `\\`
+    and `:` before any of these can form. That sanitiser lives in a different
+    tree from this published package, though, with no gate spanning the two,
+    so the containment is asserted where the join happens.
+
+    Each case is a filename that ESCAPES under the old join, which is what
+    makes these tests discriminating: a fixture like `"evil.txt"` is already
+    inside `to_dir` and would pass against the unfixed line.
+    """
+
+    @pytest.mark.parametrize(
+        "sent",
+        [
+            "../../evil.md",
+            "/tmp/evil.md",
+            "a/../../b.md",
+            "sub/dir/evil.md",
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_it_lands_directly_under_to_dir(self, tmp_path, sent: str) -> None:
+        async with respx.mock as mock:
+            _mock_job(mock, _job(filename=sent, mimetype="text/markdown"))
+            mock.get("https://storage.example.com/out").mock(
+                return_value=httpx.Response(200, content=b"# hi")
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                landed = await client.convert.download_to("job_1", to_dir=tmp_path)
+
+        assert landed.parent == tmp_path
+        assert landed.read_bytes() == b"# hi"
+
+    @pytest.mark.asyncio
+    async def test_a_drive_absolute_filename_cannot_pick_the_volume(self, tmp_path) -> None:
+        """`Path("/out") / "C:/evil.md"` keeps `/out` on POSIX but not on
+        Windows, where the same published wheel runs."""
+        async with respx.mock as mock:
+            _mock_job(mock, _job(filename="C:/evil.md", mimetype="text/markdown"))
+            mock.get("https://storage.example.com/out").mock(
+                return_value=httpx.Response(200, content=b"# hi")
+            )
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                landed = await client.convert.download_to("job_1", to_dir=tmp_path)
+
+        assert landed == tmp_path / "evil.md"
+
+    @pytest.mark.parametrize("sent", ["..", ".", "", "/"])
+    @pytest.mark.asyncio
+    async def test_a_filename_that_names_no_file_is_refused(self, tmp_path, sent: str) -> None:
+        """The residue that taking the final component does NOT contain.
+
+        `Path("..").name` is `".."`, not empty — so `to_dir / ".."` is still
+        the parent directory. The other three collapse onto `to_dir` itself.
+        None is a filename, so none reaches the writer.
+        """
+        async with respx.mock as mock:
+            _mock_job(mock, _job(filename=sent, mimetype="text/markdown"))
+            storage = mock.get("https://storage.example.com/out")
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                with pytest.raises(ValueError, match="names no file"):
+                    await client.convert.download_to("job_1", to_dir=tmp_path)
+
+        assert not storage.called
+        assert list(tmp_path.iterdir()) == []

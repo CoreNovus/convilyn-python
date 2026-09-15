@@ -41,7 +41,18 @@ from convilyn.local._engine.markdown.model import Block, MarkdownDoc
 
 _INLINE_SPECIAL = re.compile(r"([\\*`\[\]<])")
 
-_LINE_START_MARKER = re.compile(r"^(\s*)(?:([#>|+-])|(\d+)(\.))")
+_LINE_START_MARKER = re.compile(r"^(\s*)(?:([#>|+-])|(\d+)([.)]))")
+
+_TILDE_FENCE = re.compile(r"^( {0,3})(~{3,})")
+
+_UNDERSCORE_BREAK = re.compile(r"^( {0,3})(_{3,})\s*$")
+
+_SETEXT_UNDERLINE = re.compile(r"^( {0,3})(=+)\s*$")
+
+_LEADING_INDENT = re.compile(r"^([ \t]+)(?=\S)")
+
+_MAX_PROSE_INDENT = 3
+_TAB_WIDTH = 4
 
 ASSET_DIR = "assets"
 
@@ -60,12 +71,35 @@ def _escape_line_start(match: re.Match[str]) -> str:
     return f"{indent}{digits}\\{dot}"
 
 
+def _clamp_indent(line: str) -> str:
+    match = _LEADING_INDENT.match(line)
+    if match is None:
+        return line
+    if len(match.group(1).expandtabs(_TAB_WIDTH)) < _TAB_WIDTH:
+        return line
+    return " " * _MAX_PROSE_INDENT + line[match.end() :]
+
+
+def _escape_block_openers(line: str, *, after_blank: bool) -> str:
+    if after_blank:
+        line = _clamp_indent(line)
+    elif _SETEXT_UNDERLINE.match(line):
+        return _SETEXT_UNDERLINE.sub(r"\1\\\2", line)
+
+    line = _TILDE_FENCE.sub(r"\1\\\2", line)
+    line = _UNDERSCORE_BREAK.sub(r"\1\\\2", line)
+    return _LINE_START_MARKER.sub(_escape_line_start, line)
+
+
 def escape_block_text(text: str) -> str:
     """Escape a whole paragraph: inline specials, plus line-leading block markers."""
-    escaped = escape_inline(text)
-    return "\n".join(
-        _LINE_START_MARKER.sub(_escape_line_start, line) for line in escaped.split("\n")
-    )
+    lines: list[str] = []
+    after_blank = True
+    for line in escape_inline(text).split("\n"):
+        rendered = _escape_block_openers(line, after_blank=after_blank)
+        lines.append(rendered)
+        after_blank = not rendered.strip()
+    return "\n".join(lines)
 
 
 def escape_cell(text: str) -> str:
@@ -104,7 +138,8 @@ def _render_image(block: Block) -> str:
     alt = escape_cell(image.alt_text or image.description or "")
     out = f"![{alt}]({ASSET_DIR}/{image.asset_name})"
     if image.description:
-        quoted = "\n".join(f"> {line}" for line in image.description.strip().split("\n"))
+        escaped = escape_block_text(image.description.strip())
+        quoted = "\n".join(f"> {line}" for line in escaped.split("\n"))
         out = f"{out}\n\n{quoted}"
     return out
 
@@ -117,7 +152,7 @@ def _render_block(block: Block) -> str:
     if block.kind == "list_item":
         indent = "  " * max(block.level, 0)
         marker = "1." if block.ordered else "-"
-        return f"{indent}{marker} {escape_inline(block.text.strip())}"
+        return f"{indent}{marker} {escape_block_text(block.text.strip())}"
 
     if block.kind == "table":
         return _render_table(block.rows)
@@ -126,7 +161,8 @@ def _render_block(block: Block) -> str:
         return f"```{block.language}\n{block.text.rstrip()}\n```"
 
     if block.kind == "quote":
-        return "\n".join(f"> {escape_inline(line)}" for line in block.text.strip().split("\n"))
+        escaped = escape_block_text(block.text.strip())
+        return "\n".join(f"> {line}" for line in escaped.split("\n"))
 
     if block.kind == "image":
         return _render_image(block)

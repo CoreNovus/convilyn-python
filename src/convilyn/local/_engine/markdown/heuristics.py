@@ -17,7 +17,9 @@ _MAX_HEADING_CHARS = 80
 
 _NUMBERED_PREFIX = re.compile(r"^\d+\.")
 
-_HEADING_STARTS = ("Chapter", "Section", "Part", "Introduction", "Conclusion")
+_HEADING_START_RE = re.compile(r"^(?:Chapter|Section|Part|Introduction|Conclusion)(?![\w'\-])")
+
+_HEADING_SENTENCE_END = "。！？!?."
 
 SENTENCE_END = "。！？!?.；;…」』】）)》〉"
 
@@ -59,4 +61,4 @@ def looks_like_heading(text: str) -> bool:
     if _NUMBERED_PREFIX.match(text) and text[-1] not in SENTENCE_END:
         return True
 
-    return any(text.startswith(word) for word in _HEADING_STARTS)
+    return bool(_HEADING_START_RE.match(text)) and text[-1] not in _HEADING_SENTENCE_END

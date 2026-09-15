@@ -132,11 +132,11 @@ class TestQuickstartImportsAreValid:
             and that is deliberate rather than an oversight
 
         That sentence turned this test red while being exactly right, which is
-        the failure `turbo-lane-cost-classes.md` records at length — a text scan
-        tripping over the document's own explanation of itself.
+        the standing failure mode for text scans — tripping over the
+        document's own explanation of itself.
 
         Narrowing loses nothing this test ever caught. The defect that prompted
-        it (#4108: QUICKSTART listing `UnsupportedRouteError` among the
+        it (QUICKSTART listing `UnsupportedRouteError` among the
         top-level exceptions) lived in a **prose list** and was invisible here
         from the day it was written. `test_quickstart_exception_list.py` is what
         catches that; this fixture's job is the imports a reader copies out of a
@@ -203,7 +203,7 @@ class TestAgentDocStayInSync:
     """
 
     # `WSTransport` and `ws_transport_factory` were here until 3.0.0. They are
-    # removed rather than re-documented (#4136): both existed only to inject a
+    # removed rather than re-documented: both existed only to inject a
     # fake WebSocket transport for `goals.events()`, and that surface is gone —
     # it could not authenticate for any credential this SDK holds, and the only
     # way to change that would have put a long-lived API key in a URL.

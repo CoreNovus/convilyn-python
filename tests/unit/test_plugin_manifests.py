@@ -260,3 +260,107 @@ class TestThePublishedToolTableNamesRealTools:
         stopped matching would make the assertion above pass while the README
         said anything at all."""
         assert len(self._table_names()) == 5
+
+
+class TestTheMcpRegistryManifest:
+    """``server.json`` — the fifth copy of the version, and the one nothing read.
+
+    It publishes this package to the official MCP registry
+    (``registry.modelcontextprotocol.io``). Three things about it can be wrong in
+    ways no other gate sees, so they are pinned here rather than discovered by a
+    user whose ``uvx`` invocation fails.
+
+    It is deliberately NOT in ``[tool.hatch.build.targets.sdist] include``: the
+    registry reads the repository, not the wheel, and the SHIPPED == SCANNED
+    invariant in ``pyproject.toml`` runs one way — shipped must be scanned, not
+    the reverse. What *is* shipped is ``docs/README.md``, which is what PyPI
+    renders and therefore what the registry reads the ownership marker from.
+    """
+
+    SERVER_JSON = REPO / "server.json"
+    PYPI_README = REPO / "docs" / "README.md"
+
+    #: The ownership proof. The registry reads this out of the description PyPI
+    #: renders, which `pyproject.toml`'s `readme` points at `docs/README.md` —
+    #: NOT the repo-root README, which is the GitHub landing page.
+    MARKER = "<!-- mcp-name: io.github.CoreNovus/convilyn -->"
+
+    @pytest.fixture
+    def server(self) -> dict:
+        return _load(self.SERVER_JSON)
+
+    @pytest.fixture
+    def package(self, server: dict) -> dict:
+        return server["packages"][0]
+
+    def test_it_exists_and_parses(self, server: dict) -> None:
+        assert server["name"] == "io.github.CoreNovus/convilyn"
+
+    def test_it_declares_exactly_one_package(self, server: dict) -> None:
+        """Vacuity guard: every check below reads ``packages[0]``, so an empty
+        list errors rather than asserts, and a second entry would leave half the
+        file unchecked."""
+        assert len(server["packages"]) == 1
+
+    @pytest.mark.parametrize("field", ["name", "description", "version"])
+    def test_the_schema_required_fields_are_present(self, server: dict, field: str) -> None:
+        assert server[field]
+
+    def test_the_version_matches_the_python_package(self, server: dict) -> None:
+        """Fifth copy. ``_version.py`` is the one that ships."""
+        assert server["version"] == __version__
+
+    def test_the_package_version_matches_too(self, package: dict) -> None:
+        assert package["version"] == __version__
+
+    def test_the_readme_pypi_renders_carries_the_ownership_marker(self) -> None:
+        """Without this line in the PUBLISHED description, the registry refuses
+        the publish — and it must be in a version already on PyPI, so adding it
+        and publishing are two releases, not one."""
+        assert self.MARKER in self.PYPI_README.read_text(encoding="utf-8")
+
+    def test_the_marker_names_the_same_server(self, server: dict) -> None:
+        assert server["name"] in self.MARKER
+
+    def test_the_extra_it_installs_from_is_a_declared_extra(self, package: dict) -> None:
+        """``uvx --from convilyn[mcp]`` is the whole reason the MCP server starts.
+
+        ``mcp`` is deliberately not in the ``all`` extra, so a plain
+        ``uvx convilyn`` has no MCP dependency at all. Rename the extra and every
+        registry user gets an ImportError with nothing in this repo going red —
+        which is what this pins.
+        """
+        import re
+
+        import tomllib
+
+        extras = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))["project"][
+            "optional-dependencies"
+        ]
+        from_values = [
+            arg["value"] for arg in package["runtimeArguments"] if arg.get("name") == "--from"
+        ]
+        assert len(from_values) == 1, "expected exactly one --from runtime argument"
+
+        match = re.fullmatch(r"convilyn\[([a-z0-9,\-]+)\]", from_values[0])
+        assert match, f"--from value is not a convilyn extras spec: {from_values[0]!r}"
+
+        named = match.group(1).split(",")
+        assert named == ["mcp"]
+        assert set(named) <= set(extras), f"{set(named) - set(extras)} is not a declared extra"
+
+    async def test_the_command_it_composes_is_a_real_cli_path(self, package: dict) -> None:
+        """The composed line is ``uvx --from convilyn[mcp] convilyn mcp serve``.
+
+        Derived from the click tree rather than retyped, so a CLI rename cannot
+        leave the registry pointing at a command that no longer exists.
+        """
+        from convilyn.cli.main import cli
+
+        words = [arg["value"] for arg in package["packageArguments"]]
+        node = cli
+        for word in words:
+            node = node.commands[word]  # type: ignore[attr-defined]
+
+        assert words == ["mcp", "serve"]
+        assert node is not None

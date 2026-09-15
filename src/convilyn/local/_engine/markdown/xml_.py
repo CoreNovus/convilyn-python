@@ -4,9 +4,20 @@
 
 """XML to ``MarkdownDoc``, as a nested heading-and-paragraph outline.
 
-Element names become headings and text content becomes paragraphs, so the shape
-of the document survives into the Markdown rather than being flattened into one
-blob.
+Two strategies, and the document itself decides which one runs.
+
+Arbitrary XML — a service response, a feed, a configuration export — carries no
+universal signal for "this is a heading", so element nesting becomes heading
+depth and text content becomes paragraphs. The shape of the document survives
+into the Markdown rather than being flattened into one blob.
+
+A document vocabulary that declares itself through an XML namespace is read on
+its own terms instead. DocBook and TEI keep a section's heading in a child
+element rather than in the tag name, so for those an element is a section when
+it declares such a child, the heading text is that child's content, and the
+heading level follows section nesting rather than element nesting. A namespace
+that is not recognised, or a document with no namespace at all, falls through to
+the behaviour above unchanged.
 
 Parsing goes through ``defusedxml``, which disables entity expansion and
 external-entity resolution. XML from an untrusted source is a well-known way to
@@ -21,6 +32,7 @@ they bite.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -33,17 +45,78 @@ MAX_DEPTH = 6
 MAX_ELEMENTS = 5_000
 
 
+@dataclass(frozen=True)
+class _Vocabulary:
+    heading: str
+    title_wrappers: frozenset[str] = frozenset()
+
+
+_VOCABULARIES: dict[str, _Vocabulary] = {
+    "http://docbook.org/ns/docbook": _Vocabulary(
+        heading="title", title_wrappers=frozenset({"info"})
+    ),
+    "http://www.tei-c.org/ns/1.0": _Vocabulary(heading="head"),
+}
+
+
 def _local_name(tag: Any) -> str:
     text = str(tag)
     return text.rsplit("}", 1)[-1] if "}" in text else text
 
 
-def _walk(element: Any, depth: int, blocks: list[Block], budget: list[int]) -> None:
+def _namespace(tag: Any) -> str:
+    text = str(tag)
+    return text[1:].split("}", 1)[0] if text.startswith("{") else ""
+
+
+def _section_heading(
+    element: Any, vocabulary: _Vocabulary, namespace: str, skip: tuple[Any, ...]
+) -> tuple[str, Any] | None:
+    heading_tag = f"{{{namespace}}}{vocabulary.heading}" if namespace else vocabulary.heading
+
+    for child in element:
+        if any(child is already for already in skip):
+            continue
+        if child.tag == heading_tag:
+            text = (child.text or "").strip()
+            if text:
+                return text, child
+        elif vocabulary.title_wrappers and _local_name(child.tag) in vocabulary.title_wrappers:
+            for grandchild in child:
+                if grandchild.tag == heading_tag:
+                    text = (grandchild.text or "").strip()
+                    if text:
+                        return text, grandchild
+    return None
+
+
+def _walk(
+    element: Any,
+    depth: int,
+    blocks: list[Block],
+    budget: list[int],
+    vocabulary: _Vocabulary | None,
+    namespace: str,
+    *,
+    is_root: bool = False,
+    skip: tuple[Any, ...] = (),
+) -> None:
     if budget[0] <= 0:
         return
     budget[0] -= 1
 
-    blocks.append(Block(kind="heading", text=_local_name(element.tag), level=min(depth, MAX_DEPTH)))
+    heading_text: str | None = None
+    consumed = skip
+    if vocabulary is not None:
+        found = _section_heading(element, vocabulary, namespace, skip)
+        if found is not None:
+            heading_text, title_element = found
+            consumed = skip + (title_element,)
+    elif not is_root:
+        heading_text = _local_name(element.tag)
+
+    if heading_text is not None and not is_root:
+        blocks.append(Block(kind="heading", text=heading_text, level=min(depth, MAX_DEPTH)))
 
     if element.attrib:
         rows = [("attribute", "value")]
@@ -54,8 +127,13 @@ def _walk(element: Any, depth: int, blocks: list[Block], budget: list[int]) -> N
     if text:
         blocks.append(Block(kind="paragraph", text=text))
 
+    child_depth = (
+        depth + 1 if (vocabulary is None or heading_text is not None or is_root) else depth
+    )
+
     for child in list(element):
-        _walk(child, depth + 1, blocks, budget)
+        if not any(child is already for already in consumed):
+            _walk(child, child_depth, blocks, budget, vocabulary, namespace, skip=consumed)
 
         tail = (child.tail or "").strip()
         if tail:
@@ -65,8 +143,11 @@ def _walk(element: Any, depth: int, blocks: list[Block], budget: list[int]) -> N
 def extract(path: Path) -> MarkdownDoc:
     """Read an XML file into a nested outline.
 
-    Nesting depth becomes heading level, up to the depth cap. A document that hits
-    either the depth or element cap still returns, with a warning saying so.
+    For a recognised document vocabulary the outline is the document's own — its
+    declared title becomes the document title and its sections become the headings.
+    Otherwise nesting depth becomes heading level, up to the depth cap. A document
+    that hits either the depth or element cap still returns, with a warning saying
+    so.
     """
     from defusedxml.ElementTree import ParseError, parse
 
@@ -82,16 +163,27 @@ def extract(path: Path) -> MarkdownDoc:
     if root is None:
         return MarkdownDoc(source_format="xml", warnings=("XML has no root element",))
 
+    namespace = _namespace(root.tag)
+    vocabulary = _VOCABULARIES.get(namespace)
+
+    title = _local_name(root.tag)
+    consumed: tuple[Any, ...] = ()
+    if vocabulary is not None:
+        found = _section_heading(root, vocabulary, namespace, ())
+        if found is not None:
+            title, title_element = found
+            consumed = (title_element,)
+
     blocks: list[Block] = []
     budget = [MAX_ELEMENTS]
-    _walk(root, 1, blocks, budget)
+    _walk(root, 1, blocks, budget, vocabulary, namespace, is_root=True, skip=consumed)
 
     if budget[0] <= 0:
         warnings.append(f"truncated: only the first {MAX_ELEMENTS} elements were converted")
 
     return MarkdownDoc(
         blocks=tuple(blocks),
-        title=_local_name(root.tag),
+        title=title,
         source_format="xml",
         warnings=tuple(warnings),
     )

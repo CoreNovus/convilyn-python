@@ -92,7 +92,7 @@ class TestClientLifecycle:
         assert "12345" not in text
 
     def test_sync_calls_and_aclose_share_one_loop(self):
-        """#2112 — per-call ``asyncio.run`` orphaned pooled httpx
+        """Per-call ``asyncio.run`` orphaned pooled httpx
         connections; every sync call plus the final aclose must observe
         the same running loop."""
         import asyncio

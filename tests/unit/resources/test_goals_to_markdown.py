@@ -1,4 +1,4 @@
-"""``goals.to_markdown()`` — the metered extraction path (#3899).
+"""``goals.to_markdown()`` — the metered extraction path.
 
 Split out of ``test_goals.py`` rather than appended to it: that module is at its
 file-size ceiling, and this capability has its own artifact type, its own error

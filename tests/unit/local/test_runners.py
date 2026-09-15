@@ -1,7 +1,7 @@
 """The runner table — logic / boundary / error / object-state.
 
 Two properties are worth holding by machine rather than by review, and both are
-about what happens when the **next** family arrives (media conversion, #3813):
+about what happens when the **next** family arrives (media conversion):
 
 * every ``Engine`` has a row, so adding an engine without a runner fails here
   instead of as a ``KeyError`` on a user's machine;

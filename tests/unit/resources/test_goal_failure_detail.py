@@ -158,7 +158,7 @@ class TestWhatThisBuildDoesNotKnow:
         every failure predating these fields, and most after them, carries
         neither.
 
-        ``retryable` is ``None`` here, not ``False`` (#4505). It WAS ``False``,
+        ``retryable` is ``None`` here, not ``False``. It WAS ``False``,
         which made "the server said do not retry" and "the server said nothing"
         the same answer — and until the backend began sending ``suggestedAction``
         on a failed job, this was EVERY failure, so ``retryable` was structurally

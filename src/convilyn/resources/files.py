@@ -3,7 +3,8 @@
 Three steps wrapped behind a single :py:meth:`AsyncFiles.upload`:
 
 1. ``POST /api/v1/upload/presign`` — Convilyn issues a presigned upload URL
-2. ``PUT <presigned-url>`` — the client uploads the bytes to the storage URL
+2. ``POST <presigned-url>`` — the client uploads the bytes as a multipart form,
+   with the grant's ``fields`` copied in verbatim and the file part LAST
 3. ``POST /api/v1/upload/confirm`` — Convilyn registers the file record
 
 The steps are exposed as private methods so future extensions (multipart

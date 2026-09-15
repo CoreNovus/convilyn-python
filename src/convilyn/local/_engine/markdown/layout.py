@@ -41,11 +41,22 @@ MAX_CUT_DEPTH = 12
 Box = TypeVar("Box", bound=Mapping[str, Any])
 
 
-def _background_runs(
+def background_runs(
     boxes: Sequence[Box],
     low_key: str,
     high_key: str,
 ) -> list[tuple[float, float]]:
+    """The stretches along one axis that none of these boxes covers.
+
+    Projecting every box onto a single axis and looking for the stretches nothing
+    occupies is what finds a page's structure: a clear vertical channel running the
+    full height of a region is a column gutter, and a clear horizontal one is the
+    break between two bands.
+
+    The sweep tracks the furthest point reached rather than the previous box's end,
+    because boxes overlap freely. A tall figure standing beside three short lines
+    would otherwise appear to leave background where there is none.
+    """
     spans = sorted((float(b[low_key]), float(b[high_key])) for b in boxes)
     runs: list[tuple[float, float]] = []
     reach = spans[0][1]
@@ -99,10 +110,10 @@ def order_regions(
     if len(items) <= 1 or unit <= 0 or _depth >= MAX_CUT_DEPTH:
         return [items] if items else []
 
-    column = _best_run(_background_runs(items, "x0", "x1"), MIN_COLUMN_GAP_RATIO * unit)
+    column = _best_run(background_runs(items, "x0", "x1"), MIN_COLUMN_GAP_RATIO * unit)
     if column is not None and not _separates_columns(items, column, unit):
         column = None
-    band = _best_run(_background_runs(items, "top", "bottom"), MIN_BAND_GAP_RATIO * unit)
+    band = _best_run(background_runs(items, "top", "bottom"), MIN_BAND_GAP_RATIO * unit)
     if column is None and band is None:
         return [items]
 

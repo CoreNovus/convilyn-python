@@ -3,6 +3,86 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [Semantic Versioning](https://semver.org/).
 
+## [4.1.0] - 2026-09-16
+
+### Added
+
+- **`convert.wait()` follows the platform's polling cadence when it offers one.**
+  A job response may now carry `suggestedPollIntervalMs`, and it is followed in
+  both directions — longer while the job is queued, shorter once it is nearly
+  done — clamped to the same floor and ceiling as before. Following only the
+  shortening half would trade a shorter wait for more requests. **A caller who
+  passed their own `poll_interval` keeps it**: asking for 5 seconds is usually a
+  request to make fewer calls, not an invitation for the server to choose. A
+  deployment that does not send the field behaves exactly as before.
+  `ConvertJob.suggested_poll_interval_ms` exposes what the platform suggested.
+
+- **`convilyn feedback`** asks three questions about what you are trying to
+  do and sends them to the Convilyn team. Interactive by default; pass
+  `--purpose` and `--current-method` to run it non-interactively, which
+  `--json` requires because that mode never prompts. The same survey is
+  offered on the website, and both write the same record.
+- A one-line pointer at that command after the third successful
+  `convilyn local convert`, printed to stderr and shown once. Suppressed
+  entirely under `--json`.
+- **`goals.wait(..., stop_on={"ready"})`** stops the poll at the approval gate
+  instead of running past it. A job queued behind your approval parks at
+  `ready`, which is neither terminal nor `slots_pending`, so a plain `wait()`
+  polled it until the timeout while `run()` / `run_interactive()` auto-confirmed
+  and spent. Neither is usable by a caller that wants to decide first. See
+  QUICKSTART §7.8.
+- **`convilyn goals understand --path <file>`** takes a LOCAL file, uploads it
+  and understands the result. Repeatable, and mixable with `--files` (ids keep
+  their position, uploads follow). There was previously no shell route to this
+  command for a file on disk at all: `--files` takes ids, no command uploaded
+  anything, and `convilyn api` has no multipart surface. `--files` is therefore
+  no longer required, and the command refuses "neither". `--dry-run` reports the
+  paths under `would_upload` and uploads nothing.
+
+### Fixed
+
+- **Offline PDF extraction releases each page as soon as it has been read.**
+  `convilyn local convert` on a long PDF used to keep every parsed page in memory
+  until the whole document was done, so peak memory rose with the page count. It
+  now stays level however many pages the file has. The output is unchanged.
+- **`convert.download_to(job, to_dir=...)` now joins only the final component of
+  the server-supplied filename.** `pathlib`'s `/` honours an absolute right-hand
+  operand, so a `filename` carrying a path or a drive could place the write
+  outside the directory you asked for. Not reachable through the platform — the
+  backend's sanitiser strips the separators — but that sanitiser lives in another
+  tree and this join runs on your machine. A filename that names no file (`..`,
+  `.`, empty) is now refused rather than handed to the writer.
+- **`convilyn agent install` no longer truncates the file it is extending.**
+  Every destination, `~/.codex/config.toml` included, is written to a temporary
+  file and renamed into place, so an interruption leaves your existing config
+  exactly as it was instead of empty.
+- **The object-storage hop has its own timeout budget** (`connect` 30s, `read`
+  and `write` 300s) instead of sharing the client's 30s with ordinary API calls.
+  An upload and a status poll are different operations and one number was wrong
+  for both. The API default is unchanged. Transport failures still surface as
+  `httpx` exceptions verbatim — QUICKSTART's exception page now says so, which
+  it never did.
+
+### Documentation
+
+- `docs/README.md` showed `goals start` with a positional argument the command
+  does not accept, and `docs/QUICKSTART.md` quoted a glob in a `local batch`
+  example, which suppresses the shell expansion that command depends on. Both
+  errored when run; both are fixed, and every documented `convilyn ...` line is
+  now checked against the real CLI surface.
+- Corrected a claim that `httpx.MockTransport` can be injected via `HTTPClient`,
+  which takes no `transport=` parameter. The supported route is `respx`.
+- **New test-results page, [`docs/MEASURED-2026-09-08.md`](docs/MEASURED-2026-09-08.md).**
+  The offline-conversion section was re-measured with `doc-eval` 1.0.0: text
+  fidelity (normalised edit distance) is **0.9664**, up from 0.9634, and
+  heading-tree F1 is **1.0000**, up from 0.9091. The engine improved — the
+  2026-08-29 conversion fixes — rather than the metric changing: `doc-eval`
+  1.0.0 repointed `reading_order` and ANLS and left the heading metric alone,
+  so the two rounds are comparable. Sections 2 and 3 are carried forward from
+  2026-08-28 and say so per section, rather than the whole page claiming one
+  date for figures gathered on two. The previous report is kept as the dated
+  record of its round, with a pointer to this one.
+
 ## [4.0.0] - 2026-09-03
 
 ### Changed — BREAKING

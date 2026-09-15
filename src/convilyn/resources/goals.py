@@ -35,6 +35,7 @@ from convilyn.exceptions import (
     GoalJobTimeoutError,
     UnderstandUnavailableError,
 )
+from convilyn.resources._goals_validate import validate_start_inputs
 from convilyn.types import Artifact, ArtifactDownload, File, GoalJob, PendingSlot
 
 # ── Tunables ────────────────────────────────────────────────────────
@@ -131,7 +132,7 @@ class AsyncGoals:
         your account default. It is honoured only when BYO-LLM is enabled
         for your account — otherwise the run uses the platform provider.
         """
-        self._validate_start_inputs(
+        validate_start_inputs(
             workflow_id=workflow_id,
             user_workflow_id=user_workflow_id,
             goal_text=goal_text,
@@ -167,6 +168,7 @@ class AsyncGoals:
         timeout: float = DEFAULT_POLL_TIMEOUT,
         poll_interval: float = DEFAULT_POLL_INTERVAL,
         idle_timeout: float | None = None,
+        stop_on: frozenset[str] | set[str] | None = None,
     ) -> GoalJob:
         """Poll until the job reaches a terminal state or stops for HITL.
 
@@ -177,6 +179,24 @@ class AsyncGoals:
           workflow as a whole reached its end.
         * HITL pending (``slots_pending``) — the agent is asking for user
           input; answer them with ``fill_slot()`` / ``fill_slots()`` then ``confirm()``.
+
+        ``stop_on`` adds non-terminal statuses to stop on, and the one that
+        matters is ``ready``: the job is queued behind your approval and
+        neither stop above covers it, so a plain ``wait()`` polls a ready job
+        until the timeout. Pass it to reach the approval gate and stop there —
+        the shape any caller that decides whether to spend needs::
+
+            estimate = await client.account.get_quota(tools=[...])  # the price
+            job = await client.goals.start(workflow_id=..., files=file_ids)
+            job = await client.goals.wait(job.job_spec_id, stop_on={"ready"})
+            if approved(estimate):
+                job = await client.goals.confirm(job.job_spec_id)
+
+        The cost comes from
+        :py:meth:`~convilyn.resources.account.AsyncAccount.get_quota`, not from
+        ``job`` — ``GoalJob`` carries no price field. ``run()`` and ``run_interactive()``
+        auto-confirm ``ready`` instead, being end-to-end drivers with nobody
+        to ask.
 
         Long-running workflows: an agentic run's analyze/execute phases can
         legitimately take many minutes, so a flat ``timeout`` forces a
@@ -201,6 +221,7 @@ class AsyncGoals:
             timeout=timeout,
             initial_interval=poll_interval,
             idle_timeout=idle_timeout,
+            extra_stop_statuses=frozenset(stop_on or ()),
         )
 
     async def run(
@@ -493,42 +514,6 @@ class AsyncGoals:
         )
 
     # ── Private steps (extensible) ───────────────────────────────
-
-    @staticmethod
-    def _validate_start_inputs(
-        *,
-        workflow_id: str | None,
-        user_workflow_id: str | None,
-        goal_text: str | None,
-        files: Sequence[str | File] | None,
-    ) -> None:
-        """Mirror the backend's XOR + fileIds-required rules client-side.
-
-        Exactly one workflow source (``workflow_id`` / ``user_workflow_id`` /
-        ``goal_text``) must be given; ``files`` is required only on the
-        ``goal_text``-only (NLP) path. Doing the check here keeps the round-trip
-        count honest — a misuse turns into ``ValueError``/``TypeError`` before
-        the SDK even opens a socket.
-        """
-        sources = {
-            "workflow_id": workflow_id,
-            "user_workflow_id": user_workflow_id,
-            "goal_text": goal_text,
-        }
-        provided = [name for name, value in sources.items() if value is not None]
-        if not provided:
-            raise TypeError(
-                "start() requires exactly one of `workflow_id`, `user_workflow_id`, or `goal_text`"
-            )
-        if len(provided) > 1:
-            raise TypeError(
-                "start() accepts exactly one of `workflow_id`, `user_workflow_id`, "
-                f"or `goal_text` — not multiple (got {', '.join(sorted(provided))})"
-            )
-        # Only the NLP path (goal_text alone) requires files; an explicit
-        # workflow_id / user_workflow_id run may collect files via checkpoints.
-        if goal_text is not None and not files:
-            raise ValueError("files is required when only `goal_text` is provided")
 
     async def _create_job(self, *, payload: dict[str, Any]) -> GoalJob:
         response = await self._http.request("POST", "/api/v1/jobs/goal", json=payload)

@@ -1,7 +1,7 @@
 """``account.get_balance()`` — the balance a ``ck_`` key could not ask for.
 
 Round-6 external testing reported the SDK as having no way to read a credit
-balance. The backend route shipped with #4079; what was missing was this method.
+balance. The backend route shipped earlier; what was missing was this method.
 
 The two account reads answer different questions and neither substitutes for the
 other: ``usage_history()`` returns run COUNTS for quota metrics and carries no
@@ -102,7 +102,7 @@ class TestBoundary:
 
     @respx.mock
     async def test_the_free_cap_counter_keeps_its_fraction(self, client: AsyncConvilyn) -> None:
-        """Fractional by design (#4179) — it accumulates charges, and rounding it
+        """Fractional by design — it accumulates charges, and rounding it
         to whole credits would make the Free cap unauditable. Typed ``float``
         rather than ``int`` for exactly this."""
         respx.get(f"{API_BASE}/api/v1/credits/balance").mock(

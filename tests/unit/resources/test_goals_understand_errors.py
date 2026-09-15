@@ -1,4 +1,4 @@
-"""What `goals.understand()` TELLS the caller when the backend refuses (#4204).
+"""What `goals.understand()` TELLS the caller when the backend refuses.
 
 Extracted rather than appended to `test_goals.py`: that file is grandfathered in
 the repo's file-size ratchet, whose failure message is an instruction —
@@ -9,7 +9,7 @@ The defect these cover is a chain, and every link discarded the same sentence:
 
 1. the backend rendered a message written for the markdown axis
    (`outputFormat=None …`) at a schema-axis caller who never sent the field;
-2. the goal-lane route collapsed the domain error to
+2. the workflow route collapsed the domain error to
    `HTTPException(400, detail=<str>)`, dropping `code` and `details`;
 3. `_flatten_error_envelope` did not recognise a **string** `detail`, so
    `message` degraded to the HTTP reason phrase — `"Bad Request"`;
@@ -20,7 +20,7 @@ Link 2 is deliberately still there — changing the wire shape reaches the
 contract and the frontend. These tests pin links 3 and 4, which is what makes
 the backend's real reason visible to an SDK caller.
 
-## Two corrections added alongside the doc-eval SDK launch harness (PLAN.md / #4660)
+## Two corrections added alongside the doc-eval SDK launch harness (PLAN.md)
 
 Its own negative-case table originally read: "A modality with no pipeline ->
 UnderstandUnavailableError, naming the free path" and "A malformed JSON Schema
@@ -68,7 +68,7 @@ class TestTheServersReasonReachesTheCaller:
     async def test_a_string_detail_refusal_names_the_real_cause(self) -> None:
         """A caller who sent three files is told about the three files.
 
-        `{"detail": "<str>"}` is the shape the goal lane actually emits, so this
+        `{"detail": "<str>"}` is the shape the API actually emits, so this
         exercises links 3 and 4 together and fails if either is reverted.
         """
         async with respx.mock as mock:

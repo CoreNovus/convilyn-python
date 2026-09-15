@@ -218,7 +218,7 @@ class TestDoctorObjectState:
         assert "Account tier" not in names
 
 
-# ── 5. A rejected key is a failure, not an advisory (#4108) ──────────
+# ── 5. A rejected key is a failure, not an advisory ──────────────────
 
 
 class TestRejectedKeyIsFatal:
@@ -498,7 +498,7 @@ class TestCredentialsFilePermissionCheck:
     def test_windows_reads_the_acl_and_reports_a_clean_one_as_ok(
         self, runner: CliRunner, env_with_key: None, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """This asserted `SKIP` until #4823, and the SKIP was the defect.
+        """This asserted `SKIP` until the doctor fix, and the SKIP was the defect.
 
         It was justified as "nothing this check can meaningfully assert on
         Windows", which is true of Unix permission bits and false of the
