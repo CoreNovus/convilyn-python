@@ -456,12 +456,16 @@ class CatalogWorkflow(BaseModel):
 
 
 class WorkflowSearchPage(BaseModel):
-    """One page of community workflow summaries + cursor for pagination."""
+    """One page of community workflow summaries.
+
+    ``next_cursor`` is the token for the following page, or ``None`` on the
+    last one. Pass it back as the ``cursor`` argument.
+    """
 
     model_config = ConfigDict(populate_by_name=True, frozen=True, extra="allow")
 
     items: list[WorkflowSummary] = Field(default_factory=list)
-    cursor: str | None = None
+    next_cursor: str | None = Field(default=None, alias="nextCursor")
 
 
 class LikeResponse(BaseModel):
@@ -504,12 +508,16 @@ class UserWorkflowSummary(BaseModel):
 
 
 class UserWorkflowsPage(BaseModel):
-    """One page of owned-workflow summaries + cursor for pagination."""
+    """One page of owned-workflow summaries.
+
+    ``next_cursor`` is the token for the following page, or ``None`` on the
+    last one. Pass it back as the ``cursor`` argument.
+    """
 
     model_config = ConfigDict(populate_by_name=True, frozen=True, extra="allow")
 
     items: list[UserWorkflowSummary] = Field(default_factory=list)
-    cursor: str | None = None
+    next_cursor: str | None = Field(default=None, alias="nextCursor")
 
 
 class UserWorkflowDetail(BaseModel):

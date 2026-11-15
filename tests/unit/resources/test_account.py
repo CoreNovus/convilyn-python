@@ -11,7 +11,7 @@ CLI behaviour lives in :mod:`tests.test_cli_account`.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -407,7 +407,7 @@ class TestUsageHistoryBoundary:
                 ],
             )
         )
-        cutoff = datetime(2026, 3, 1, tzinfo=timezone.utc)
+        cutoff = datetime(2026, 3, 1, tzinfo=UTC)
         entries = await client.account.usage_history(since=cutoff)
         assert len(entries) == 1
         assert entries[0].period_start.year == 2026

@@ -353,8 +353,6 @@ _CODEC_PLUGINS: dict[ImageFormat, tuple[str, str]] = {
     ImageFormat.DNG: ("rawpy", "a camera RAW decoder."),
     ImageFormat.CR2: ("rawpy", "a camera RAW decoder."),
     ImageFormat.NEF: ("rawpy", "a camera RAW decoder."),
-    ImageFormat.EXR: ("imageio", "a high-dynamic-range reader."),
-    ImageFormat.HDR: ("imageio", "a high-dynamic-range reader."),
 }
 
 

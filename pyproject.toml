@@ -9,7 +9,7 @@ description = "Official Convilyn client SDK — file conversion, agentic workflo
 readme = "docs/README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 authors = [
     { name = "Convilyn", email = "support@convilyn.com" },
 ]
@@ -26,18 +26,46 @@ classifiers = [
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Internet :: WWW/HTTP",
     "Typing :: Typed",
 ]
+#
+# **The lowest versions these floors allow carried no published advisory when
+# this file was last changed**, and that includes the packages the listed ones
+# bring in. A repository check resolves this table, and each extra below, at
+# the lowest versions it allows and fails on an advisory in any resolved
+# package; it runs on changes to this package and before a release. Two
+# limits: it says nothing
+# about releases above a floor, which are not capped, and a release that has no
+# wheel is checked for its own advisories but not for what it would bring in.
+#
+# That is why some entries name a package this SDK never imports. Each is
+# marked "transitive" with the dependency that brings it in: when that
+# dependency raises its own floor past the advisory, the entry can go.
 dependencies = [
-    "httpx>=0.25.0,<1.0.0",
-    "pydantic>=2.0.0,<3.0.0",
+    # 0.25.2 is the first release on httpcore 1.x. Below it, the h11 floor
+    # further down would pair httpx with an httpcore it was never released with.
+    "httpx>=0.25.2,<1.0.0",
+    # 2.4.0 fixes GHSA-mr82-8j83-vxmv (regular-expression denial of service in
+    # e-mail validation).
+    "pydantic>=2.4.0,<3.0.0",
     "click>=8.0.0,<9.0.0",
-    "typing-extensions>=4.7.0; python_version < '3.11'",
+    # `convilyn.graphs.types` builds its state on its TypedDict, which pydantic
+    # accepts below Python 3.12; 4.6.1 is what pydantic 2.4 itself requires.
+    "typing-extensions>=4.6.1",
+    # Transitive, not imported by convilyn; brought in by httpx, which sets no
+    # floor on any of them. anyio 4.14.2 fixes GHSA-5p39-cfhj-2xmp; certifi
+    # 2026.10.18 fixes GHSA-6q48-6c7w-9gw2; idna 3.15 fixes GHSA-65pc-fj4g-8rjx.
+    "anyio>=4.14.2",
+    "certifi>=2026.10.18",
+    "idna>=3.15",
+    # Transitive, not imported by convilyn; brought in by httpcore (httpx's
+    # transport). 0.16.0 fixes GHSA-vqfr-h8mv-ghfj.
+    "h11>=0.16.0",
 ]
 
 # Offline conversion (`convilyn.local`). One extra per format family, so a user
@@ -52,25 +80,34 @@ dependencies = [
 # papered over: `pptx` pulls Pillow transitively (python-pptx depends on it),
 # and LibreOffice / Calibre are desktop applications that no extra can install.
 #
-# **The floors are the org's, not invented here**, and
-# `tests/unit/qa/test_cross_file_dependency_agreement.py` in backend-api holds
-# them to it. The first draft of this table wrote its own ranges and was wrong
-# in the direction that matters: `Pillow>=11.0` and `pypdf>=6.0` would have let
-# a user of this published package install versions carrying, respectively,
-# three GHSAs (one of them a decompression bomb) and twenty-two DoS advisories
-# that the rest of the repo had already floored past. A published SDK is where
-# a low floor does the most damage, not the least.
+# **Each floor is the lowest release clear of published advisories**, and a
+# repository check holds it there. Lower floors would be wrong in the direction
+# that matters: `Pillow>=11.0` and `pypdf>=6.0` would let a user of this
+# published package install versions carrying, respectively, three GHSAs (one
+# of them a decompression bomb) and twenty-two DoS advisories. A published SDK
+# is where a low floor does the most damage, not the least.
 #
-# Upper caps were dropped for the same reason: every distinct specifier string
-# is one more thing to keep in step across nine manifests, and the repo's
-# convention is a floor.
+# There are no upper caps: the convention is a floor.
+#
+# The same check covers what each parser pulls in, so some entries below are
+# transitive (not imported by convilyn through that extra); each names the
+# dependency that should carry the floor:
+#
+# - pypdf 6.21.4 fixes GHSA-5849-834g-hvw5.
+# - cryptography 50.0.0 fixes GHSA-g6cj-pr64-35w5. Transitive: pdfminer-six
+#   (which pdfplumber requires) accepts cryptography 36.
+# - Pillow 13.0.0 fixes GHSA-22hg-r758-rrw9. Direct in `images`; transitive in
+#   `pdf` (through pdfplumber) and in `pptx` (through python-pptx), which both
+#   accept Pillow 9.
+# - lxml 6.1.0 fixes GHSA-vfmq-68hx-4jfw. Transitive: python-docx and
+#   python-pptx both accept lxml 4.
 [project.optional-dependencies]
-pdf = ["pdfplumber>=0.11.9", "pypdf>=6.16.1"]
-docx = ["python-docx>=1.0.0"]
-pptx = ["python-pptx>=1.0.0"]
+pdf = ["pdfplumber>=0.11.9", "pypdf>=6.21.4", "cryptography>=50.0.0", "Pillow>=13.0.0"]
+docx = ["python-docx>=1.0.0", "lxml>=6.1.0"]
+pptx = ["python-pptx>=1.0.0", "lxml>=6.1.0", "Pillow>=13.0.0"]
 xlsx = ["openpyxl>=3.1.0"]
 xml = ["defusedxml>=0.7.0"]
-images = ["Pillow>=12.2.0"]
+images = ["Pillow>=13.0.0"]
 documents = ["convilyn[pdf,docx,pptx,xlsx,xml]"]
 all = ["convilyn[documents,images]"]
 # The MCP transport, and deliberately NOT part of `all`. `all` means "every
@@ -78,8 +115,65 @@ all = ["convilyn[documents,images]"]
 # orthogonal, which is what makes `convilyn[all,mcp]` read correctly instead of
 # redundantly. Pinned >=2.0 because 2.x renamed FastMCP to MCPServer and the
 # server module uses the new name — supporting both would be a compatibility
-# branch, and nobody holds a 1.x lock on this package yet.
-mcp = ["mcp>=2.0.0,<3.0.0"]
+# branch, and nobody holds a 1.x lock on this package yet. 2.2.0 fixes
+# GHSA-5h93-6whr-6q8j.
+#
+# The rest are transitive, not imported by convilyn; mcp brings each of them in
+# and accepts a release an advisory names (cryptography arrives through pyjwt):
+# cryptography 50.0.0 fixes GHSA-g6cj-pr64-35w5; httpx2 2.12.0 fixes
+# GHSA-8xx6-hgc6-gc2m; opentelemetry-api 1.45.2 fixes GHSA-mf5v-w3w3-f6cg;
+# pyjwt 2.15.0 fixes GHSA-42vr-xj54-vc7v; python-multipart 0.0.31 fixes
+# GHSA-v9pg-7xvm-68hf; starlette 1.3.1 fixes GHSA-82w8-qh3p-5jfq.
+mcp = [
+    "mcp>=2.2.0,<3.0.0",
+    "cryptography>=50.0.0",
+    "httpx2>=2.12.0",
+    "opentelemetry-api>=1.45.2",
+    "pyjwt>=2.15.0",
+    "python-multipart>=0.0.31",
+    "starlette>=1.3.1",
+]
+# Ready-made graphs for LangGraph (`convilyn.graphs`), and outside `all` for the
+# same reason `mcp` is: it is not a format. It is for someone who already builds
+# on that framework, and nobody else should pay for its dependency tree.
+#
+# Each floor is the lowest release clear of a published advisory, including the
+# two this package never imports: an extra is what puts them in a user's
+# environment. langgraph 1.2.14 requires a langgraph-sdk past
+# GHSA-fvww-7h3r-vfhp, and 1.2.16 stops a graph placed inside another from
+# running its finished parallel steps again when resumed, which `fanout`
+# promises; langgraph-checkpoint 4.1.1 fixes GHSA-fjqc-hq36-qh5p (unsafe JSON
+# deserialization when loading saved state), and 4.3.0 is what langgraph 1.2.16
+# requires; langsmith 0.8.18 fixes GHSA-f4xh-w4cj-qxq8. langchain-core is what
+# langgraph requires. orjson, which langgraph-sdk and langsmith pull in, 3.11.6
+# fixes GHSA-hx9q-6w63-j58v (no depth limit when serialising nested values).
+# jsonschema checks collected values against their field's schema; no advisory
+# names it, and 4.18 is the first release built on `referencing`, which the
+# Draft 2020-12 validator needs. langchain supplies the agent a use case answers
+# with; 1.3.9 fixes GHSA-gr75-jv2w-4656 (path traversal in its file-search
+# middleware, which this package never uses).
+#
+# requests and urllib3 are transitive, not imported by convilyn: langsmith
+# accepts requests 2.0, and requests accepts urllib3 1.26. requests 2.33.0
+# fixes GHSA-gc5v-m9x4-r6x2; urllib3 2.8.0 fixes GHSA-8988-9cw3-xx77. pyyaml is
+# transitive too: langchain-core accepts pyyaml 5.3, and 5.4 fixes
+# GHSA-8q59-q68h-6hv4.
+graphs = [
+    "langgraph>=1.2.16",
+    "langchain-core>=1.4.7",
+    "langgraph-checkpoint>=4.3.0",
+    "langsmith>=0.8.18",
+    "orjson>=3.11.6",
+    "jsonschema>=4.18.0",
+    "langchain>=1.3.9",
+    "requests>=2.33.0",
+    "urllib3>=2.8.0",
+    "pyyaml>=5.4",
+]
+# Vector search in `convilyn.rag`'s SQLite store, and nothing else; imported only
+# when a vector is searched. Outside `all` for the same reason as `mcp`: it is
+# not a document format.
+rag = ["numpy>=1.26"]
 
 [project.urls]
 Homepage = "https://convilyn.com"
@@ -96,15 +190,15 @@ convilyn = "convilyn.cli.main:cli"
 # installs it by default). Kept out of the wheel/sdist METADATA.
 [dependency-groups]
 dev = [
-    "mcp>=2.0.0",
+    "mcp>=2.2.0",
     "pytest>=7.0.0",
     "pytest-asyncio>=0.23.0",
     "pytest-cov>=4.1.0",
     "respx>=0.22.0",
-    "ruff==0.16.6",
-    # The `typecheck` gate's checker (#3917). Specifier deliberately identical
-    # to the one already in scripts/oss/templates/pyproject.toml: this repo's
-    # cross-file agreement ratchet compares specifier STRINGS, and a new
+    "ruff==0.17.3",
+    # The `typecheck` gate's checker. Specifier deliberately identical to
+    # every other declaration of it: a cross-file agreement check compares
+    # specifier STRINGS, and a new
     # spelling here would be a new disagreement it may not accept. The exact
     # version is pinned by uv.lock, which `--locked` enforces.
     "pyright>=1.1.350",
@@ -112,18 +206,35 @@ dev = [
     # project's dependencies plus this group and NOT its extras, so without the
     # mirror the engine's tests cannot import their parsers — they would skip,
     # and the coverage floor would then be measuring code nothing exercised.
-    # A green run over un-run code is the failure this repo keeps paying for.
+    # A green run over un-run code is the failure this guards against.
     #
-    # Kept in agreement with the extras by
-    # `scripts/ci/tests/test_sdk_local_extras_policy.py`, so the duplication is
-    # machine-checked rather than remembered.
+    # Kept in agreement with the extras by a repository check, so the
+    # duplication is machine-checked rather than remembered.
     "pdfplumber>=0.11.9",
-    "pypdf>=6.16.1",
+    "pypdf>=6.21.4",
+    "cryptography>=50.0.0",
     "python-docx>=1.0.0",
+    "lxml>=6.1.0",
     "python-pptx>=1.0.0",
     "openpyxl>=3.1.0",
     "defusedxml>=0.7.0",
-    "Pillow>=12.2.0",
+    "Pillow>=13.0.0",
+    "httpx2>=2.12.0",
+    "opentelemetry-api>=1.45.2",
+    "pyjwt>=2.15.0",
+    "python-multipart>=0.0.31",
+    "starlette>=1.3.1",
+    "langgraph>=1.2.16",
+    "langchain-core>=1.4.7",
+    "langgraph-checkpoint>=4.3.0",
+    "langsmith>=0.8.18",
+    "orjson>=3.11.6",
+    "jsonschema>=4.18.0",
+    "langchain>=1.3.9",
+    "requests>=2.33.0",
+    "urllib3>=2.8.0",
+    "pyyaml>=5.4",
+    "numpy>=1.26",
     # Test-only: the PDF and image fixtures are BUILT, not committed, so the
     # suite needs a writer for formats no extractor produces.
     "reportlab>=4.1.0",
@@ -140,18 +251,12 @@ packages = ["src/convilyn"]
 # (e.g. `pip install --no-binary :all:`) get the user-facing repo surface. The
 # wheel intentionally stays lean — README is bundled in METADATA (rendered on
 # PyPI); LICENSE is picked up via `license-files = ["LICENSE"]` per PEP 639;
-# CHANGELOG ships in the sdist + wheel (see `include` below) — no public GitHub
-# URL exists during the beta. AGENT.md and any docs/internal paths are
-# explicitly excluded — they are agent-operating instructions, not user-facing
-# documentation, and must not ship to PyPI.
+# CHANGELOG ships in the sdist (see `include` below). The files excluded below
+# are for contributors working on the package, not for its users.
 #
-# Supply-chain invariant — SHIPPED == SCANNED: every vocabulary-bearing surface
-# shipped here MUST be covered by the black-box blacklist lint's scan_roots
-# (`sdk/sdks.json` → consumer-python, read by
-# `scripts/ci/sdk_blackbox/lint_blacklist.py`). `examples/` ships AND is scanned
-# (mirrors author-python). The `tests/` suite is neither user-facing nor
-# scanned, so it is NOT shipped — dropping it keeps shipped == scanned and
-# removes unnecessary attack surface from the published artifact.
+# Invariant — SHIPPED == SCANNED: every surface shipped here that carries prose
+# is covered by the repository's vocabulary check, this file included. The
+# `tests/` suite is not user-facing, so it is not shipped.
 include = [
     "src/convilyn",
     "examples",
@@ -165,48 +270,42 @@ exclude = [
     # Whole-subtree exclusion (not the single-level `docs/internal/*`) so a
     # nested internal doc can never leak into the published sdist.
     "docs/internal",
-    # hatchling's sdist otherwise ships a `.gitignore` into the public,
-    # immutable PyPI artifact — leaking internal repo structure, operator
-    # secret-file naming conventions, and PII fixture filenames, and bypassing
-    # the SHIPPED==SCANNED blackbox lint (which has no `.gitignore` scan
-    # suffix). Exclude it explicitly.
+    # hatchling's sdist would otherwise ship the repository's `.gitignore`,
+    # which describes the repository rather than this package, into an
+    # immutable public artifact.
     ".gitignore",
 ]
 
 [tool.pyright]
-# Read by the `typecheck` gate — `uv run --locked pyright src`
-# (scripts/ci/sdk_local_ci.py, #3917) — and by an editor, so both agree.
+# Read by the `typecheck` gate (`uv run --locked pyright src`) and by an
+# editor, so both agree.
 #
 # The mode is PINNED rather than inherited: pyright's default
 # typeCheckingMode has moved before now, so leaving it unstated would make
 # this gate's strictness a property of whichever pyright the lock resolves.
 typeCheckingMode = "standard"
-pythonVersion = "3.10"
+pythonVersion = "3.11"
 include = ["src"]
 
 [tool.ruff]
-target-version = "py310"
+target-version = "py311"
 line-length = 100
 # `.md` is out of scope for BOTH ruff gates, stated here so a manual
-# `ruff format` and the CI gate see the same tree (#3939).
+# `ruff format` and the CI gate see the same tree.
 #
 # ruff 0.16 formats python code fences inside markdown; `ruff check` does NOT
-# scan markdown at all. #3952 excluded `*.md` here rather than decide that
-# silently, because these READMEs ship inside the published package.
+# scan markdown at all. These READMEs ship inside the published package, so
+# whether to format their fences was decided rather than left to a default.
 #
-# **Decided (operator, 2026-08-19, #3953): markdown fences ARE formatted.** The
-# exclusion is gone. Measured on this package before flipping: 3 files change,
-# all of it trailing-comment realignment — the class #3953 warned about
-# (deliberately one-line multi-name imports exploded one-per-line) does not
-# occur here, it was measured on the then-existing `edge-python` and on
-# `author-python`. The SDKs that still carry the exclusion are NOT covered by
-# this decision; each is its owner's call. (`edge-python` was one of them until
-# #5450 removed the edge SDK trees — epic #5446.)
+# **Decided (2026-08-19): markdown fences ARE formatted.** Measured on this
+# package before flipping: 3 files change, all of it trailing-comment
+# realignment. The feared class (deliberately one-line multi-name imports
+# exploded one-per-line) does not occur here.
 #
 # What this buys is narrow, and worth stating so nobody over-reads a green run:
 # consistency, not correctness. A formatter has no opinion on whether a sample
-# CALLS A FUNCTION THAT EXISTS — #3953's own comment measured four real defects
-# in one README that `292 files reformatted` was silent on. The check that
+# CALLS A FUNCTION THAT EXISTS — four real defects were once measured in one
+# README that `292 files reformatted` was silent on. The check that
 # catches those here is `tests/integration/test_examples_syntax.py`, which
 # parses every QUICKSTART python fence and resolves its `from convilyn import`
 # names against the real public surface.
@@ -214,12 +313,20 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP", "B"]
 
+[tool.ruff.lint.per-file-ignores]
+# The offline engine is generated from its upstream source and never edited
+# here. Its enums stay `str, Enum`: `StrEnum` changes what `str(member)`
+# returns, so it is not a change to make in a generated copy. E501 for the same
+# reason: the formatter does not split a string literal, and a long message in
+# the source arrives here as is.
+"src/convilyn/local/_engine/**" = ["UP042", "E501"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 # Coverage is measured AND enforced on every pytest invocation so
 # regressions get caught locally before CI. Threshold is line ≥ 80%
-# (`--cov-fail-under=80`) per `.claude/skills/unit-testing/SKILL.md`.
+# (`--cov-fail-under=80`).
 # Branch coverage is enabled (`--cov-branch`) to surface uncovered
 # conditionals that line coverage hides; the threshold is line-only
 # because branch behaviour varies per Python minor version.

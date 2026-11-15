@@ -13,7 +13,7 @@ uv add convilyn          # or: pip install convilyn
 A single install gives you the Python library *and* the `convilyn`
 binary — no separate package, no extras needed.
 
-> Requires Python 3.10 or later.
+> Requires Python 3.11 or later.
 
 ### Optional extras — offline conversion
 
@@ -1016,6 +1016,10 @@ page. The essentials for SDK callers:
 * **Async API**: use `AsyncConvilyn` if you're inside an event loop;
   every method has an `async` counterpart with the same signature.
   See [`examples/02_async_convert.py`](../examples/02_async_convert.py).
+* **Retrieval over your own documents (provisional)**: `convilyn.rag`, the
+  connectors in `convilyn.providers`, the `[rag]` extra (numpy, for vector
+  search) and `convilyn rag bench` are described in [TOOLS.md](TOOLS.md).
+  Their default values may change in a minor release.
 * **Custom retry policy**: pass `retry_policy=` to the constructor to
   replace the default `ExponentialBackoffRetry`. The Protocol is two
   methods: `should_retry()` and `next_delay()`.

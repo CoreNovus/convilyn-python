@@ -49,9 +49,7 @@ IMAGE_FORMATS: frozenset[str] = frozenset(
         "cr2",
         "dds",
         "dng",
-        "exr",
         "gif",
-        "hdr",
         "heic",
         "ico",
         "jp2",
@@ -113,7 +111,6 @@ IMAGE_FORMAT_ALIASES: dict[str, str] = {
     "pnm": "ppm",
     "rgb": "sgi",
     "rgba": "sgi",
-    "rgbe": "hdr",
     "targa": "tga",
     "tif": "tiff",
 }

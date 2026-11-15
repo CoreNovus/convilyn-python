@@ -15,7 +15,7 @@ reason to spend it here.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -33,8 +33,8 @@ def _job(status: str) -> dict:
         "status": status,
         "progress": 50,
         "fileIds": ["file_a"],
-        "createdAt": datetime.now(timezone.utc).isoformat(),
-        "updatedAt": datetime.now(timezone.utc).isoformat(),
+        "createdAt": datetime.now(UTC).isoformat(),
+        "updatedAt": datetime.now(UTC).isoformat(),
     }
 
 

@@ -142,7 +142,12 @@ def inspect(data: bytes) -> ImageFacts:
         return ImageFacts(dedup_key=hashlib.sha256(data).hexdigest())
 
 
-def to_deliverable(data: bytes, media_type: str) -> tuple[bytes, str]:
+def to_deliverable(
+    data: bytes,
+    media_type: str,
+    *,
+    renderable: frozenset[str] = RENDERABLE_MEDIA_TYPES,
+) -> tuple[bytes, str]:
     """Re-encode an image to PNG when its format is not one a viewer renders.
 
     Documents carry pictures in formats that are perfectly valid and that nothing
@@ -157,7 +162,7 @@ def to_deliverable(data: bytes, media_type: str) -> tuple[bytes, str]:
     PNG rather than JPEG, because these images frequently carry an alpha channel
     and JPEG has nowhere to put it.
     """
-    if media_type in RENDERABLE_MEDIA_TYPES:
+    if media_type in renderable:
         return data, media_type
 
     try:
@@ -172,7 +177,7 @@ def to_deliverable(data: bytes, media_type: str) -> tuple[bytes, str]:
     except Exception as exc:
         logger.warning(
             "could not re-encode a %s image to PNG (%s); delivering the original, "
-            "which may not open in a browser",
+            "which its viewer may not open",
             media_type,
             exc,
         )

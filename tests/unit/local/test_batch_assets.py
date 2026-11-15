@@ -147,3 +147,44 @@ class TestSingleFileLayoutIsUnchanged:
         local.convert(source, to="md")
 
         assert "](assets/img-0001.png)" in (tmp_path / "solo.md").read_text(encoding="utf-8")
+
+
+def _lookalike_png(seed: int) -> bytes:
+    """Different bytes, same normalised 16x16 grid. Low-contrast noise
+    around one grey level collides deterministically."""
+    import random
+
+    from PIL import Image
+
+    rng = random.Random(seed)
+    image = Image.new("RGB", (320, 320))
+    image.putdata([tuple(100 + rng.randint(-12, 12) for _ in range(3)) for _ in range(320 * 320)])
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+class TestLookalikePicturesAreBothWritten:
+    """The writer used to write one file per ``dedup_key``, so the second of two
+    lookalike pictures was linked to the first picture's file."""
+
+    def test_lookalike_pictures_write_two_files(self, tmp_path: Path) -> None:
+        docx = pytest.importorskip("docx", reason="the docx extractor needs python-docx")
+        from convilyn.local._engine.markdown import images as engine_images
+
+        first, second = _lookalike_png(1), _lookalike_png(2)
+        assert first != second
+        assert engine_images.inspect(first).dedup_key == engine_images.inspect(second).dedup_key
+
+        document = docx.Document()
+        for index, data in enumerate((first, second)):
+            picture = tmp_path / f"lookalike-{index}.png"
+            picture.write_bytes(data)
+            document.add_picture(str(picture))
+        source = tmp_path / "lookalikes.docx"
+        document.save(str(source))
+
+        local.convert(source, to="md")
+
+        written = sorted((tmp_path / "assets").iterdir())
+        assert [path.read_bytes() for path in written] == [first, second]

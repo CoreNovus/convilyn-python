@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -62,8 +62,8 @@ def _make_job(
             "pendingSlots": pending_slots or [],
             "filledSlots": filled_slots or {},
             "pendingInterrupts": [],
-            "createdAt": datetime(2026, 5, 20, 12, 0, tzinfo=timezone.utc),
-            "updatedAt": datetime(2026, 5, 20, 12, 0, 1, tzinfo=timezone.utc),
+            "createdAt": datetime(2026, 5, 20, 12, 0, tzinfo=UTC),
+            "updatedAt": datetime(2026, 5, 20, 12, 0, 1, tzinfo=UTC),
         }
     )
 

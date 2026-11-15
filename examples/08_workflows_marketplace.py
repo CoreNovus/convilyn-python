@@ -25,7 +25,7 @@ def main() -> int:
         #    we attach the auth header so a single client instance can
         #    mix anonymous and authenticated calls).
         page = client.workflows.search(tag=None, sort="popular", limit=5)
-        print(f"found {len(page.items)} workflows (cursor={page.cursor!r})")
+        print(f"found {len(page.items)} workflows (next_cursor={page.next_cursor!r})")
         if not page.items:
             print("no public workflows yet; nothing to fork.")
             return 0

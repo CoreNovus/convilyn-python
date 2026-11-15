@@ -5,7 +5,7 @@ title: 'question: '
 labels: ['question', 'needs-triage']
 ---
 
-<!-- Please check https://docs.convilyn.corenovus.com first — many how-to answers live there. -->
+<!-- Please check https://docs.convilyn.com first — many how-to answers live there. -->
 
 ### What are you trying to do
 

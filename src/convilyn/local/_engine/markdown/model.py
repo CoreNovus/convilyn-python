@@ -47,8 +47,10 @@ class ExtractedImage:
     Two entries sharing a ``dedup_key`` are the same picture.
 
     ``asset_name`` is assigned at extraction time and is what ``render`` writes into
-    the link target. Images sharing a ``dedup_key`` share an ``asset_name``, so a
-    logo repeated on forty pages is stored once and linked forty times.
+    the link target. Images with identical bytes share an ``asset_name``, so a logo
+    repeated on forty pages is stored once and linked forty times. Sharing a
+    ``dedup_key`` is not enough: two different pictures can look alike once
+    normalised, and they are still two files.
 
     ``description`` is never filled in by this engine, which does no image analysis.
     It is yours to populate — from your own captioning model, from a manifest, from
@@ -142,5 +144,21 @@ class MarkdownDoc:
         for image in self.images:
             if image.dedup_key not in seen:
                 seen.add(image.dedup_key)
+                out.append(image)
+        return tuple(out)
+
+    @property
+    def unique_assets(self) -> tuple[ExtractedImage, ...]:
+        """One entry per distinct ``asset_name``, first occurrence winning.
+
+        This is the set to iterate when writing the image files a rendered document
+        links to. It is not ``unique_images``: that set merges pictures which only look
+        alike, which is right for describing them and wrong for delivering them.
+        """
+        seen: set[str] = set()
+        out: list[ExtractedImage] = []
+        for image in self.images:
+            if image.asset_name not in seen:
+                seen.add(image.asset_name)
                 out.append(image)
         return tuple(out)

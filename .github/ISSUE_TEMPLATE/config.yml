@@ -1,7 +1,7 @@
 blank_issues_enabled: false
 contact_links:
   - name: 📚 Documentation
-    url: 'https://docs.convilyn.corenovus.com'
+    url: 'https://docs.convilyn.com'
     about: Install, quickstart, and API reference — check here first.
   - name: 🔒 Report a security vulnerability
     url: '../../security/advisories/new'

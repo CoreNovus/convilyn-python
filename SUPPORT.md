@@ -1,6 +1,6 @@
 # Getting help
 
-- **Docs** — <https://docs.convilyn.corenovus.com> is the first stop (install, quickstart, API
+- **Docs** — <https://docs.convilyn.com> is the first stop (install, quickstart, API
   reference, changelog).
 - **Questions / how-do-I** — open a [Question issue](../../issues/new/choose) or
   start a [Discussion](../../discussions) if enabled.
@@ -14,4 +14,4 @@ Please **do not** email individual maintainers for support — using the issue
 tracker keeps answers searchable for the next person.
 
 This is a community mirror maintained on a best-effort basis. For commercial /
-SLA-backed support, contact the Convilyn team via <https://docs.convilyn.corenovus.com>.
+SLA-backed support, contact the Convilyn team via <https://docs.convilyn.com>.

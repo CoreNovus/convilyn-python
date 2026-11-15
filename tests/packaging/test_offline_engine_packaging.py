@@ -33,6 +33,7 @@ _OPTIONAL = (
     "pptx",
     "openpyxl",
     "defusedxml",
+    "numpy",
 )
 
 _HEADER_MARKER = "DO NOT EDIT"

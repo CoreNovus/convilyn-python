@@ -5,7 +5,9 @@ Pattern mirrors gh / stripe / wrangler:
 * 0   — success
 * 1   — usage error (missing arg, bad flag, file not found)
 * 2   — API / transport failure (auth, 4xx, 5xx after retries)
-* 3   — domain failure (e.g. a conversion job finished with status=failed)
+* 3   — domain failure (e.g. a conversion job finished with status=failed,
+        or `rag bench check` found retrieval worse than its pin)
+* 4   — a check could not compare: what it checks changed since its standard
 * 130 — interrupted by SIGINT (POSIX convention)
 
 Kept in a dedicated module so test suites can import the constants
@@ -18,4 +20,5 @@ EXIT_OK = 0
 EXIT_USAGE = 1
 EXIT_API_ERROR = 2
 EXIT_JOB_FAILED = 3
+EXIT_NOT_COMPARABLE = 4
 EXIT_INTERRUPTED = 130

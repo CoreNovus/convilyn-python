@@ -22,6 +22,8 @@ images and the Markdown has nine" is always answerable.
 
 from __future__ import annotations
 
+import hashlib
+
 from convilyn.local._engine.markdown import images as img
 from convilyn.local._engine.markdown.model import ExtractedImage, ImageTriage
 
@@ -32,7 +34,7 @@ class ImageCollector:
     """
 
     def __init__(self) -> None:
-        self._seen: dict[str, str] = {}
+        self._seen: dict[bytes, str] = {}
         self._inspected = 0
         self._decorative = 0
         self._over_cap = 0
@@ -74,10 +76,11 @@ class ImageCollector:
 
         data, media_type = img.to_deliverable(data, media_type)
 
-        name = self._seen.get(facts.dedup_key)
+        identity = hashlib.sha256(data).digest()
+        name = self._seen.get(identity)
         if name is None:
             name = img.asset_name(len(self._seen) + 1, media_type)
-            self._seen[facts.dedup_key] = name
+            self._seen[identity] = name
 
         return ExtractedImage(
             data=data,

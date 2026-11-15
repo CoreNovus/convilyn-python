@@ -10,6 +10,7 @@ from __future__ import annotations
 import importlib
 import json
 import os
+import tomllib
 
 import pytest
 from click.testing import CliRunner
@@ -253,23 +254,17 @@ class TestTheCodexConfigIsMergedNotOverwritten:
 class TestTheConfigStaysParseable:
     """The tests above assert on text. This one asserts on meaning.
 
-    ``tomllib`` is 3.11+, and this package supports 3.10 — so the *installer*
-    cannot use it, but the *test* can, on the interpreters that have it. Skipped
-    below 3.11 rather than dropped: a check that runs on most machines beats no
-    check at all, and it is exactly the check that catches a malformed append.
+    The installer edits the config as text, so parsing the result with
+    ``tomllib`` is the check that catches a malformed append.
     """
 
-    @pytest.fixture
-    def tomllib(self):
-        return pytest.importorskip("tomllib")
-
-    def test_a_fresh_config_parses(self, home, tomllib) -> None:
+    def test_a_fresh_config_parses(self, home) -> None:
         install_codex_mcp(home)
         parsed = tomllib.loads(codex_config(home).read_text(encoding="utf-8"))
         assert parsed["mcp_servers"]["convilyn"]["command"] == server_command()
         assert parsed["mcp_servers"]["convilyn"]["args"] == ["mcp", "serve"]
 
-    def test_a_merged_config_parses_and_keeps_the_neighbour(self, home, tomllib) -> None:
+    def test_a_merged_config_parses_and_keeps_the_neighbour(self, home) -> None:
         config = codex_config(home)
         config.parent.mkdir(parents=True)
         config.write_text(EXISTING, encoding="utf-8")
@@ -281,7 +276,7 @@ class TestTheConfigStaysParseable:
         assert parsed["mcp_servers"]["convilyn"]["args"] == ["mcp", "serve"]
         assert parsed["tui"]["theme"] == "dark"
 
-    def test_no_credential_is_written_into_the_config(self, home, tomllib) -> None:
+    def test_no_credential_is_written_into_the_config(self, home) -> None:
         """``convilyn setup`` owns the key. A config file is a worse place for a
         secret: it gets copied between machines and pasted into bug reports."""
         install_codex_mcp(home)
@@ -566,7 +561,6 @@ class TestTheRegisteredCommandCanActuallyBeSpawned:
     def test_a_windows_path_does_not_break_the_toml(self, home, monkeypatch) -> None:
         """A basic TOML string would read ``\\U`` in ``C:\\Users`` as a unicode
         escape and the file would not parse. Hence a literal string."""
-        tomllib = pytest.importorskip("tomllib")
         monkeypatch.setattr(
             install_module, "server_command", lambda: r"C:\Users\USER\.local\bin\convilyn.exe"
         )

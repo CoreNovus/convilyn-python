@@ -80,6 +80,24 @@ def apply_pillow_limit() -> None:
     from PIL import Image
 
     Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
+    disable_pillow_ghostscript()
+
+
+def disable_pillow_ghostscript() -> None:
+    """Tell Pillow there is no Ghostscript, so it never starts one.
+
+    Pillow opens an EPS file by running the `gs` program, and it picks that path
+    from the file's content, not its name — so any input could start an external
+    process with your full environment. This engine does not read EPS, so turning
+    the path off costs nothing: such an image fails to load with Pillow's usual
+    "Unable to locate Ghostscript" error, and no process is started even if a `gs`
+    is installed on your machine. Image conversion sets it through
+    `apply_pillow_limit`, and document conversion sets it before decoding any
+    embedded image.
+    """
+    from PIL import EpsImagePlugin
+
+    EpsImagePlugin.gs_binary = False
 
 
 def normalise_mode(img: Any, target_format: ImageFormat) -> tuple[Any, list[str]]:
@@ -256,6 +274,7 @@ __all__ = [
     "ImageTooLargeError",
     "apply_pillow_limit",
     "assert_within_pixel_budget",
+    "disable_pillow_ghostscript",
     "normalise_mode",
     "resize",
     "save",

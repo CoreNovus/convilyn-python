@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import inspect
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -47,7 +47,7 @@ def _file(file_id: str = "file_abc") -> File:
         fileName="report.pdf",
         fileSize=11,
         mimeType="application/pdf",
-        createdAt=datetime.now(timezone.utc),
+        createdAt=datetime.now(UTC),
     )
 
 

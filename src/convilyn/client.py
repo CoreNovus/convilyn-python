@@ -8,13 +8,8 @@ accessor: ``client.files``, ``client.convert``, ``client.goals``,
 
 from __future__ import annotations
 
-import sys
 from types import TracebackType
-
-if sys.version_info >= (3, 11):
-    from typing import Self
-else:
-    from typing_extensions import Self
+from typing import Self
 
 from convilyn._internal.auth import AuthStrategy, resolve_auth
 from convilyn._internal.http import DEFAULT_TIMEOUT, HTTPClient, resolve_base_url

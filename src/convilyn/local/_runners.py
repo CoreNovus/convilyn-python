@@ -83,8 +83,8 @@ def _extract_csv_capped(source: Path, max_rows: int) -> MarkdownDoc:
 #: which is generated rather than written — and regenerating it today also adds an
 #: HTML route whose extractor is not part of this tree, which ``_native_sources``
 #: would then advertise and every caller of it would hit ``ModuleNotFoundError``.
-#: Once that extractor ships, this table folds back into the registry and ``api``
-#: keeps reading its keys.
+#: The offline engine does not read HTML, permanently: that route stays
+#: cloud-only, so this table stays outside the registry.
 ROW_CAPPED_EXTRACTORS: dict[DocumentFormat, Callable[[Path, int], MarkdownDoc]] = {
     DocumentFormat.CSV: _extract_csv_capped,
 }
@@ -115,7 +115,14 @@ def run_document(
     because ``api._convert_one`` refuses it for every other one — so the lookup
     below cannot miss, and a source that reached here uncapped genuinely has no
     rows to cap.
+
+    Embedded images are decoded with Pillow, which picks its EPS plugin by
+    content and would start a ``gs`` process for one; the Ghostscript guard is
+    set first, as the image path does through ``apply_pillow_limit``.
     """
+    from convilyn.local._engine.image import convert_core
+
+    convert_core.disable_pillow_ghostscript()
     source_format = DocumentFormat(route.source_format)
     extractor = extractor_for(source_format)
     if max_rows is not None:
@@ -135,7 +142,7 @@ def run_document(
     output.write_text(render(doc), encoding="utf-8", newline="\n")
 
     assets = output.parent / ASSET_DIR
-    for image in doc.unique_images:
+    for image in doc.unique_assets:
         destination = assets / image.asset_name
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(image.data)

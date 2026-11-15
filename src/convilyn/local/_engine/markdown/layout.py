@@ -32,6 +32,8 @@ from typing import Any, TypeVar
 
 MIN_COLUMN_GAP_RATIO = 0.8
 
+WORD_GAP_RATIO = 0.12
+
 MIN_BAND_GAP_RATIO = 1.2
 
 MIN_COLUMN_WIDTH_RATIO = 2.0

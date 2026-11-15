@@ -36,18 +36,74 @@ The public, semver-covered surface of this package is:
    `convilyn.local`, not through `convilyn.__all__`, so clause 1 does not
    describe it. `tests/contract/test_local_surface.py` freezes it.
 
+   **`convilyn.local` does not read HTML.** `capabilities()` lists no HTML
+   route, and `convert()` on an HTML file raises `UnsupportedRouteError`.
+   Convert HTML through the cloud API (`client.convert`). This is a decided
+   limit, not a gap awaiting a fix: Convilyn's HTML reader wraps a
+   GPL-licensed library, which this Apache-2.0 package does not import.
+
    **The names of the optional extras are covered; their contents are not.**
    `convilyn[pdf]` will keep meaning "PDF support" — but which distributions
    provide it may change in a minor release, because that is a packaging
    decision rather than an API. Depend on the extra, never on what it installs.
    `convilyn.local._engine` is likewise **not** public: it is generated from
    Convilyn's server-side engine and regenerated whenever that changes.
+   **1c. Agent tool namespaces** — toolkits for building agents, each reached
+   as its own namespace. Today those are `convilyn.rag` (the retrieval
+   toolkit, with `convilyn.rag.bench`), `convilyn.providers` and
+   `convilyn.graphs`; [TOOLS.md](TOOLS.md) describes the shape they share.
+   Every name in a tool namespace's `__all__` is covered, and a contract test
+   per namespace freezes it (`tests/contract/test_*_surface.py`).
+
+   A tool namespace starts out **provisional**, and that word has one precise
+   meaning here:
+
+   | | While provisional | Once stable |
+   |---|---|---|
+   | Names, signatures, model fields | covered — a change is **major** | covered — a change is **major** |
+   | Default **values** (sizes, weights, thresholds, built-in estimates) | may change in a **minor** | a change is **major** |
+
+   So upgrading a minor release never breaks code that calls a provisional
+   namespace. What it may change is the result of calling it with the defaults —
+   the same document can be split into different passages. Such a change is
+   always listed under `Changed` in the CHANGELOG, with the old value and how to
+   keep it by passing it explicitly.
+
+   The reason is that a default worth keeping has to be measured, and only some
+   are measured yet. Each default records where it came from — measured by us,
+   taken from a published source, or derived from one of those — and a derived
+   value is expected to move once it is measured. A namespace stops being
+   provisional in the release whose notes say so; this table is then no longer
+   needed for it.
+
+   **Currently provisional:** `convilyn.rag`, `convilyn.providers`, `convilyn.graphs`.
+
+   Clause 3 does not apply to `convilyn.rag`, which reads no credential and
+   opens no network connection of its own: with `embed=` or `rerank=`, a
+   corpus calls the objects you passed, and only they reach a service. A
+   corpus opened from a settings file (`rag.open("rag.toml")`) builds those
+   objects from `convilyn.providers` itself, so opening one reads the key
+   from the environment variable the provider names and sends text to the
+   service the file names, as below. The file never holds a key, and one
+   that names a credential is refused; it is trusted like code, since it
+   chooses where that key goes and which files are opened.
+   `convilyn.rag.bench` calls only the `retrieve` you pass and sends nothing
+   anywhere itself.
+   `convilyn.providers` does both, but never
+   Convilyn's: it reads the key of the service you name, from the argument or
+   the environment variable that service's row states, and sends your text to
+   that service only. `convilyn.graphs` reads no credential and opens no
+   connection of its own: a graph calls only the functions you built it with.
 2. **The `convilyn` CLI** — command names, documented flags, the
    `--json` output shape, and the exit codes (`0` ok, `1` usage,
-   `2` API error, `3` job failed, `130` interrupted). This includes the
-   `convilyn local` group (`convert`, `batch`, `formats`, `doctor`, and the
-   `pdf` sub-group), `convilyn setup`, `convilyn mcp serve`, and
-   `convilyn agent install`.
+   `2` API error, `3` job failed, `4` not comparable, `130` interrupted).
+   This includes the `convilyn local` group (`convert`, `batch`, `formats`,
+   `doctor`, and the `pdf` sub-group), `convilyn setup`, `convilyn mcp serve`,
+   and `convilyn agent install`. The `convilyn rag` group (`rag bench demo`,
+   `run`, `compare`, `pin` and `check`), its exit code `4`, and the files it
+   reads and writes (`rag.toml`, question files, reports, pins) are
+   **provisional** on the terms of clause 1c, with the `convilyn.rag`
+   namespace.
 
    **What `agent install` writes is part of the contract, not an
    implementation detail.** A destination is a path on the user's machine that

@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 import mimetypes
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any, cast
 
@@ -29,16 +29,6 @@ from convilyn._internal.loop_runner import CoroRunner
 from convilyn.types import File, FileList
 
 DEFAULT_CONTENT_TYPE = "application/octet-stream"
-
-# Upload cap (500 MiB). The body is read into memory to send a
-# length-bearing request; a larger input raises rather than risking OOM.
-MAX_UPLOAD_BYTES = 500 * 1024 * 1024
-
-
-def _require_within_upload_cap(size: int) -> None:
-    """Raise ``ValueError`` when *size* exceeds :data:`MAX_UPLOAD_BYTES`."""
-    if size > MAX_UPLOAD_BYTES:
-        raise ValueError(f"File is {size} bytes, over the {MAX_UPLOAD_BYTES}-byte upload cap.")
 
 
 class AsyncFiles:
@@ -65,11 +55,17 @@ class AsyncFiles:
     ) -> File:
         """Upload a file and return its :class:`File` record.
 
-        Exactly one of ``path`` or ``content`` must be supplied. The file
-        is read into memory to send a length-bearing body (the storage
-        upload requires a known Content-Length), so uploads are capped at
-        :data:`MAX_UPLOAD_BYTES`; a larger input raises ``ValueError``
-        rather than risking an out-of-memory condition.
+        Exactly one of ``path`` or ``content`` must be supplied.
+
+        The size limit is your plan's, and the platform applies it: the size
+        is sent first, and a file over the limit is refused with HTTP 413
+        before it is read. With an API key on your account, the refusal's
+        message names your plan's limit and the plan that would accept the
+        file.
+
+        The whole file is held in memory while it uploads, because the
+        storage upload needs a known Content-Length. Memory use therefore
+        equals the file size, up to your plan's limit.
 
         Args:
             path: Filesystem path to the file to upload.
@@ -86,8 +82,11 @@ class AsyncFiles:
 
         Raises:
             TypeError: neither ``path`` nor ``content`` was supplied.
-            ValueError: the file exceeds :data:`MAX_UPLOAD_BYTES`.
-            convilyn.AuthError / APIError: presign or confirm failed.
+            ValueError: the file at ``path`` changed size while it was
+                being uploaded.
+            convilyn.APIError: presign or confirm failed; ``status_code``
+                413 when the file is over your plan's upload limit.
+            convilyn.AuthError: the API key was refused.
             convilyn.S3UploadError: the upload step failed.
         """
         if path is None and content is None:
@@ -99,23 +98,30 @@ class AsyncFiles:
 
         if path is not None:
             file_path = Path(os.fspath(path))
-            # The storage upload needs a known Content-Length, so the body
-            # is sent whole rather than chunked. Check the size before
-            # reading it into memory so an oversized file fails fast.
             size = file_path.stat().st_size
-            _require_within_upload_cap(size)
-            data = file_path.read_bytes()
+
+            def read_file() -> bytes:
+                # A bytes body, not a stream: the storage upload needs a known
+                # Content-Length, and a chunked body is rejected. At most one
+                # byte past the declared size is read, so a file that grew (or
+                # was swapped) after the size check is never loaded whole.
+                with file_path.open("rb") as handle:
+                    data = handle.read(size + 1)
+                if len(data) != size:
+                    raise ValueError(f"{resolved_filename} changed size while uploading.")
+                return data
+
             return await self._upload_with_body(
-                body=data,
+                read_body=read_file,
                 filename=resolved_filename,
-                size=len(data),
+                size=size,
                 content_type=resolved_content_type,
             )
 
         assert content is not None  # narrow for the type checker
-        _require_within_upload_cap(len(content))
+        in_memory = content
         return await self._upload_with_body(
-            body=content,
+            read_body=lambda: in_memory,
             filename=resolved_filename,
             size=len(content),
             content_type=resolved_content_type,
@@ -150,18 +156,22 @@ class AsyncFiles:
     async def _upload_with_body(
         self,
         *,
-        body: bytes | AsyncIterator[bytes],
+        read_body: Callable[[], bytes],
         filename: str,
         size: int,
         content_type: str,
     ) -> File:
-        """Run the 3-step upload protocol against a resolved body.
+        """Run the 3-step upload protocol, reading the body only after presign.
+
+        The platform checks ``size`` against the caller's plan at presign, so
+        a file over the limit is refused before ``read_body`` loads it.
 
         Split out so future subclasses can replace the storage step
         (multipart, progress, accelerated endpoints) without rewriting
         the orchestration or the confirm step.
         """
         presign = await self._presign(filename=filename, size=size, content_type=content_type)
+        body = read_body()
         await self._upload_to_storage(
             upload_url=presign["uploadUrl"],
             fields=presign["fields"],

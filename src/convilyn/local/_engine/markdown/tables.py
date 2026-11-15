@@ -20,6 +20,7 @@ from typing import Any
 
 from convilyn.local._engine.markdown.layout import (
     MIN_COLUMN_GAP_RATIO,
+    WORD_GAP_RATIO,
     background_runs,
     median_height,
 )
@@ -27,7 +28,18 @@ from convilyn.local._engine.markdown.model import Block
 
 logger = logging.getLogger(__name__)
 
-_TEXT_STRATEGY = {"vertical_strategy": "text", "horizontal_strategy": "text"}
+_MIN_BAND_LINES = 3
+
+_LINE_TOLERANCE = 2.0
+
+_MIN_LEADER_RUN = 4
+
+_MAX_VALUE_WORDS = 2
+
+_MAX_BANDS_PER_PAGE = 16
+
+_VALUE_CELL_SHARE = 2 / 3
+_VALUE_COLUMN_FILL = 1 / 2
 
 MIN_TABLE_ROWS = 2
 MIN_TABLE_COLUMNS = 2
@@ -103,7 +115,7 @@ def _is_tabular(row: list[str | None]) -> bool:
 
 
 def _trim_to_tabular_rows(table: Any) -> tuple[tuple, list[list[str | None]]] | None:
-    rows = table.extract()
+    rows = table.extract(x_tolerance_ratio=WORD_GAP_RATIO)
     tabular = [i for i, row in enumerate(rows) if _is_tabular(row)]
     if not tabular:
         return None
@@ -144,20 +156,39 @@ def detect_tables(page: Any) -> list[tuple[tuple, Block]]:
     try:
         return _detect(page)
     except Exception as exc:
-        logger.debug("pdf table extraction failed on a page (%s)", exc)
+        logger.debug("pdf table extraction failed on a page (%s)", type(exc).__name__)
         return []
 
 
 def _detect(page: Any) -> list[tuple[tuple, Block]]:
-    drawn = list(page.find_tables())
-    ruled = [(t.bbox, block) for t in drawn if (block := table_block(t.extract()))]
-    if ruled:
-        return ruled
+    ruled = [
+        (t.bbox, block)
+        for t in page.find_tables()
+        if (block := table_block(t.extract(x_tolerance_ratio=WORD_GAP_RATIO)))
+    ]
 
-    words = page.extract_words()
+    words = page.extract_words(x_tolerance_ratio=WORD_GAP_RATIO)
     page_words = {word["text"] for word in words}
+    loose = [w for w in words if not in_any_box(w, [bbox for bbox, _ in ruled])]
+    glyphs = page.filter(lambda obj: obj.get("object_type") == "char")
+    found = list(ruled)
+    for band in _table_bands(loose)[:_MAX_BANDS_PER_PAGE]:
+        try:
+            found += _band_tables(glyphs, band, loose, page_words)
+        except Exception as exc:
+            logger.warning("pdf borderless table pass failed on a band (%s)", type(exc).__name__)
+    return found
+
+
+def _band_tables(
+    glyphs: Any, band: tuple[float, float, float, float], loose: list[dict], page_words: set[str]
+) -> list[tuple[tuple, Block]]:
+    region = _without_leaders(glyphs.crop(_clamp(band, glyphs)))
+    settings = _band_settings(region.extract_words(x_tolerance_ratio=WORD_GAP_RATIO))
+    if settings is None:
+        return []
     found: list[tuple[tuple, Block]] = []
-    for candidate in page.find_tables(table_settings=_TEXT_STRATEGY):
+    for candidate in region.find_tables(table_settings=settings):
         trimmed = _trim_to_tabular_rows(candidate)
         if trimmed is None:
             continue
@@ -165,10 +196,109 @@ def _detect(page: Any) -> list[tuple[tuple, Block]]:
         if _splits_a_word(rows, page_words):
             continue
         in_span = [
-            w for w in words if bbox[1] <= (float(w["top"]) + float(w["bottom"])) / 2 <= bbox[3]
+            w for w in loose if bbox[1] <= (float(w["top"]) + float(w["bottom"])) / 2 <= bbox[3]
         ]
         if not _has_real_gutters(in_span, max(len(row) for row in rows)):
+            continue
+        if not _has_a_value_column(rows):
             continue
         if (block := table_block(rows)) is not None:
             found.append((bbox, block))
     return found
+
+
+def _has_a_value_column(rows: list[list[str | None]]) -> bool:
+    columns = max(len(row) for row in rows)
+    for index in range(columns):
+        filled = [
+            cell.split() for row in rows if index < len(row) and (cell := row[index] or "").strip()
+        ]
+        if len(filled) < _VALUE_COLUMN_FILL * len(rows):
+            continue
+        short = sum(1 for words in filled if len(words) <= _MAX_VALUE_WORDS)
+        if short >= _VALUE_CELL_SHARE * len(filled):
+            return True
+    return False
+
+
+def _lines(words: list[dict]) -> list[list[dict]]:
+    lines: list[list[dict]] = []
+    for word in sorted(words, key=lambda w: w["top"]):
+        if lines and word["top"] - lines[-1][0]["top"] <= _LINE_TOLERANCE:
+            lines[-1].append(word)
+        else:
+            lines.append([word])
+    return [sorted(line, key=lambda w: w["x0"]) for line in lines]
+
+
+def _holds_a_gutter(line: list[dict], gap: float) -> bool:
+    return any(right["x0"] - left["x1"] > gap for left, right in zip(line, line[1:], strict=False))
+
+
+def _table_bands(words: list[dict]) -> list[tuple[float, float, float, float]]:
+    if not words:
+        return []
+    gap = MIN_COLUMN_GAP_RATIO * median_height(words)
+    runs: list[list[list[dict]]] = [[]]
+    for line in _lines(words):
+        if _holds_a_gutter(line, gap):
+            runs[-1].append(line)
+        elif runs[-1]:
+            runs.append([])
+    return [_bbox([w for line in run for w in line]) for run in runs if len(run) >= _MIN_BAND_LINES]
+
+
+def _bbox(words: list[dict]) -> tuple[float, float, float, float]:
+    return (
+        min(float(w["x0"]) for w in words),
+        min(float(w["top"]) for w in words),
+        max(float(w["x1"]) for w in words),
+        max(float(w["bottom"]) for w in words),
+    )
+
+
+def _clamp(bbox: tuple[float, float, float, float], page: Any) -> tuple[float, ...]:
+    x0, top, x1, bottom = bbox
+    left, upper, right, lower = page.bbox
+    return (max(left, x0 - 1), max(upper, top - 1), min(right, x1 + 1), min(lower, bottom + 1))
+
+
+def _without_leaders(region: Any) -> Any:
+    leaders: set[tuple[float, float]] = set()
+    for line in _lines(region.chars):
+        run: list[dict] = []
+        for char in [*line, None]:
+            if char is not None and char["text"] == ".":
+                run.append(char)
+                continue
+            if char is not None and char["text"].isspace():
+                continue
+            if len(run) >= _MIN_LEADER_RUN:
+                leaders.update((c["x0"], c["top"]) for c in run)
+            run = []
+    if not leaders:
+        return region
+    return region.filter(
+        lambda obj: not (obj.get("object_type") == "char" and (obj["x0"], obj["top"]) in leaders)
+    )
+
+
+def _band_settings(words: list[dict]) -> dict[str, Any] | None:
+    if not words:
+        return None
+    unit = median_height(words)
+    low = min(float(w["x0"]) for w in words)
+    high = max(float(w["x1"]) for w in words)
+    channels = [
+        (start, end)
+        for start, end in background_runs(words, "x0", "x1")
+        if end - start >= MIN_COLUMN_GAP_RATIO * unit
+    ]
+    if not channels:
+        return None
+    edges = [low - 0.5, *((start + end) / 2 for start, end in channels), high + 0.5]
+    return {
+        "vertical_strategy": "explicit",
+        "explicit_vertical_lines": edges,
+        "horizontal_strategy": "text",
+    }

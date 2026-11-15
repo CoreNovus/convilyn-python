@@ -73,6 +73,7 @@ from convilyn.local._engine.markdown.heuristics import (
 from convilyn.local._engine.markdown.image_collector import ImageCollector
 from convilyn.local._engine.markdown.images import media_type_for
 from convilyn.local._engine.markdown.layout import (
+    WORD_GAP_RATIO,
     furniture_indices,
     median_height,
     order_regions,
@@ -122,6 +123,15 @@ def _join(left: str, right: str) -> str:
     return f"{left} {right}"
 
 
+def _join_row(texts: list[str]) -> str:
+    out = ""
+    for text in texts:
+        if out and text and not (has_cjk(out[-1]) and has_cjk(text[0])):
+            out += " "
+        out += text
+    return out
+
+
 def _continues(previous: tuple[str, float, bool], size: float, body: float) -> bool:
     text, previous_size, _ = previous
     if not text:
@@ -150,7 +160,7 @@ def _lines_from_words(words: list[dict]) -> list[tuple[str, float, float]]:
     lines: list[tuple[str, float, float]] = []
     for row in _cluster_rows(words):
         ordered = sorted(row, key=lambda w: w["x0"])
-        text = " ".join(w["text"] for w in ordered).strip()
+        text = _join_row([w["text"] for w in ordered]).strip()
         if not text:
             continue
         sizes = sorted(float(w.get("size") or 0.0) for w in ordered)
@@ -290,7 +300,7 @@ def _read_page(
     tables = detect_tables(page)
 
     try:
-        words = page.extract_words(extra_attrs=["size"])
+        words = page.extract_words(extra_attrs=["size"], x_tolerance_ratio=WORD_GAP_RATIO)
     except Exception as exc:
         logger.debug("pdf word extraction failed on a page (%s)", exc)
         words = []
@@ -422,7 +432,7 @@ def extract(path: Path) -> MarkdownDoc:
         for region in regions:
             blocks.extend(_region_blocks(region, body, styled, min_ratio=min_ratio))
 
-    if not blocks:
+    if all(block.kind in ("image", "page_break") for block in blocks):
         warnings.append("no text layer found — this PDF is probably a scan")
 
     warnings.append("best_effort: PDF carries no structure; headings inferred from font size")

@@ -123,11 +123,11 @@ def _collect_checks(*, ping: bool) -> list[Check]:
 
 def _check_python() -> Check:
     major, minor = sys.version_info[:2]
-    if major < 3 or (major == 3 and minor < 10):
+    if major < 3 or (major == 3 and minor < 11):
         return Check(
             "Python",
             "FAIL",
-            f"need ≥ 3.10, got {platform.python_version()}",
+            f"need ≥ 3.11, got {platform.python_version()}",
         )
     return Check("Python", "OK", platform.python_version())
 

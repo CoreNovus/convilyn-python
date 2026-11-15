@@ -131,6 +131,10 @@ flattened. Read that field before assuming a hosted conversion is lossless.
 Legacy Office (`.doc`, `.xls`, `.ppt`), OpenDocument and ebook formats work too
 when LibreOffice or Calibre is on your `PATH`; `doctor` names the one you need.
 
+**HTML is not read offline.** `convilyn local convert page.html` refuses rather
+than guessing; convert HTML through the cloud API (`convilyn convert`, or
+`client.convert` in Python).
+
 **Video and audio** — `.mov`, `.mp4`, `.webm`, `.avi`, `.mkv` and `.mp3`,
 `.wav`, `.ogg`, `.m4a`, `.flac` — convert into one another, and a video converts
 into an audio file, when **FFmpeg** is on your `PATH`:
@@ -248,6 +252,14 @@ failure: `InsufficientCreditsError` (your balance cannot fund this run — it
 carries `shortfall_credits`), `QuotaExceededError` (an allowance is spent),
 `PlanRequiredError` and `FreeTierBlockedError` (this needs a different plan).
 Check first with `client.account`.
+
+## Retrieval toolkit (provisional)
+
+`convilyn.rag` searches your own documents, `convilyn.providers` connects it to
+embedding and reranking services, and `convilyn rag bench` measures retrieval on
+your own questions. Vector search needs `pip install "convilyn[rag]"`. All three
+are provisional (their default values may change in a minor release); see
+[TOOLS.md](https://github.com/CoreNovus/convilyn-python/blob/main/docs/TOOLS.md).
 
 ## Known limits
 

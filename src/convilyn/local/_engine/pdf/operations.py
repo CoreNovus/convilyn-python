@@ -2,7 +2,7 @@
 # Regenerate rather than patch; hand edits are rejected by the drift gate.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Page-level PDF operations: select, merge, rotate, compress, encrypt, burst.
+"""Page-level PDF operations: select, merge, rotate, compress, encrypt, burst, split_groups.
 
 Pure and synchronous. Every function reads local paths and writes to a path the
 caller chose, so nothing here performs network access, holds state, or knows
@@ -23,7 +23,8 @@ operation, and neither is silently attempted.
 from __future__ import annotations
 
 import io
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from itertools import pairwise
 from pathlib import Path
 
 from pypdf import PdfReader, PdfWriter
@@ -38,31 +39,99 @@ class PdfOperationError(Exception):
     """
 
 
-def parse_pages(spec: str) -> list[int]:
-    """Turn a page-range string such as `"1-3,5,7-9"` into 0-based page indices.
+MAX_PAGE_NUMBER = 100_000
+MAX_RANGE_PARTS = 10_000
+MAX_SPLIT_GROUPS = 10_000
+
+PageRange = tuple[int, int]
+
+
+def parse_page_ranges(spec: str) -> list[PageRange]:
+    """Read a page-range string such as `"1-3,5,7-9"` as a list of inclusive, 1-based
+    `(first, last)` runs, in the order given.
 
     Accepts single pages, inclusive ranges, and comma-separated combinations of
-    both. Whitespace around a part is ignored.
+    both. Whitespace around a part is ignored. Ranges stay runs — `"1-99999"` costs
+    what `"1-2"` does.
 
     Raises `ValueError` on a malformed part rather than skipping it: a typo in a
     page range that silently converts the wrong pages is worse than being told
-    about it.
+    about it. A page may be named once — `"1-5,3"` is refused — so no operation can
+    write more pages than the document has.
     """
     if not spec or not spec.strip():
         raise ValueError("Empty page range")
 
-    indices: list[int] = []
-    for raw in spec.split(","):
+    parts = spec.split(",")
+    if len(parts) > MAX_RANGE_PARTS:
+        raise ValueError(f"Too many page ranges — at most {MAX_RANGE_PARTS}")
+
+    ranges: list[PageRange] = []
+    for raw in parts:
         part = raw.strip()
         if "-" in part:
             start_text, end_text = part.split("-", 1)
             start, end = _page_number(start_text, part), _page_number(end_text, part)
             if end < start:
                 raise ValueError(f"Invalid range: {part!r} — the end comes before the start")
-            indices.extend(range(start - 1, end))
+            ranges.append((start, end))
         else:
-            indices.append(_page_number(part, part) - 1)
+            page = _page_number(part, part)
+            ranges.append((page, page))
+    _refuse_overlap(ranges, lambda page: f"Page {page} is listed more than once in {spec!r}")
+    return ranges
+
+
+def parse_page_groups(groups: str) -> list[list[PageRange]]:
+    """Read a grouped-split string such as `"1-3|4-8|9"`: one `parse_page_ranges`
+    string per output document, separated by `|`.
+
+    Raises `ValueError` on an empty group, a malformed range, or two groups that
+    share a page — each page can go into one document only.
+    """
+    specs = [part.strip() for part in groups.split("|")]
+    if not any(specs):
+        raise ValueError("Empty page groups")
+    if len(specs) > MAX_SPLIT_GROUPS:
+        raise ValueError(f"Too many page groups — at most {MAX_SPLIT_GROUPS} files per split")
+
+    parsed: list[list[PageRange]] = []
+    for number, spec in enumerate(specs, start=1):
+        if not spec:
+            raise ValueError(f"Group {number} is empty — expected page ranges like 1-3|4-8")
+        parsed.append(parse_page_ranges(spec))
+
+    tagged = [
+        (first, last, number) for number, ranges in enumerate(parsed, 1) for first, last in ranges
+    ]
+    tagged.sort()
+    for (_, prev_last, prev_group), (first, _, group) in pairwise(tagged):
+        if first <= prev_last:
+            a, b = sorted((prev_group, group))
+            raise ValueError(
+                f"Groups {a} and {b} both include page {first} — each page can go into one file only"
+            )
+    return parsed
+
+
+def parse_pages(spec: str, *, page_count: int) -> list[int]:
+    """The 0-based indices of the pages a range string names that exist in a document
+    of `page_count` pages.
+
+    The runs are clamped to the document before they are expanded, so the result is
+    never longer than the document. Raises `ValueError` as `parse_page_ranges` does.
+    """
+    indices: list[int] = []
+    for first, last in parse_page_ranges(spec):
+        indices.extend(range(first - 1, min(last, page_count)))
     return indices
+
+
+def _refuse_overlap(ranges: list[PageRange], message: Callable[[int], str]) -> None:
+    ordered = sorted(ranges)
+    for (_, prev_last), (first, _) in pairwise(ordered):
+        if first <= prev_last:
+            raise ValueError(message(first))
 
 
 def _page_number(text: str, part: str) -> int:
@@ -74,11 +143,14 @@ def _page_number(text: str, part: str) -> int:
         ) from None
     if page < 1:
         raise ValueError(f"Invalid page number {page} in {part!r} — pages are numbered from 1")
+    if page > MAX_PAGE_NUMBER:
+        raise ValueError(f"Invalid page number {page} in {part!r} — at most {MAX_PAGE_NUMBER}")
     return page
 
 
 def _selected(reader: PdfReader, pages: str | None) -> list[int]:
-    return parse_pages(pages) if pages else list(range(len(reader.pages)))
+    count = len(reader.pages)
+    return parse_pages(pages, page_count=count) if pages else list(range(count))
 
 
 def _write(writer: PdfWriter, output: Path) -> Path:
@@ -130,7 +202,7 @@ def rotate(source: Path, output: Path, *, degrees: int = 90, pages: str | None =
         raise PdfOperationError(f"Rotation must be a multiple of 90 degrees, got {degrees}")
 
     reader = PdfReader(source)
-    chosen = set(parse_pages(pages)) if pages else None
+    chosen = set(parse_pages(pages, page_count=len(reader.pages))) if pages else None
 
     writer = PdfWriter()
     for index, page in enumerate(reader.pages):
@@ -214,6 +286,38 @@ def burst(source: Path, *, pages: str | None = None) -> list[tuple[str, bytes]]:
     return produced
 
 
+def split_groups(source: Path, *, groups: str) -> list[tuple[str, bytes]]:
+    """Split a document into one PDF per group of pages.
+
+    `groups` is page ranges separated by `|`, read by `parse_page_groups`:
+    `"1-3|4-8|9-12"` produces three documents. "Every N pages" and "split after
+    page N" are the same operation with the groups worked out by the caller.
+
+    Returns `(filename, bytes)` pairs, as `burst` does. Pages past the end of the
+    document are ignored; a group with no page in the document raises an error that
+    names the group, rather than quietly producing one file fewer. Groups may not
+    share a page, so the documents together never hold more pages than the source.
+    """
+    specs = [part.strip() for part in groups.split("|")]
+    parse_page_groups(groups)
+
+    reader = PdfReader(source)
+    count = len(reader.pages)
+    produced: list[tuple[str, bytes]] = []
+    for number, spec in enumerate(specs, start=1):
+        writer = PdfWriter()
+        for index in parse_pages(spec, page_count=count):
+            writer.add_page(reader.pages[index])
+        if not writer.pages:
+            raise PdfOperationError(f"Group {number} ({spec}) has no page in this document")
+        buffer = io.BytesIO()
+        writer.write(buffer)
+        produced.append(
+            (f"part_{number:02d}_pages_{spec.replace(',', '_')}.pdf", buffer.getvalue())
+        )
+    return produced
+
+
 def extract_text(source: Path, *, pages: str | None = None) -> str:
     """Read the text layer, joined with a blank line between pages.
 
@@ -246,7 +350,10 @@ __all__ = [
     "extract_text",
     "merge",
     "page_count",
+    "parse_page_groups",
+    "parse_page_ranges",
     "parse_pages",
     "rotate",
     "select",
+    "split_groups",
 ]

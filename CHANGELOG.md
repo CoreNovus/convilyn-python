@@ -3,6 +3,313 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+## [5.0.0] - 2026-11-15
+
+This release is a major version. These changes can break code written for
+4.1.0:
+- an oversized upload raises a different exception;
+- `MAX_UPLOAD_BYTES` and `user_workflows.grounded_contract()` are removed;
+- the next-page token on workflow list pages moves to a new attribute;
+- Python 3.10 is no longer supported;
+- `exr`, `hdr` and `rgbe` are no longer conversion formats;
+- the offline PDF tools refuse page ranges that name a page twice;
+- the minimum versions of several dependencies are higher.
+
+Each change is described below.
+
+`convilyn.rag`, `convilyn.providers` and `convilyn.graphs` are new and
+**provisional**, as defined in `docs/STABILITY.md` clause 1c. That covers
+`convilyn.rag.bench`, the `convilyn rag` commands and the files they read
+and write.
+
+### Added
+
+- **`convilyn.rag` — the first piece of a retrieval toolkit, provisional.**
+  `rag.split(markdown, source_id=...)` cuts a Markdown document into passages
+  along its headings, keeping tables, lists and fenced blocks intact and
+  repeating a table's header when a table has to be divided. Each `Passage`
+  carries its heading trail (bounded: 256 characters a heading, 512 the
+  trail; a heading longer than 256 is also kept whole as text) and an
+  identifier that stays the same when the
+  document is split again. `rag.normalize()` is the text fold that indexing and
+  searching will share. Sizes are read in the unit of the length measure you
+  pass (`measure=`). `rag.token_estimator("qwen3" | "xlm_r" | "cl100k")`
+  estimates tokens for a named tokenizer from measured characters-per-token
+  figures, counts whitespace the way those tokenizers were measured to, and
+  with no tokenizer named it counts cautiously so passages fit a
+  model chosen later; no tokenizer is downloaded. Sentence boundaries are
+  recognised for Chinese, Japanese, Korean, and Latin- and Cyrillic-script
+  languages. Splitting runs offline and needs no optional dependency.
+- **`convilyn.providers` — connectors to the model services you already use,
+  provisional.** `providers.embedder(name, model=...)` (and `aembedder` for
+  async code) embeds texts through `"openai"`, `"gemini"`, `"mixroute"` or any
+  `"openai_compatible"` server: it sends as many texts per request as the
+  service takes, retries what is worth retrying, puts the answers back in
+  order, checks them and returns unit-length vectors. `kind="query"` tells a
+  model that embeds queries and documents differently which one it is given.
+  `providers.reranker(name, model=...)` (and `areranker`) orders a shortlist
+  through `"cohere"`, `"mixroute"` or any `"cohere_compatible"` server:
+  `rerank(query, documents, top_n=...)`
+  returns each document's position and score, best first, sends a list longer
+  than one request carries in several and merges them, and refuses an answer
+  that does not score every document exactly once. Each service's limits
+  are data (`providers.available()`), sourced and dated, and can be overridden;
+  unknown models are allowed. Pass your own `httpx` client for a proxy, mutual
+  TLS or request signing. Failures raise `providers.ProviderError` with a
+  `category` and a fixed message that never contains the key, the text sent or
+  the provider's reply. Your text goes only to the service you name, under
+  your key; no model runs locally. No new dependency.
+- **`convilyn.graphs` — ready-made graphs to place inside a LangGraph
+  application, provisional.** Needs `pip install "convilyn[graphs]"`, which is
+  not part of `all`. Each function builds a compiled graph from functions you
+  supply and never chooses a model. `graphs.refine(generate=..., evaluate=...)`
+  drafts, evaluates, and redoes the draft with the feedback until it is accepted
+  or `max_rounds` drafts have been made; the evaluator can be any check, not
+  only a model. `graphs.corrective_rag(retrieve=..., grade=..., rewrite=...,
+  generate=...)` searches, keeps the passages judged relevant, rewords the
+  query and searches again when none are, and then answers, saying whether the
+  answer is grounded; `corpus.search` from `convilyn.rag` fits as `retrieve`.
+  A graph carries no saved-state backend, store or run-time context of its own
+  and uses the host's. Place one three ways: add it as a node,
+  `graphs.as_node(graph, inputs=..., outputs=...)` when your state keys are
+  named differently, or `graphs.as_tool(graph, name=..., description=...)` for
+  an agent. `graphs.available()` lists each graph's inputs and outputs.
+  `examples/12_graphs_in_your_app.py` runs all three with no key and no network.
+- **`graphs.collect(fields=..., extract=...)` — gather required fields over as
+  many turns as it takes.** `fields` maps each name to a JSON Schema, so it can
+  be loaded from a file; `extract(message, schema)` is your structured-output
+  call, asked only for the fields still missing. It reads `message` and
+  `collected` and writes `collected` and `missing`: valid values are only
+  added, never replaced, and a value that does not match its field's schema is
+  not kept, including one that came in `collected`, so an empty `missing`
+  means every field is valid. So that the value a model writes cannot decide
+  how long checking takes, a field's schema is one of a closed set of shapes: a
+  scalar type with its own keywords, `enum` or `const`, an array of one scalar
+  shape with `maxItems`, an object of scalar properties, or `true` (a
+  `pattern` needs a `maxLength` of at most 256). Any other
+  keyword is refused when the graph is built, naming the field and the keyword.
+  A field the shapes cannot express takes `true` and your own
+  `check(field, value)`, which runs on every value, from `extract` or from
+  `collected`. Values are checked within 256 parts, 64 levels and 16,384
+  bytes as JSON.
+  By default the run ends with what is missing, for your reply to ask about,
+  so no saved-state backend is needed; with `interrupt=True` it pauses with
+  `{"missing": [...]}` until resumed with the user's answer.
+- **`graphs.use_case(cases=..., model=..., tools=..., extract=..., route=...)` —
+  serve a message with one of your tasks.** Each `graphs.UseCase` is plain data
+  (description, instructions, required fields in the shapes `graphs.collect`
+  admits, tool names, and
+  how many model and tool calls one run may make). Your `route` function names
+  a use case and the others it considered; an ambiguous message ends with
+  `outcome="clarify"` and the candidates to offer, and a message nothing fits
+  with `"no_match"` for your fallback. Leave `route` out and pass
+  `use_case_id` when your own code or agent chooses. The chosen use case's
+  fields are gathered with `graphs.collect` (and your `check`, passed through),
+  kept per use case; while any is missing the run ends with `"missing"`. Then
+  an agent built with `langchain.agents.create_agent`, holding only that use
+  case's tools, answers within its limits (`"answered"` or
+  `"budget_exhausted"`); your own agent middleware can be added.
+- **`graphs.fanout(branches=..., classify=..., synthesize=...)` — ask several
+  sources at once.** Your `classify` picks the branches a question needs and
+  the text each is given; those branches run at the same time, and your
+  `synthesize` writes the answer from `results`, which lists them in the order
+  `classify` named them. The run config's `max_concurrency` caps how many run
+  at once, and a branch that pauses for an answer resumes without re-running
+  the ones that had finished; LangGraph 1.2.16 is the first release that keeps
+  that promise, so it is the `graphs` extra's minimum.
+- **Which graph to use: `GraphInfo.use_when`.** Every graph states, in one
+  sentence, the situation it is for and what it does about it.
+  `graphs.available()` returns the sentence, each builder's docstring (what an
+  editor shows on hover) states it right after its one-line summary, and the
+  graphs section of the tools guide gathers them in one table beside the graph
+  each is easiest to confuse with.
+- **`graphs.plan_execute(plan=..., execute=..., replan=..., max_steps=...)` —
+  carry out a task by a plan you revise as you go.** Your `plan` turns the task
+  into steps, your `execute` carries out one step at a time, and your `replan`
+  runs after every step and either answers or returns the steps to do next.
+  The three are separate, so a cheaper model, a tool or another graph can carry
+  out each step while a stronger one plans. Each step is a step of the graph,
+  saved by the host's saved-state backend, and a step that pauses resumes
+  without re-running the ones done. `max_steps` (1 to 32) is required; what each
+  function returns is held to the same value limits as `graphs.collect`.
+- **Keyword search over a store: `rag.open()` / `rag.aopen()`.** A `Corpus`
+  (or `AsyncCorpus`) adds Markdown or passages you cut yourself, replaces a
+  document when its `source_id` is added again, and searches with
+  `where=` filters on the labels you attached. `rag.store("sqlite", path=...)`
+  is the default store — a file or memory, nothing to install — and matches
+  Chinese, Japanese and Korean text by two-character pieces, so a query of two
+  or more characters in those scripts finds the text that holds it. `rag.stores()`
+  lists the kinds; implement `rag.Store` to use your own. Run-time failures
+  raise `rag.StoreError` (a `rag.RagError`, a `ConvilynError`), including an
+  index built with other settings, which is refused rather than searched.
+  `Recipe` gains `search` (`SearchOptions`).
+- **One settings file: `rag.open("rag.toml")`.** A corpus is built from a
+  TOML file with `[store]`, `[embed]`, `[rerank]` and `[recipe]` tables; the
+  embedder and reranker it describes come from `convilyn.providers` and are
+  closed with the corpus. The file never holds a key (a setting named like a
+  credential is refused), unknown tables and settings are refused by name,
+  and a table and the same piece passed as an argument is refused. The file
+  is trusted like code: it chooses where the provider's key is sent. The
+  `Recipe` models refuse fields they do not have.
+- **Measuring retrieval: `convilyn.rag.bench`.** `bench.run(retrieve=...,
+  questions=...)` (and `bench.arun`) runs a question set through any
+  retriever, a corpus's `search` or your own, and reports `recall@k`,
+  `mrr@k`, `ndcg@k` and latency per question, on average and per group.
+  Question files are JSONL (`bench.questions`); a passage supports an answer
+  when it comes from the named document and holds half of its excerpt.
+  `Report.check()` / `.require()` take `min_ndcg_at_10=`-style bounds, and a
+  bound that cannot be measured fails rather than passes.
+- **Comparing several settings at once: `bench.compare_variants` and
+  `convilyn rag bench compare`.** Each variant is compared with the first
+  by the paired bootstrap; with more than one comparison, each is made at a
+  Bonferroni-adjusted confidence so the 95% holds for all of them together.
+  The CLI takes several `rag.toml` files (a variant is named by its file's
+  stem) and writes `summary.md` and `report-1.json`, `report-2.json`, ...;
+  `--estimate` counts each variant's embedding and reranking calls from the
+  settings and the question file without opening or sending anything.
+- **Holding retrieval to a standard: `bench.pin` / `bench.check` and
+  `convilyn rag bench pin` / `check`.** A pin keeps a report with the digest
+  of its question set and its documents; a check runs again and says
+  `held` (exit 0), `worse` (exit 3, by the paired bootstrap) or
+  `not_comparable` (exit 4: questions, documents, `k` or `cover` changed, or
+  fewer than 10 questions answered in both runs), never passing on a changed
+  input. `SourceInfo.digest` is the SHA-256 of what was added. The CLI's
+  exit-code table gains 4.
+- **`convilyn rag bench demo` and `convilyn rag bench run`.** The demo
+  evaluates keyword search on six short documents and 23 questions that ship
+  with the package (written for it, in English and Traditional Chinese), with
+  no key, no network and nothing beyond the base package; `run` evaluates the
+  corpus a `rag.toml` opens on your question file. Both write `summary.md`
+  and `report.json`.
+- **Comparing two bench runs: `bench.compare(before, after)`.** A paired
+  bootstrap over the questions both reports answered (10,000 resamples, 95%,
+  fixed seed, standard library only) says `better`, `worse` or
+  `inconclusive`, with the interval it rests on. `Report.to_markdown()` and
+  `Comparison.to_markdown()` give the summary a person reads.
+- **Hybrid search: `rag.open(embed=..., rerank=...)`.** With an embedder, a
+  corpus embeds passages as it adds them (not again for unchanged text) and a
+  search fuses keyword and vector search by `Recipe.fuse`; with a reranker, it
+  reorders the best `SearchOptions.candidates` (new, default 100). A query
+  that cannot be embedded, or a reranker that fails, falls back and is named
+  in the new `SearchResult.skipped`. Embedders and rerankers from
+  `convilyn.providers` plug in as they are, and so does any object of the
+  same shape (`rag.Embedder`, `rag.Reranker`). The index records the model,
+  and `Store` gains `vectors(source_id)`.
+- **Vector search in a store: `Store.dense()`.** Every store now answers a
+  search by vector beside the keyword one, scored by cosine similarity and
+  filtered by the same `where=`. `IndexEntry` carries the `vector`;
+  `IndexIdentity` records the embedding model and vector size, so an index is
+  refused under another model. The SQLite store compares every vector exactly;
+  that needs numpy, from the new `convilyn[rag]` extra, imported only when a
+  vector is searched. Without it, opening a corpus with an embedder over the
+  SQLite store raises `rag.StoreError` naming the extra, before any text is
+  embedded.
+- **`rag.fuse()` and `rag.merge_adjacent()`** — the two steps a hybrid search
+  needs, as plain functions over hits from anywhere. `rag.fuse(*rankings)`
+  merges rankings into one, scaling each to 0–1 (`"min_max"`, the default) or
+  reading ranks only (`"rrf"`), with optional weights; ties resolve the same
+  way on every call. `rag.merge_adjacent(hits)` joins neighbouring passages of
+  one document into one hit. `Recipe` gains `fuse` (`FuseOptions`).
+- **`rag.preset(language, tokenizer=...)` and `rag.languages()`** — passage
+  sizes per language, returned as a `Recipe` that names the estimate they are
+  read with. `rag.preset("zh-Hant")` is the measured configuration; the other
+  ten languages (Simplified Chinese, English, Japanese, Korean, Spanish,
+  French, German, Portuguese, Russian, Indonesian) are converted to the same
+  amount of content and marked `derived`. `SplitOptions` gains `tokenizer` and
+  `language`, and `rag.token_estimator(..., language=...)` counts a named
+  language at its own measured figure instead of its script's densest.
+- **`docs/TOOLS.md` — the shape every agent tool namespace shares**, and where
+  each default records whether it is measured, published or derived.
+  `docs/STABILITY.md` clause 1c defines "provisional" for these namespaces:
+  names and signatures are covered from the first release, default values may
+  change in a minor release with a `Changed` entry.
+
+### Changed
+
+- **Breaking: workflow list pages expose `next_cursor`; `cursor` is gone.**
+  `user_workflows.list()` and `workflows.search()` return a page whose
+  `next_cursor` holds the token for the following page. In earlier releases the
+  page's `cursor` attribute was always `None`, so paging stopped after the first
+  page. Migration: read `page.next_cursor` instead of `page.cursor`; the
+  `cursor=` argument you pass back is unchanged.
+
+- **Breaking: `files.upload()` no longer caps uploads at 500 MiB in the client.**
+  The limit is your plan's, and the platform applies it. The size is sent first,
+  and a file over the limit is refused with `APIError` (`status_code` 413) before
+  it is read into memory. With an API key on your account, its `message` names
+  your plan's limit and the plan that would accept the file. Before, any file
+  over 500 MiB raised `ValueError` without asking the platform, including on
+  plans that accept larger files. Code that caught `ValueError` for an oversized
+  file should catch `APIError` and check `status_code == 413`.
+- The whole file is still held in memory while it uploads, because the storage
+  upload needs a known Content-Length. Memory use equals the file size, up to
+  your plan's limit.
+- A file at `path` that changes size between the size check and the read raises
+  `ValueError` instead of uploading a body that does not match the size it
+  declared. At most one byte past the declared size is read.
+- **Minimum dependency versions are higher, so that the lowest versions this
+  package allows carried no published security advisory when this release was
+  prepared.** This now covers the packages our dependencies bring in, not only
+  the ones we list, and it is checked when this package changes and again
+  before each release. It is a statement
+  about the minimums only: newer releases of a dependency are not capped, and
+  keeping those current is still up to your environment. Installing or upgrading may therefore upgrade these packages
+  in your environment; nothing is capped, and an environment already on current
+  releases is unaffected. If another package of yours pins one of them below
+  the version shown, the two cannot be installed together until that pin moves.
+  - Every install: `httpx>=0.25.2` (was `>=0.25.0`), `pydantic>=2.4.0` (was
+    `>=2.0.0`), and new minimums
+    `anyio>=4.14.2`, `certifi>=2026.10.18`, `idna>=3.15`, `h11>=0.16.0`.
+    `typing-extensions>=4.6.1` is now required on every Python version (before,
+    only below 3.11, as `>=4.7.0`).
+  - `convilyn[pdf]`: `pypdf>=6.21.4` (was `>=6.16.1`), and new minimums
+    `cryptography>=50.0.0`, `Pillow>=13.0.0`.
+  - `convilyn[docx]`: new minimum `lxml>=6.1.0`.
+  - `convilyn[pptx]`: new minimums `lxml>=6.1.0`, `Pillow>=13.0.0`.
+  - `convilyn[images]`: `Pillow>=13.0.0` (was `>=12.2.0`).
+  - `convilyn[mcp]`: `mcp>=2.2.0` (was `>=2.0.0`), and new minimums
+    `cryptography>=50.0.0`, `httpx2>=2.12.0`, `opentelemetry-api>=1.45.2`,
+    `pyjwt>=2.15.0`, `python-multipart>=0.0.31`, `starlette>=1.3.1`.
+  - `convilyn[graphs]` (new extra): LangGraph 1.2.16 or later and its
+    checkpoint package 4.3.0 or later, `langchain-core>=1.4.7`,
+    `langsmith>=0.8.18`, `orjson>=3.11.6`, `jsonschema>=4.18.0`,
+    `langchain>=1.3.9`, and for packages those bring in, `requests>=2.33.0`,
+    `urllib3>=2.8.0`, `pyyaml>=5.4`.
+  - `convilyn[rag]` (new extra): `numpy>=1.26`, needed only for vector search.
+- **Breaking: the offline PDF tools refuse a page named twice.**
+  `convilyn.local.pdf.select`, `rotate`, `burst` and `extract_text`, and the
+  `convilyn local pdf` commands, refuse page ranges that name a page more than
+  once (`"1,1"`, `"1-5,3"`), page numbers above 100,000, and more than 10,000
+  parts. In 4.1.0, `select(pages="1,1")` copied the page twice. Migration:
+  name each page once; to repeat a page, select it in separate calls.
+- **The offline engine reads documents more faithfully.** PDF to Markdown
+  detects tables drawn without borders, decides the spacing of small text by
+  its own font size instead of the page's, and keeps two images that look
+  alike but differ as two files.
+
+### Removed
+
+- **Python 3.10 is no longer supported; the package now requires Python 3.11 or
+  later.** Python 3.10 reached end-of-life in October 2026, and Pillow 13, the
+  first release with the current Pillow security fixes, needs 3.11.
+- **`convilyn.resources.files.MAX_UPLOAD_BYTES`.** The SDK no longer applies a
+  limit of its own.
+- **EXR and HDR are no longer conversion formats.** The platform stopped
+  offering them, so the SDK's format list and `convilyn local formats` no longer
+  include `exr`, `hdr` or the `rgbe` alias.
+- **`user_workflows.grounded_contract()`**, both the async and the sync form.
+  It exported a workflow's grounded contract for an on-device runtime. That
+  placement has been retired, and the platform route the method called was never
+  enabled in any deployment, so every call to it already returned 404.
+
+### Security
+
+- **The offline engine keeps Ghostscript out of image decoding when it converts
+  a document with embedded images**, as it already did for image files, so a
+  crafted image inside a document cannot reach it.
+
 ## [4.1.0] - 2026-09-16
 
 ### Added
@@ -645,8 +952,8 @@ plus the two entries below.
   Only the API key is written to disk. The login tokens are used once to create
   that key and then discarded — they are never saved and never logged.
 
-- **A test results page**:
-  [`docs/MEASURED-2026-08-28.md`](docs/MEASURED-2026-08-28.md), linked from both
+- **A test results page** (measured 2026-08-28; since replaced by
+  [`docs/MEASURED-2026-09-08.md`](docs/MEASURED-2026-09-08.md)), linked from both
   the README and the PyPI page. It reports how well conversion and extraction
   actually score, on named corpora, together with the known limitations. Every
   figure comes from [`doc-eval`](https://github.com/CoreNovus/doc-eval), a

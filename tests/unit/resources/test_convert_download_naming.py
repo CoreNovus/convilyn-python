@@ -17,7 +17,7 @@ and the file-size ratchet's instruction is to extract rather than to grow.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -37,8 +37,8 @@ def _job(*, filename: str, mimetype: str) -> dict:
         "processorType": "document_conversion",
         "sourceFormat": "docx",
         "targetFormat": "md",
-        "createdAt": datetime.now(timezone.utc).isoformat(),
-        "updatedAt": datetime.now(timezone.utc).isoformat(),
+        "createdAt": datetime.now(UTC).isoformat(),
+        "updatedAt": datetime.now(UTC).isoformat(),
         "resultFiles": [
             {
                 "filename": filename,

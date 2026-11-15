@@ -9,7 +9,7 @@ files / convert / resilience suites.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -53,8 +53,8 @@ def completed_job() -> ConvertJob:
                     "url": "https://example.com/output.pdf",
                 }
             ],
-            "createdAt": datetime(2026, 5, 20, 12, 0, tzinfo=timezone.utc),
-            "updatedAt": datetime(2026, 5, 20, 12, 0, 5, tzinfo=timezone.utc),
+            "createdAt": datetime(2026, 5, 20, 12, 0, tzinfo=UTC),
+            "updatedAt": datetime(2026, 5, 20, 12, 0, 5, tzinfo=UTC),
         }
     )
 

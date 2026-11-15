@@ -99,7 +99,8 @@ class TestListLogic:
     async def test_list_returns_typed_page(self, client: AsyncConvilyn) -> None:
         respx.get(f"{API_BASE}/api/v1/user_workflows").mock(
             return_value=httpx.Response(
-                200, json={"items": [_summary_wire("uw_a"), _summary_wire("uw_b")], "cursor": None}
+                200,
+                json={"items": [_summary_wire("uw_a"), _summary_wire("uw_b")], "nextCursor": None},
             )
         )
 
@@ -109,9 +110,20 @@ class TestListLogic:
 
     @pytest.mark.asyncio
     @respx.mock
+    async def test_list_exposes_the_next_page_token(self, client: AsyncConvilyn) -> None:
+        respx.get(f"{API_BASE}/api/v1/user_workflows").mock(
+            return_value=httpx.Response(200, json={"items": [], "nextCursor": "next"}),
+        )
+
+        page = await client.user_workflows.list()
+
+        assert page.next_cursor == "next"
+
+    @pytest.mark.asyncio
+    @respx.mock
     async def test_list_threads_filters(self, client: AsyncConvilyn) -> None:
         route = respx.get(f"{API_BASE}/api/v1/user_workflows").mock(
-            return_value=httpx.Response(200, json={"items": [], "cursor": "next"}),
+            return_value=httpx.Response(200, json={"items": [], "nextCursor": "next"}),
         )
 
         await client.user_workflows.list(visibility="private", limit=5, cursor="prev")
@@ -161,36 +173,6 @@ class TestListLogic:
 
     @pytest.mark.asyncio
     @respx.mock
-    async def test_grounded_contract_returns_raw_wire(self, client: AsyncConvilyn) -> None:
-        wire = {"contract_id": f"user_me.{UW}", "fields": [], "prompt_template": "p"}
-        respx.get(f"{API_BASE}/api/v1/user_workflows/{UW}/grounded-contract").mock(
-            return_value=httpx.Response(200, json=wire)
-        )
-
-        contract = await client.user_workflows.grounded_contract(UW)
-
-        assert contract == wire
-
-    @pytest.mark.asyncio
-    @respx.mock
-    async def test_grounded_contract_threads_binding_and_locale(
-        self, client: AsyncConvilyn
-    ) -> None:
-        route = respx.get(f"{API_BASE}/api/v1/user_workflows/{UW}/grounded-contract").mock(
-            return_value=httpx.Response(200, json={})
-        )
-
-        await client.user_workflows.grounded_contract(
-            UW, model_binding="local-qwen3-4b", locale="ja"
-        )
-
-        assert dict(route.calls[0].request.url.params) == {
-            "model_binding": "local-qwen3-4b",
-            "locale": "ja",
-        }
-
-    @pytest.mark.asyncio
-    @respx.mock
     async def test_runs_returns_typed_rows(self, client: AsyncConvilyn) -> None:
         respx.get(f"{API_BASE}/api/v1/user_workflows/{UW}/runs").mock(
             return_value=httpx.Response(
@@ -222,7 +204,7 @@ class TestBoundary:
     @respx.mock
     async def test_list_without_filters_sends_no_params(self, client: AsyncConvilyn) -> None:
         route = respx.get(f"{API_BASE}/api/v1/user_workflows").mock(
-            return_value=httpx.Response(200, json={"items": [], "cursor": None})
+            return_value=httpx.Response(200, json={"items": [], "nextCursor": None})
         )
 
         await client.user_workflows.list()
@@ -233,12 +215,12 @@ class TestBoundary:
     @respx.mock
     async def test_list_empty_page_has_no_items(self, client: AsyncConvilyn) -> None:
         respx.get(f"{API_BASE}/api/v1/user_workflows").mock(
-            return_value=httpx.Response(200, json={"items": [], "cursor": None})
+            return_value=httpx.Response(200, json={"items": [], "nextCursor": None})
         )
 
         page = await client.user_workflows.list()
 
-        assert (page.items, page.cursor) == ([], None)
+        assert (page.items, page.next_cursor) == ([], None)
 
     @pytest.mark.asyncio
     @respx.mock
@@ -324,7 +306,7 @@ class TestObjectState:
         import convilyn
 
         respx.get(f"{API_BASE}/api/v1/user_workflows").mock(
-            return_value=httpx.Response(200, json={"items": [_summary_wire()], "cursor": None})
+            return_value=httpx.Response(200, json={"items": [_summary_wire()], "nextCursor": None})
         )
         respx.get(f"{API_BASE}/api/v1/user_workflows/{UW}").mock(
             return_value=httpx.Response(200, json=_detail_wire())
@@ -355,24 +337,6 @@ class TestObjectState:
 
         assert observed == (UW, UW, "3", "job-1", None)
 
-    @respx.mock
-    def test_sync_facade_round_trips_grounded_contract(self) -> None:
-        import convilyn
-
-        respx.get(f"{API_BASE}/api/v1/user_workflows/{UW}/grounded-contract").mock(
-            return_value=httpx.Response(200, json={"contract_id": f"user_me.{UW}"})
-        )
-        sync_client = convilyn.Convilyn(
-            api_key="ck_test_sync_contract",  # pragma: allowlist secret
-            base_url=API_BASE,
-        )
-        try:
-            contract = sync_client.user_workflows.grounded_contract(UW)
-        finally:
-            sync_client.close()
-
-        assert contract == {"contract_id": f"user_me.{UW}"}
-
     def test_sync_facade_mirrors_async_surface(self) -> None:
         import convilyn
 
@@ -393,7 +357,7 @@ class TestObjectState:
     @respx.mock
     async def test_page_model_round_trips_wire_aliases(self, client: AsyncConvilyn) -> None:
         respx.get(f"{API_BASE}/api/v1/user_workflows").mock(
-            return_value=httpx.Response(200, json={"items": [_summary_wire()], "cursor": "c1"})
+            return_value=httpx.Response(200, json={"items": [_summary_wire()], "nextCursor": "c1"})
         )
         page = await client.user_workflows.list()
 
@@ -431,6 +395,6 @@ def test_detail_type_is_user_workflow_detail() -> None:
 
 
 def test_page_type_is_user_workflows_page() -> None:
-    page = UserWorkflowsPage.model_validate({"items": [_summary_wire()], "cursor": None})
+    page = UserWorkflowsPage.model_validate({"items": [_summary_wire()], "nextCursor": None})
 
     assert isinstance(page, UserWorkflowsPage)

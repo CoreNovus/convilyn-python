@@ -331,7 +331,6 @@ class TestTheMcpRegistryManifest:
         which is what this pins.
         """
         import re
-
         import tomllib
 
         extras = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))["project"][

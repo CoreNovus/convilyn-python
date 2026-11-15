@@ -1,0 +1,23 @@
+{"id": "en-return-window", "question": "How long do I have to return a book?", "group": "en", "support": [{"source_id": "returns", "excerpt": "returned within 30 days of purchase"}]}
+{"id": "en-refund-time", "question": "How long does a card refund take to show up?", "group": "en", "support": [{"source_id": "returns", "excerpt": "A card refund takes five working days to appear on the statement"}]}
+{"id": "en-gift-receipt", "question": "Can I get my money back with a gift receipt?", "group": "en", "support": [{"source_id": "returns", "excerpt": "receives store credit rather than money back"}]}
+{"id": "en-damaged", "question": "My book arrived damaged, what should I do?", "group": "en", "support": [{"source_id": "returns", "excerpt": "write to the shop within 14 days with a photo"}]}
+{"id": "en-dispatch", "question": "If I order this morning, does it ship today?", "group": "en", "support": [{"source_id": "shipping", "excerpt": "Orders placed before two in the afternoon on a working day leave the shop the same day"}]}
+{"id": "en-courier", "question": "How fast is the tracked courier?", "group": "en", "support": [{"source_id": "shipping", "excerpt": "one to two working days"}]}
+{"id": "en-duties", "question": "Who pays import duties on an order sent abroad?", "group": "en", "support": [{"source_id": "shipping", "excerpt": "paid by the customer on delivery"}]}
+{"id": "en-points-value", "question": "What are 100 membership points worth?", "group": "en", "support": [{"source_id": "membership", "excerpt": "One hundred points are worth five dollars off a later purchase"}]}
+{"id": "en-points-expire", "question": "Do my points expire?", "group": "en", "support": [{"source_id": "membership", "excerpt": "Points expire twelve months after they were earned"}]}
+{"id": "en-club", "question": "When does the reading club meet?", "group": "en", "support": [{"source_id": "membership", "excerpt": "first Thursday of each month at seven in the evening"}]}
+{"id": "en-ebooks", "question": "Does the shop sell e-books?", "group": "en"}
+{"id": "en-transfer-points", "question": "Can I give my points to a friend?", "group": "en"}
+{"id": "zh-weekend-hours", "question": "週末幾點打烊？", "group": "zh-TW", "support": [{"source_id": "opening-hours-zh", "excerpt": "週六、週日上午十點開門，晚上十點打烊"}]}
+{"id": "zh-closed-day", "question": "書店哪一天公休？", "group": "zh-TW", "support": [{"source_id": "opening-hours-zh", "excerpt": "每週一公休"}]}
+{"id": "zh-parking", "question": "在書店買書可以折抵停車費嗎？", "group": "zh-TW", "support": [{"source_id": "opening-hours-zh", "excerpt": "購書滿五百元可折抵一小時停車費"}]}
+{"id": "zh-pets", "question": "可以帶狗進書店嗎？", "group": "zh-TW", "support": [{"source_id": "opening-hours-zh", "excerpt": "歡迎牽繩或放在提籠裡的寵物入店"}]}
+{"id": "zh-foreign-order", "question": "訂外文書要等多久才會到？", "group": "zh-TW", "support": [{"source_id": "orders-zh", "excerpt": "外文書約三到四週"}]}
+{"id": "zh-deposit", "question": "預購新書要先付訂金嗎？", "group": "zh-TW", "support": [{"source_id": "orders-zh", "excerpt": "預購時需先付一百元訂金"}]}
+{"id": "zh-bulk", "question": "一次訂很多本同一本書有折扣嗎？", "group": "zh-TW", "support": [{"source_id": "orders-zh", "excerpt": "一次訂購同一本書二十本以上，可享九折優惠"}]}
+{"id": "zh-talk-signup", "question": "參加作者講座需要報名嗎？", "group": "zh-TW", "support": [{"source_id": "events-zh", "excerpt": "需事先在網站上報名"}]}
+{"id": "zh-room-rental", "question": "租借二樓活動區一小時多少錢？", "group": "zh-TW", "support": [{"source_id": "events-zh", "excerpt": "租金為每小時八百元"}]}
+{"id": "zh-gift-wrap", "question": "書店有提供禮物包裝嗎？", "group": "zh-TW"}
+{"id": "zh-wifi", "question": "店裡有無線網路可以用嗎？", "group": "zh-TW"}

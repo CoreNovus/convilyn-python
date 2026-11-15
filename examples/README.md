@@ -15,6 +15,7 @@ entirely on your machine and reads no key at all.
 | [`08_workflows_marketplace.py`](./08_workflows_marketplace.py) | Browse and fork community workflows via `client.workflows`. |
 | [`09_account_quota.py`](./09_account_quota.py) | Check plan tier and pre-flight cost/quota via `client.account`. |
 | [`11_local_convert_offline.py`](./11_local_convert_offline.py) | Convert to Markdown with no key, no account and no network — `convilyn.local`, and asking `capabilities()` what this machine can actually do. |
+| [`12_graphs_in_your_app.py`](./12_graphs_in_your_app.py) | Place a ready-made graph inside your own LangGraph application three ways: as a node, as a node with renamed keys, and as a tool; then serve one turn with `graphs.use_case`. No key and no network; needs `convilyn[graphs]`. |
 | [`app_scaffold/`](./app_scaffold/) | A restartable consumer-app starting shape: durable app-side session (atomic JSON state) reconciled against the platform each run. Copy-paste, not a package — see its README for why. |
 | [`sample.txt`](./sample.txt) | A 1 KiB plain-text sample for the Python examples; convert it to `pdf` or anything else. |
 

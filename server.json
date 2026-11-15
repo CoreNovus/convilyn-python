@@ -3,7 +3,7 @@
   "name": "io.github.CoreNovus/convilyn",
   "title": "Convilyn",
   "description": "Convert documents to Markdown on your own machine — .docx, .pptx, .xlsx, .odt, .pdf, .epub and ~50 more — with no tokens, no network and no model in the path. Returns output paths rather than text, so a batch of twenty costs the same as one. Optional hosted tools price a run before it happens.",
-  "version": "4.1.0",
+  "version": "5.0.0",
   "repository": {
     "url": "https://github.com/CoreNovus/convilyn-python",
     "source": "github"
@@ -12,7 +12,7 @@
     {
       "registryType": "pypi",
       "identifier": "convilyn",
-      "version": "4.1.0",
+      "version": "5.0.0",
       "transport": {
         "type": "stdio"
       },

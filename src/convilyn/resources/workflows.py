@@ -80,7 +80,7 @@ class AsyncWorkflows:
 
         Returns:
             A :class:`WorkflowSearchPage` containing one page of summaries
-            plus a ``cursor`` for the next call (``None`` when the
+            plus a ``next_cursor`` for the next call (``None`` when the
             listing is exhausted).
         """
         params: dict[str, Any] = {"sort": sort, "limit": limit}

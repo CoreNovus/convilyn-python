@@ -9,7 +9,8 @@ churn.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -123,7 +124,7 @@ class TestUploadLogic:
         assert result.filename == "report.txt"
         assert result.size == 11
         assert result.content_type == "text/plain"
-        assert result.created_at == datetime(2026, 5, 20, 12, 0, tzinfo=timezone.utc)
+        assert result.created_at == datetime(2026, 5, 20, 12, 0, tzinfo=UTC)
 
     @pytest.mark.asyncio
     async def test_content_upload_returns_file(self, confirm_response) -> None:
@@ -415,37 +416,123 @@ class TestUploadBodyRegression:
         import convilyn.resources.files as files_mod
 
         source = Path(files_mod.__file__).read_text(encoding="utf-8")
-        assert "read_bytes()" in source, (
-            "upload path branch must send a bytes body (Content-Length)"
+        assert "handle.read(size + 1)" in source, (
+            "upload path branch must send a bounded bytes body (Content-Length)"
         )
         assert "_stream_file(handle)" not in source, (
             "async-generator upload body -> httpx chunked -> S3 501"
         )
 
 
-# ── Upload size cap (self-DoS / OOM defence) ────────────────────────
+# ── Upload size: the platform's plan limit, checked before the read ──
 
 
-class TestUploadSizeCap:
+#: A size far past anything a client-side cap would have let through.
+_HUGE = 50 * 1024**3
+
+_PLAN_LIMIT_MESSAGE = "File size exceeds the upload limit."
+
+
+def _stub_presign_refusal(mock: respx.MockRouter) -> tuple[respx.Route, respx.Route]:
+    """Presign answers 413 with the platform's plain-string upsell."""
+    presign = mock.post(f"{API_BASE}/api/v1/upload/presign").mock(
+        return_value=httpx.Response(413, json={"detail": _PLAN_LIMIT_MESSAGE})
+    )
+    storage = mock.post(PRESIGN_URL).mock(return_value=httpx.Response(204))
+    return presign, storage
+
+
+def _huge_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, list[str]]:
+    """A path whose reported size is huge, recording every open of it."""
+    target = tmp_path / "huge.pdf"
+    target.write_bytes(b"%PDF")
+    real_stat = Path.stat
+    reads: list[str] = []
+
+    def fake_stat(self: Path, *args, **kwargs):
+        result = real_stat(self, *args, **kwargs)
+        if self == target:
+            return type("Stat", (), {"st_size": _HUGE, "st_mode": result.st_mode})()
+        return result
+
+    real_open = Path.open
+
+    def fake_open(self: Path, *args, **kwargs):
+        if self == target:
+            reads.append(self.name)
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", fake_stat)
+    monkeypatch.setattr(Path, "open", fake_open)
+    return target, reads
+
+
+class TestUploadSizeIsThePlatformsCall:
     @pytest.mark.asyncio
-    async def test_content_over_cap_raises_before_network(self, monkeypatch):
-        from convilyn.resources import files as files_mod
+    async def test_a_huge_file_is_asked_of_the_platform(self, tmp_path, monkeypatch) -> None:
+        target, _ = _huge_file(tmp_path, monkeypatch)
+        async with respx.mock(assert_all_called=False) as mock:
+            presign, _ = _stub_presign_refusal(mock)
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                with pytest.raises(APIError):
+                    await client.files.upload(target)
 
-        monkeypatch.setattr(files_mod, "MAX_UPLOAD_BYTES", 8)
-        async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
-            with pytest.raises(ValueError, match="upload cap"):
-                await client.files.upload(content=b"x" * 9, filename="big.bin")
+        assert json.loads(presign.calls.last.request.content)["fileSize"] == _HUGE
 
     @pytest.mark.asyncio
-    async def test_path_over_cap_raises_before_read(self, monkeypatch, tmp_path):
-        from convilyn.resources import files as files_mod
+    async def test_the_platforms_413_reaches_the_caller_with_its_message(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        target, _ = _huge_file(tmp_path, monkeypatch)
+        async with respx.mock(assert_all_called=False) as mock:
+            _stub_presign_refusal(mock)
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                with pytest.raises(APIError) as info:
+                    await client.files.upload(target)
 
-        monkeypatch.setattr(files_mod, "MAX_UPLOAD_BYTES", 4)
-        big = tmp_path / "big.txt"
-        big.write_bytes(b"12345")
-        async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
-            with pytest.raises(ValueError, match="upload cap"):
-                await client.files.upload(big)
+        assert (info.value.status_code, info.value.message) == (413, _PLAN_LIMIT_MESSAGE)
+
+    @pytest.mark.asyncio
+    async def test_a_refused_file_is_never_read_or_uploaded(self, tmp_path, monkeypatch) -> None:
+        target, reads = _huge_file(tmp_path, monkeypatch)
+        async with respx.mock(assert_all_called=False) as mock:
+            _, storage = _stub_presign_refusal(mock)
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                with pytest.raises(APIError):
+                    await client.files.upload(target)
+
+        assert (reads, storage.called) == ([], False)
+
+    @pytest.mark.asyncio
+    async def test_raw_content_over_the_limit_gets_the_same_413(self) -> None:
+        async with respx.mock(assert_all_called=False) as mock:
+            _stub_presign_refusal(mock)
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                with pytest.raises(APIError) as info:
+                    await client.files.upload(content=b"x" * 16, filename="big.bin")
+
+        assert info.value.status_code == 413
+
+    @pytest.mark.asyncio
+    async def test_a_file_that_grows_after_the_size_check_is_refused(
+        self, sample_file, confirm_response, monkeypatch
+    ) -> None:
+        real_stat = Path.stat
+
+        def stale_stat(self: Path, *args, **kwargs):
+            result = real_stat(self, *args, **kwargs)
+            if self == sample_file:
+                return type("Stat", (), {"st_size": 3, "st_mode": result.st_mode})()
+            return result
+
+        monkeypatch.setattr(Path, "stat", stale_stat)
+        async with respx.mock(assert_all_called=False) as mock:
+            s3 = _stub_post_grant(mock, confirm_response)
+            async with AsyncConvilyn(api_key="ck_test") as client:  # pragma: allowlist secret
+                with pytest.raises(ValueError, match="changed size while uploading"):
+                    await client.files.upload(sample_file)
+
+        assert s3.called is False
 
 
 # ── delete() — client-controlled retention (A1) ──────────────────────

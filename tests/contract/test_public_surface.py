@@ -176,7 +176,7 @@ ASYNC_RESOURCE_METHODS = {
         "download_artifact_to",
     },
     AsyncWorkflows: {"catalog", "search", "get", "fork", "publish", "patch", "like"},
-    AsyncUserWorkflows: {"list", "get", "delete", "export", "grounded_contract", "runs"},
+    AsyncUserWorkflows: {"list", "get", "delete", "export", "runs"},
     AsyncBuilder: {"create_session", "send_message", "get_session", "messages", "quota"},
     AsyncAccount: {"get_quota", "get_plan", "usage_history", "get_balance"},
 }
@@ -213,7 +213,7 @@ SYNC_RESOURCE_METHODS = {
         "download_artifact_to",
     },
     Workflows: {"catalog", "search", "get", "fork", "publish", "patch", "like"},
-    UserWorkflows: {"list", "get", "delete", "export", "grounded_contract", "runs"},
+    UserWorkflows: {"list", "get", "delete", "export", "runs"},
     Builder: {"create_session", "send_message", "get_session", "messages", "quota"},
     Account: {"get_quota", "get_plan", "usage_history", "get_balance"},
 }

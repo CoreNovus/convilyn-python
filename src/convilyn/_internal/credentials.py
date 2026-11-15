@@ -39,7 +39,7 @@ import json
 import os
 import stat
 import subprocess
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from convilyn._internal.atomic import OWNER_ONLY, write_atomically
@@ -91,7 +91,7 @@ def write_credentials(key: str, *, source: str = "setup") -> Path:
     payload = json.dumps(
         {
             "api_key": key,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
             "source": source,
         }
     )

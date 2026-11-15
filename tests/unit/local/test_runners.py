@@ -197,3 +197,23 @@ class TestFailedConversionsReportTheirRealEngine:
 
         assert result.ok is True
         assert result.engine == "image"
+
+
+# ── Ghostscript guard on the document path ───────────────────────────
+
+
+class TestTheDocumentPathStartsNoGhostscript:
+    """Pillow picks its EPS plugin by content, so an embedded image could start `gs`."""
+
+    def test_a_document_conversion_turns_the_ghostscript_path_off(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from PIL import EpsImagePlugin
+
+        monkeypatch.setattr(EpsImagePlugin, "gs_binary", None)
+        source = tmp_path / "table.csv"
+        source.write_text("a,b\n1,2\n", encoding="utf-8")
+
+        local.convert(source, to="md")
+
+        assert EpsImagePlugin.gs_binary is False

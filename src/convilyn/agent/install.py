@@ -39,9 +39,9 @@ holding a truncated ``config.toml`` — and what is lost there is not a key this
 package can re-mint, it is their whole Codex configuration, including the
 content this command exists to preserve.
 
-**Why the TOML edit is textual.** ``tomllib`` reads TOML from 3.11 and this
-package supports 3.10; nothing in the standard library *writes* TOML at any
-version. The alternatives were a new runtime dependency for one command, or
+**Why the TOML edit is textual.** ``tomllib`` reads TOML, but nothing in the
+standard library *writes* it at any version. The alternatives were a new
+runtime dependency for one command, or
 appending one well-formed table and refusing the shapes where appending is not
 safe. The second is smaller and its failure mode is a message rather than a
 mangled config.

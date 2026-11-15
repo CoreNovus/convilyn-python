@@ -91,14 +91,14 @@ class TestSearchLogic:
         route = respx.get(f"{API_BASE}/api/v1/workflows/community").mock(
             return_value=httpx.Response(
                 200,
-                json={"items": [_summary_wire("uw_a"), _summary_wire("uw_b")], "cursor": None},
+                json={"items": [_summary_wire("uw_a"), _summary_wire("uw_b")], "nextCursor": None},
             )
         )
         page = await client.workflows.search()
         assert route.called
         assert isinstance(page, WorkflowSearchPage)
         assert [s.workflow_id for s in page.items] == ["uw_a", "uw_b"]
-        assert page.cursor is None
+        assert page.next_cursor is None
         # Default sort param threaded through
         assert route.calls[0].request.url.params["sort"] == "recent"
 
@@ -106,12 +106,12 @@ class TestSearchLogic:
     @respx.mock
     async def test_search_threads_filters(self, client: AsyncConvilyn) -> None:
         route = respx.get(f"{API_BASE}/api/v1/workflows/community").mock(
-            return_value=httpx.Response(200, json={"items": [], "cursor": "next_page"}),
+            return_value=httpx.Response(200, json={"items": [], "nextCursor": "next_page"}),
         )
         page = await client.workflows.search(
             tag="docs", sort="popular", limit=5, cursor="prev_page"
         )
-        assert page.cursor == "next_page"
+        assert page.next_cursor == "next_page"
         params = route.calls[0].request.url.params
         assert params["tag"] == "docs"
         assert params["sort"] == "popular"
@@ -189,11 +189,11 @@ class TestBoundary:
     @respx.mock
     async def test_search_empty_listing(self, client: AsyncConvilyn) -> None:
         respx.get(f"{API_BASE}/api/v1/workflows/community").mock(
-            return_value=httpx.Response(200, json={"items": [], "cursor": None})
+            return_value=httpx.Response(200, json={"items": [], "nextCursor": None})
         )
         page = await client.workflows.search()
         assert page.items == []
-        assert page.cursor is None
+        assert page.next_cursor is None
 
     @pytest.mark.asyncio
     @respx.mock
@@ -311,10 +311,10 @@ class TestObjectState:
 
     def test_workflow_summary_round_trip(self) -> None:
         summary = WorkflowSearchPage.model_validate(
-            {"items": [_summary_wire(like_count=99)], "cursor": "abc"}
+            {"items": [_summary_wire(like_count=99)], "nextCursor": "abc"}
         )
         assert summary.items[0].stats.like_count == 99
-        assert summary.cursor == "abc"
+        assert summary.next_cursor == "abc"
 
     def test_extra_field_tolerated_on_workflow(self) -> None:
         """OCP: backend can add a new field to the wire shape without an SDK bump."""
@@ -329,7 +329,7 @@ class TestObjectState:
     @respx.mock
     async def test_search_default_sort_is_recent(self, client: AsyncConvilyn) -> None:
         route = respx.get(f"{API_BASE}/api/v1/workflows/community").mock(
-            return_value=httpx.Response(200, json={"items": [], "cursor": None})
+            return_value=httpx.Response(200, json={"items": [], "nextCursor": None})
         )
         await client.workflows.search()
         assert route.calls[0].request.url.params["sort"] == "recent"

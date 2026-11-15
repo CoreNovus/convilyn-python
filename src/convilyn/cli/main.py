@@ -20,6 +20,7 @@ from convilyn.cli.feedback import feedback_command
 from convilyn.cli.goals import goals_command
 from convilyn.cli.local import local_command
 from convilyn.cli.mcp import mcp_command
+from convilyn.cli.rag import rag_command
 from convilyn.cli.setup import setup_command
 
 
@@ -45,6 +46,7 @@ cli.add_command(api_command, name="api")
 cli.add_command(goals_command, name="goals")
 cli.add_command(account_command, name="account")
 cli.add_command(local_command, name="local")
+cli.add_command(rag_command, name="rag")
 cli.add_command(mcp_command, name="mcp")
 cli.add_command(agent_command, name="agent")
 cli.add_command(feedback_command, name="feedback")

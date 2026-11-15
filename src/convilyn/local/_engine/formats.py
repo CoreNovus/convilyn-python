@@ -48,8 +48,6 @@ class ImageFormat(str, Enum):
     DNG = "dng"
     CR2 = "cr2"
     NEF = "nef"
-    EXR = "exr"
-    HDR = "hdr"
     XPM = "xpm"
     PCD = "pcd"
 
@@ -112,7 +110,6 @@ IMAGE_FORMAT_ALIASES: dict[str, ImageFormat] = {
     "j2k": ImageFormat.JP2,
     "j2c": ImageFormat.JP2,
     "jpx": ImageFormat.JP2,
-    "rgbe": ImageFormat.HDR,
 }
 
 
