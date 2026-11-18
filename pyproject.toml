@@ -195,7 +195,7 @@ dev = [
     "pytest-asyncio>=0.23.0",
     "pytest-cov>=4.1.0",
     "respx>=0.22.0",
-    "ruff==0.17.3",
+    "ruff==0.17.5",
     # The `typecheck` gate's checker. Specifier deliberately identical to
     # every other declaration of it: a cross-file agreement check compares
     # specifier STRINGS, and a new
